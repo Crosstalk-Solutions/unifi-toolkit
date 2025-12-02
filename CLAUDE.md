@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**UI Toolkit** (v1.3.0) is a comprehensive monorepo containing multiple tools for UniFi network management and monitoring. Each tool operates independently but shares common infrastructure for UniFi API access, database management, configuration, and authentication.
+**UI Toolkit** (v1.4.0) is a comprehensive monorepo containing multiple tools for UniFi network management and monitoring. Each tool operates independently but shares common infrastructure for UniFi API access, database management, configuration, and authentication.
 
 **Current Tools:**
 - **Wi-Fi Stalker v0.7.0** - Track specific client devices, monitor roaming, and maintain connection history
@@ -53,6 +53,28 @@ Located in `app/routers/auth.py`:
 
 The auth system is transparent in local mode (no login required).
 
+## Dashboard
+
+The main dashboard (`/`) provides:
+- **System Status Widget**: Shows gateway info, connected clients, network health
+- **Tool Cards**: Links to Wi-Fi Stalker, Threat Watch, and external tools
+- **Settings Cog** (⚙️): Opens UniFi configuration modal (always accessible in header)
+
+### Centralized UniFi Configuration
+
+UniFi controller configuration is managed centrally from the dashboard (not in individual tools):
+- Located in `app/routers/config.py`
+- Accessible via settings cog (⚙️) in dashboard header
+- **Endpoints**:
+  - `POST /api/config/unifi` - Save configuration
+  - `GET /api/config/unifi` - Get current configuration
+  - `POST /api/config/unifi/test` - Test credentials before saving
+  - `GET /api/config/unifi/test` - Test saved configuration
+- **Test-before-save**: Configuration is only saved after successful connection test
+- Supports both legacy (username/password) and UniFi OS (API key) authentication
+
+Individual tools (Wi-Fi Stalker, Threat Watch) only have webhook configuration - they use the shared UniFi config from the dashboard.
+
 ## Legal Disclaimer
 
 The footer of both the main dashboard and Wi-Fi Stalker includes a disclaimer:
@@ -89,12 +111,13 @@ unifi-toolkit/
 ├── app/                    # Main unified application
 │   ├── main.py            # FastAPI app entry point, mounts all tools
 │   ├── routers/           # Main app routers
-│   │   └── auth.py        # Authentication (login, logout, middleware)
+│   │   ├── auth.py        # Authentication (login, logout, middleware)
+│   │   └── config.py      # UniFi configuration (centralized)
 │   ├── static/            # Main dashboard static files
 │   │   ├── css/           # Dashboard styles (includes dark mode)
 │   │   └── images/        # Branding assets (logo, favicon)
 │   └── templates/         # Main dashboard templates
-│       ├── dashboard.html # Main dashboard
+│       ├── dashboard.html # Main dashboard (includes UniFi config modal)
 │       └── login.html     # Login page (production mode)
 ├── shared/                # Shared infrastructure (all tools use this)
 │   ├── config.py          # Pydantic settings (loads from .env)
