@@ -29,12 +29,38 @@ UI Toolkit can run either with Docker (recommended) or directly with Python.
 
 #### Option A: Docker Installation (Recommended)
 
-```bash
-# Update package list
-sudo apt update
+Install Docker from the official Docker repository:
 
-# Install Docker and Docker Compose plugin
-sudo apt install -y docker.io docker-compose-plugin
+```bash
+# Install prerequisites
+sudo apt update
+sudo apt install -y ca-certificates curl
+
+# Create keyrings directory
+sudo install -m 0755 -d /etc/apt/keyrings
+
+# Download Docker's GPG key
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+# Add Docker repository
+cat << 'EOF' | sudo tee /etc/apt/sources.list.d/docker.sources
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: noble
+Components: stable
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+# Note: For Ubuntu 22.04, change "noble" to "jammy" in the file above
+
+# Install Docker and Docker Compose
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Start Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
 
 # Add your user to the docker group (avoids needing sudo)
 sudo usermod -aG docker $USER
@@ -45,6 +71,7 @@ newgrp docker
 # Verify Docker is working
 docker --version
 docker compose version
+docker run hello-world
 ```
 
 #### Option B: Python Installation (Alternative)

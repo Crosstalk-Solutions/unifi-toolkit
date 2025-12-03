@@ -47,11 +47,9 @@ No authentication, access via `http://localhost:8000`
 
 **Note:** Private repository - requires GitHub access and SSH keys configured.
 
-```bash
-# Install Docker
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin
-sudo usermod -aG docker $USER && newgrp docker
+**Prerequisites:** Install Docker first - see [docs/INSTALLATION.md](docs/INSTALLATION.md#option-a-docker-installation-recommended)
 
+```bash
 # Clone and setup (requires SSH key access)
 git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git
 cd unifi-toolkit
@@ -67,11 +65,9 @@ Access at **http://localhost:8000**
 
 Authentication enabled, HTTPS with Let's Encrypt via Caddy
 
-```bash
-# Install Docker
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin
-sudo usermod -aG docker $USER && newgrp docker
+**Prerequisites:** Install Docker first - see [docs/INSTALLATION.md](docs/INSTALLATION.md#option-a-docker-installation-recommended)
 
+```bash
 # Clone and setup (requires SSH key access)
 git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git
 cd unifi-toolkit

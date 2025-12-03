@@ -8,13 +8,11 @@ Get up and running in 5 minutes.
 
 ## Ubuntu Server (Docker)
 
+**Prerequisites:** Install Docker first - see [Docker Installation in INSTALLATION.md](INSTALLATION.md#option-a-docker-installation-recommended) for complete steps.
+
 ### Local Deployment (LAN Only)
 
 ```bash
-# Install Docker
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin
-sudo usermod -aG docker $USER && newgrp docker
-
 # Clone and setup (requires SSH key access)
 git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git
 cd unifi-toolkit
@@ -29,10 +27,6 @@ docker compose up -d
 ### Production Deployment (Internet-Facing)
 
 ```bash
-# Install Docker
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin
-sudo usermod -aG docker $USER && newgrp docker
-
 # Clone and setup (requires SSH key access)
 git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git
 cd unifi-toolkit

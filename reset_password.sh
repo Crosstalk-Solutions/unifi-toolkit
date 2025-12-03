@@ -102,11 +102,15 @@ update_env_file() {
     # Check if AUTH_PASSWORD_HASH exists in .env
     if grep -q "^AUTH_PASSWORD_HASH=" .env; then
         # Update existing line
+        # Escape dollar signs for Docker Compose ($ -> $$)
+        local escaped_hash="${new_hash//\$/\$\$}"
         # Use a different delimiter for sed since the hash contains $
-        sed -i "s|^AUTH_PASSWORD_HASH=.*|AUTH_PASSWORD_HASH=$new_hash|" .env
+        sed -i "s|^AUTH_PASSWORD_HASH=.*|AUTH_PASSWORD_HASH=$escaped_hash|" .env
     else
         # Add new line
-        echo "AUTH_PASSWORD_HASH=$new_hash" >> .env
+        # Escape dollar signs for Docker Compose ($ -> $$)
+        local escaped_hash="${new_hash//\$/\$\$}"
+        echo "AUTH_PASSWORD_HASH=$escaped_hash" >> .env
     fi
 }
 
@@ -182,15 +186,15 @@ main() {
         echo "To apply the new password, restart the application:"
         echo ""
         if [ "$DEPLOYMENT_TYPE" == "production" ]; then
-            echo "  ${CYAN}docker compose --profile production restart${NC}"
+            echo -e "  ${CYAN}docker compose --profile production restart${NC}"
         else
-            echo "  ${CYAN}docker compose restart${NC}"
+            echo -e "  ${CYAN}docker compose restart${NC}"
         fi
     else
         echo "To apply the new password, restart the application:"
         echo ""
-        echo "  ${CYAN}# Stop the running application (Ctrl+C)${NC}"
-        echo "  ${CYAN}python run.py${NC}"
+        echo -e "  ${CYAN}# Stop the running application (Ctrl+C)${NC}"
+        echo -e "  ${CYAN}python run.py${NC}"
     fi
 
     echo ""
