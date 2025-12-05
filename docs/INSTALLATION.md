@@ -96,14 +96,13 @@ python3.11 --version
 **Note:** This is a private repository. You need GitHub access and SSH keys configured.
 
 ```bash
-# Navigate to where you want to install
-cd /opt
+# Create the installation directory and set ownership
+sudo mkdir -p /opt/unifi-toolkit
+sudo chown $USER:$USER /opt/unifi-toolkit
 
 # Clone the repository (requires SSH key access)
-sudo git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git
-
-# Change ownership to your user (replace 'yourusername' with your actual username)
-sudo chown -R $USER:$USER /opt/unifi-toolkit
+# Important: Don't use sudo here - sudo can't access your SSH keys
+git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git /opt/unifi-toolkit
 
 # Navigate into the directory
 cd /opt/unifi-toolkit
@@ -549,8 +548,9 @@ When managing multiple UniFi sites:
 
 ### Local Deployment
 ```bash
-git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git
-cd unifi-toolkit
+sudo mkdir -p /opt/unifi-toolkit && sudo chown $USER:$USER /opt/unifi-toolkit
+git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git /opt/unifi-toolkit
+cd /opt/unifi-toolkit
 ./setup.sh  # Select 1 for Local
 docker compose up -d
 # Access: http://localhost:8000
@@ -558,8 +558,9 @@ docker compose up -d
 
 ### Production Deployment
 ```bash
-git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git
-cd unifi-toolkit
+sudo mkdir -p /opt/unifi-toolkit && sudo chown $USER:$USER /opt/unifi-toolkit
+git clone git@github.com:Crosstalk-Solutions/unifi-toolkit.git /opt/unifi-toolkit
+cd /opt/unifi-toolkit
 ./setup.sh  # Select 2 for Production
 sudo ufw allow 80/tcp && sudo ufw allow 443/tcp
 docker compose --profile production up -d
