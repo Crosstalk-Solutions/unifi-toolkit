@@ -174,6 +174,8 @@ async def get_device_details(
                         detail_data["uptime"] = client.get("uptime")
                         detail_data["tx_bytes"] = client.get("tx_bytes")
                         detail_data["rx_bytes"] = client.get("rx_bytes")
+                        # Get manufacturer from UniFi's OUI data
+                        detail_data["manufacturer"] = client.get("oui")
                     else:
                         detail_data["hostname"] = getattr(client, "hostname", None)
                         detail_data["tx_rate"] = getattr(client, "tx_rate", None)
@@ -183,9 +185,8 @@ async def get_device_details(
                         detail_data["uptime"] = getattr(client, "uptime", None)
                         detail_data["tx_bytes"] = getattr(client, "tx_bytes", None)
                         detail_data["rx_bytes"] = getattr(client, "rx_bytes", None)
-
-                    # OUI lookup for manufacturer
-                    detail_data["manufacturer"] = get_manufacturer_from_mac(device.mac_address)
+                        # Get manufacturer from UniFi's OUI data
+                        detail_data["manufacturer"] = getattr(client, "oui", None)
 
         finally:
             await unifi_client.disconnect()
@@ -194,38 +195,6 @@ async def get_device_details(
         pass
 
     return DeviceDetailResponse(**detail_data)
-
-
-def get_manufacturer_from_mac(mac_address: str) -> Optional[str]:
-    """
-    Get manufacturer from MAC address OUI (first 3 octets)
-    Basic implementation - could be enhanced with full OUI database
-    """
-    # Common OUI prefixes (just a few examples - would need full database for production)
-    oui_map = {
-        "00:17:88": "Philips",
-        "00:50:56": "VMware",
-        "08:00:27": "Oracle VirtualBox",
-        "3C:9A:77": "Amazon Technologies",
-        "94:2A:6F": "Ubiquiti",
-        "9C:05:D6": "Ubiquiti",
-        "FC:EC:DA": "Ubiquiti",
-        "00:03:7F": "Atheros",
-        "DC:A6:32": "Raspberry Pi",
-        "B8:27:EB": "Raspberry Pi Foundation",
-        "E4:5F:01": "Raspberry Pi Trading",
-        "AC:DE:48": "Apple",
-        "00:1D:4F": "Apple",
-        "00:CD:FE": "Apple",
-        "D4:61:9D": "Apple",
-        "66:BB:A8": "Google",
-        "F4:F5:D8": "Google",
-        "00:1A:11": "Google",
-    }
-
-    # Extract OUI (first 3 octets)
-    oui = ":".join(mac_address.upper().split(":")[:3])
-    return oui_map.get(oui, "Unknown")
 
 
 @router.delete("/{device_id}", response_model=SuccessResponse)

@@ -5,7 +5,8 @@ from typing import Optional, Dict, List
 import aiohttp
 from aiounifi.controller import Controller
 from aiounifi.models.configuration import Configuration
-from aiounifi.models.client import Client
+from aiounifi.interfaces.clients import ClientListRequest
+from aiounifi.interfaces.devices import DeviceListRequest
 import ssl
 import logging
 from urllib.parse import urlparse
@@ -323,6 +324,7 @@ class UniFiClient:
                                 'rssi': client.get('rssi'),
                                 'hostname': client.get('hostname'),
                                 'name': client.get('name'),
+                                'oui': client.get('oui'),  # Manufacturer from UniFi
                                 'tx_rate': tx_rate_mbps,
                                 'rx_rate': rx_rate_mbps,
                                 'channel': client.get('channel'),
@@ -343,11 +345,47 @@ class UniFiClient:
                 if not self.controller:
                     raise RuntimeError("Controller not initialized")
 
-                # Initialize/update controller data
-                await self.controller.initialize()
+                # Fetch clients using request API
+                request = ClientListRequest.create()
+                response = await self.controller.request(request)
 
-                # Return clients dictionary
-                return self.controller.clients
+                # Parse response into dict keyed by MAC
+                clients_dict = {}
+                clients_list = response.get('data', []) if isinstance(response, dict) else []
+                for client in clients_list:
+                    mac = client.get('mac', '').lower()
+                    if mac:
+                        # Convert tx/rx rates from Kbps to Mbps
+                        tx_rate = client.get('tx_rate')
+                        rx_rate = client.get('rx_rate')
+                        tx_rate_mbps = round(tx_rate / 1000, 1) if tx_rate else None
+                        rx_rate_mbps = round(rx_rate / 1000, 1) if rx_rate else None
+
+                        is_wired = client.get('is_wired', False)
+
+                        clients_dict[mac] = {
+                            'mac': mac,
+                            'ap_mac': client.get('ap_mac'),
+                            'ip': client.get('ip'),
+                            'last_seen': client.get('last_seen'),
+                            'rssi': client.get('rssi'),
+                            'hostname': client.get('hostname'),
+                            'name': client.get('name'),
+                            'oui': client.get('oui'),
+                            'tx_rate': tx_rate_mbps,
+                            'rx_rate': rx_rate_mbps,
+                            'channel': client.get('channel'),
+                            'radio': client.get('radio'),
+                            'uptime': client.get('uptime'),
+                            'tx_bytes': client.get('tx_bytes'),
+                            'rx_bytes': client.get('rx_bytes'),
+                            'blocked': client.get('blocked', False),
+                            'is_wired': is_wired,
+                            'sw_mac': client.get('sw_mac'),
+                            'sw_port': client.get('sw_port')
+                        }
+
+                return clients_dict
 
         except Exception as e:
             logger.error(f"Failed to get clients from UniFi controller: {e}")
@@ -410,11 +448,25 @@ class UniFiClient:
                 if not self.controller:
                     raise RuntimeError("Controller not initialized")
 
-                # Initialize/update controller data
-                await self.controller.initialize()
+                # Fetch devices using request API
+                request = DeviceListRequest.create()
+                response = await self.controller.request(request)
 
-                # Return devices (access points)
-                return self.controller.devices
+                # Parse response into dict keyed by MAC, filter for APs
+                aps_dict = {}
+                devices_list = response.get('data', []) if isinstance(response, dict) else []
+                for device in devices_list:
+                    if device.get('type') == 'uap':
+                        mac = device.get('mac', '').lower()
+                        if mac:
+                            aps_dict[mac] = {
+                                'mac': mac,
+                                'name': device.get('name'),
+                                'model': device.get('model'),
+                                'type': device.get('type')
+                            }
+
+                return aps_dict
 
         except Exception as e:
             logger.error(f"Failed to get access points from UniFi controller: {e}")
