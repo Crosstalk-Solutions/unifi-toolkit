@@ -477,8 +477,12 @@ class UniFiClient:
         Get the friendly name of an access point by its MAC address.
         Also checks gateway devices with built-in radios (UDM, UDR, UDM SE).
 
+        For devices with built-in Wi-Fi (like UDR), the ap_mac reported for
+        connected clients is often a radio BSSID, not the device's primary MAC.
+        This method checks both the device MAC and the vap_table BSSIDs.
+
         Args:
-            ap_mac: AP MAC address
+            ap_mac: AP MAC address (could be device MAC or radio BSSID)
 
         Returns:
             AP name if found, MAC address as fallback
@@ -486,7 +490,7 @@ class UniFiClient:
         try:
             normalized_mac = ap_mac.lower().replace("-", ":").replace(".", ":")
 
-            # First check standalone APs
+            # First check standalone APs by their device MAC
             aps = await self.get_access_points()
             ap = aps.get(normalized_mac)
             if ap:
@@ -496,7 +500,9 @@ class UniFiClient:
                 else:
                     return ap.name or get_friendly_model_name(ap.model or '') or normalized_mac
 
-            # Not found in APs - check all devices (for gateways with built-in radios like UDR, UDM, UDM SE)
+            # Not found by device MAC - check all devices including their radio BSSIDs
+            # This handles gateways with built-in radios (UDR, UDM, UDM SE) where
+            # clients report the radio BSSID, not the device MAC
             if self.is_unifi_os:
                 url = f"{self.host}/proxy/network/api/s/{self.site}/stat/device"
             else:
@@ -509,10 +515,27 @@ class UniFiClient:
 
                     for device in devices:
                         device_mac = device.get('mac', '').lower()
+                        name = device.get('name')
+                        model = device.get('model', '')
+                        friendly_name = name or get_friendly_model_name(model) or device_mac
+
+                        # Check if the device MAC matches
                         if device_mac == normalized_mac:
-                            name = device.get('name')
-                            model = device.get('model', '')
-                            return name or get_friendly_model_name(model) or normalized_mac
+                            return friendly_name
+
+                        # Check vap_table for radio BSSIDs (Virtual Access Points)
+                        # This is where built-in Wi-Fi radios report their BSSIDs
+                        vap_table = device.get('vap_table', [])
+                        for vap in vap_table:
+                            # Check both 'bssid' and 'ap_mac' fields
+                            vap_bssid = vap.get('bssid', '').lower()
+                            vap_ap_mac = vap.get('ap_mac', '').lower()
+                            if vap_bssid == normalized_mac or vap_ap_mac == normalized_mac:
+                                logger.debug(
+                                    f"Found BSSID {normalized_mac} on device {friendly_name} "
+                                    f"(radio: {vap.get('radio', 'unknown')})"
+                                )
+                                return friendly_name
 
             return normalized_mac
         except Exception as e:
