@@ -9,6 +9,42 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def format_duration(seconds: Optional[int]) -> Optional[str]:
+    """
+    Format a duration in seconds to a human-readable string
+
+    Args:
+        seconds: Duration in seconds (can be None)
+
+    Returns:
+        Formatted string like "1h 21m" or "2d 5h" or None if input is None
+    """
+    if seconds is None:
+        return None
+
+    if seconds < 60:
+        return f"{seconds}s"
+
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+
+    hours = minutes // 60
+    remaining_minutes = minutes % 60
+
+    if hours < 24:
+        if remaining_minutes > 0:
+            return f"{hours}h {remaining_minutes}m"
+        return f"{hours}h"
+
+    days = hours // 24
+    remaining_hours = hours % 24
+
+    if remaining_hours > 0:
+        return f"{days}d {remaining_hours}h"
+    return f"{days}d"
+
+
 async def deliver_webhook(
     webhook_url: str,
     webhook_type: str,
@@ -16,7 +52,8 @@ async def deliver_webhook(
     device_name: str,
     device_mac: str,
     ap_name: Optional[str] = None,
-    signal_strength: Optional[int] = None
+    signal_strength: Optional[int] = None,
+    offline_duration: Optional[int] = None
 ):
     """
     Deliver a webhook notification
@@ -29,15 +66,16 @@ async def deliver_webhook(
         device_mac: MAC address of the device
         ap_name: Name of the AP (for connected/roamed events)
         signal_strength: Signal strength in dBm (for connected/roamed events)
+        offline_duration: Duration in seconds the device was offline (for connected events)
     """
     try:
         # Format message based on webhook type
         if webhook_type == 'slack':
-            payload = format_slack_message(event_type, device_name, device_mac, ap_name, signal_strength)
+            payload = format_slack_message(event_type, device_name, device_mac, ap_name, signal_strength, offline_duration)
         elif webhook_type == 'discord':
-            payload = format_discord_message(event_type, device_name, device_mac, ap_name, signal_strength)
+            payload = format_discord_message(event_type, device_name, device_mac, ap_name, signal_strength, offline_duration)
         elif webhook_type == 'n8n':
-            payload = format_generic_message(event_type, device_name, device_mac, ap_name, signal_strength)
+            payload = format_generic_message(event_type, device_name, device_mac, ap_name, signal_strength, offline_duration)
         else:
             logger.error(f"Unknown webhook type: {webhook_type}")
             return False
@@ -62,7 +100,8 @@ def format_slack_message(
     device_name: str,
     device_mac: str,
     ap_name: Optional[str],
-    signal_strength: Optional[int]
+    signal_strength: Optional[int],
+    offline_duration: Optional[int] = None
 ) -> dict:
     """
     Format a message for Slack webhook
@@ -73,6 +112,7 @@ def format_slack_message(
         device_mac: MAC address of the device
         ap_name: Name of the AP
         signal_strength: Signal strength in dBm
+        offline_duration: Duration in seconds the device was offline (for connected events)
 
     Returns:
         Dictionary with Slack message payload
@@ -132,6 +172,15 @@ def format_slack_message(
             "short": True
         })
 
+    # Add offline duration for connected events
+    if event_type == 'connected':
+        duration_str = format_duration(offline_duration) if offline_duration else "n/a"
+        fields.append({
+            "title": "Offline for",
+            "value": duration_str,
+            "short": True
+        })
+
     return {
         "attachments": [
             {
@@ -151,7 +200,8 @@ def format_discord_message(
     device_name: str,
     device_mac: str,
     ap_name: Optional[str],
-    signal_strength: Optional[int]
+    signal_strength: Optional[int],
+    offline_duration: Optional[int] = None
 ) -> dict:
     """
     Format a message for Discord webhook
@@ -162,6 +212,7 @@ def format_discord_message(
         device_mac: MAC address of the device
         ap_name: Name of the AP
         signal_strength: Signal strength in dBm
+        offline_duration: Duration in seconds the device was offline (for connected events)
 
     Returns:
         Dictionary with Discord message payload
@@ -211,6 +262,15 @@ def format_discord_message(
             "inline": True
         })
 
+    # Add offline duration for connected events
+    if event_type == 'connected':
+        duration_str = format_duration(offline_duration) if offline_duration else "n/a"
+        fields.append({
+            "name": "Offline for",
+            "value": duration_str,
+            "inline": True
+        })
+
     return {
         "embeds": [
             {
@@ -232,7 +292,8 @@ def format_generic_message(
     device_name: str,
     device_mac: str,
     ap_name: Optional[str],
-    signal_strength: Optional[int]
+    signal_strength: Optional[int],
+    offline_duration: Optional[int] = None
 ) -> dict:
     """
     Format a message for generic/n8n webhook
@@ -243,11 +304,12 @@ def format_generic_message(
         device_mac: MAC address of the device
         ap_name: Name of the AP
         signal_strength: Signal strength in dBm
+        offline_duration: Duration in seconds the device was offline (for connected events)
 
     Returns:
         Dictionary with generic JSON payload
     """
-    return {
+    payload = {
         "event_type": event_type,
         "device": {
             "name": device_name,
@@ -258,6 +320,13 @@ def format_generic_message(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "unifi-toolkit"
     }
+
+    # Add offline duration for connected events
+    if event_type == 'connected':
+        payload["offline_duration_seconds"] = offline_duration
+        payload["offline_duration_formatted"] = format_duration(offline_duration) if offline_duration else None
+
+    return payload
 
 
 async def deliver_threat_webhook(

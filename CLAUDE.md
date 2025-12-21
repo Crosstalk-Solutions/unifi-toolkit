@@ -388,8 +388,37 @@ Runs every `STALKER_REFRESH_INTERVAL` seconds (default: 60).
 - `duration_seconds` calculated when entry closes
 
 **stalker_webhook_config:**
-- Webhook configurations for events (connected, disconnected, roamed)
+- Webhook configurations for events (connected, disconnected, roamed, blocked, unblocked)
 - Supports Slack, Discord, n8n/generic
+
+### Webhook Events
+
+Wi-Fi Stalker sends webhooks for the following events:
+- **connected** - Device came online (includes offline duration)
+- **disconnected** - Device went offline
+- **roamed** - Device moved to a different AP or switch port
+- **blocked** - Device was blocked from the network
+- **unblocked** - Device was unblocked
+
+**Webhook Payload Fields:**
+- Device name and MAC address
+- Access point name (for connected/roamed events)
+- Signal strength in dBm (for wireless devices)
+- **Offline duration** (connected events only) - Shows how long the device was offline before reconnecting (e.g., "1h 21m"). Shows "n/a" if device has no prior connection history.
+
+**n8n/Generic Webhook Format:**
+```json
+{
+  "event_type": "connected",
+  "device": {"name": "Device Name", "mac_address": "aa:bb:cc:dd:ee:ff"},
+  "access_point": "Living Room AP",
+  "signal_strength": -45,
+  "offline_duration_seconds": 4860,
+  "offline_duration_formatted": "1h 21m",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "source": "unifi-toolkit"
+}
+```
 
 ### API Endpoints
 

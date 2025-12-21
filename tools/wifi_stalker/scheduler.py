@@ -179,7 +179,8 @@ def _device_to_dict(device: TrackedDevice) -> dict:
 async def trigger_webhooks(
     session: AsyncSession,
     event_type: str,
-    device: TrackedDevice
+    device: TrackedDevice,
+    offline_duration: int = None
 ):
     """
     Trigger all enabled webhooks for a specific event type
@@ -188,6 +189,7 @@ async def trigger_webhooks(
         session: Database session
         event_type: Type of event ('connected', 'disconnected', 'roamed', 'blocked', 'unblocked')
         device: TrackedDevice that triggered the event
+        offline_duration: Duration in seconds the device was offline (for connected events)
     """
     # Get all enabled webhooks
     result = await session.execute(
@@ -223,7 +225,8 @@ async def trigger_webhooks(
                     device_name=device.friendly_name or device.mac_address,
                     device_mac=device.mac_address,
                     ap_name=device.current_ap_name,
-                    signal_strength=device.current_signal_strength
+                    signal_strength=device.current_signal_strength,
+                    offline_duration=offline_duration if event_type == 'connected' else None
                 )
                 # Update last_triggered timestamp
                 webhook.last_triggered = datetime.now(timezone.utc)
@@ -382,8 +385,30 @@ async def process_device(
             # Broadcast connection event via WebSocket
             device.is_connected = True
             await ws_manager.broadcast_device_update(_device_to_dict(device))
-            # Trigger connection webhooks
-            await trigger_webhooks(session, 'connected', device)
+
+            # Calculate offline duration for webhook
+            # Find the most recent closed history entry (where disconnected_at is set)
+            offline_duration = None
+            history_result = await session.execute(
+                select(ConnectionHistory)
+                .where(ConnectionHistory.device_id == device.id)
+                .where(ConnectionHistory.disconnected_at.isnot(None))
+                .order_by(ConnectionHistory.disconnected_at.desc())
+            )
+            last_disconnect = history_result.scalars().first()
+
+            if last_disconnect and last_disconnect.disconnected_at:
+                # Calculate time since last disconnect
+                disconnected_at = last_disconnect.disconnected_at
+                if disconnected_at.tzinfo is None:
+                    disconnected_at = disconnected_at.replace(tzinfo=timezone.utc)
+
+                now = datetime.now(timezone.utc)
+                offline_duration = int((now - disconnected_at).total_seconds())
+                logger.debug(f"Device {device.mac_address} was offline for {offline_duration} seconds")
+
+            # Trigger connection webhooks with offline duration
+            await trigger_webhooks(session, 'connected', device, offline_duration=offline_duration)
         else:
             device.is_connected = True
 
