@@ -206,30 +206,30 @@ header h1 {
 
 /* Severity stat cards - white text on colored background */
 .stat-card.severity-high {
-    background: var(--severity-high);
+    background: var(--severity-high) !important;
 }
 
 .stat-card.severity-high .stat-value,
 .stat-card.severity-high .stat-label {
-    color: white;
+    color: white !important;
 }
 
 .stat-card.severity-medium {
-    background: var(--severity-medium);
+    background: var(--severity-medium) !important;
 }
 
 .stat-card.severity-medium .stat-value,
 .stat-card.severity-medium .stat-label {
-    color: white;
+    color: white !important;
 }
 
 .stat-card.severity-low {
-    background: var(--severity-low);
+    background: var(--severity-low) !important;
 }
 
 .stat-card.severity-low .stat-value,
 .stat-card.severity-low .stat-label {
-    color: white;
+    color: white !important;
 }
 
 /* IDS/IPS Status Banner */

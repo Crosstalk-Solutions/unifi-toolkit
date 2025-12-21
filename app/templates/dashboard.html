@@ -978,20 +978,14 @@
                         threatWatchBtn.classList.remove('disabled');
                         threatWatchBtn.style.pointerEvents = 'auto';
 
-                        // Show IPS status if available
+                        // Only show notification on dashboard if IDS/IPS is disabled
+                        // When enabled, status shows inside Threat Watch instead
                         if (data.ips_enabled === false) {
                             // IDS/IPS is disabled - show warning with "Check Again" link
                             threatWatchStatus.style.display = 'block';
                             threatWatchStatus.innerHTML = `ℹ️ <strong>IDS/IPS is disabled</strong> on ${data.gateway_name}.<span class="check-again" onclick="window.recheckGateway()">I enabled it - check again</span>`;
-                        } else if (data.ips_mode) {
-                            // Show current mode with success styling
-                            threatWatchStatus.style.display = 'block';
-                            threatWatchStatus.classList.add('status-success');
-                            const modeLabel = data.ips_mode === 'ids' ? 'IDS (Detect Only)' :
-                                             data.ips_mode === 'ips' || data.ips_mode === 'ipsInline' ? 'IPS (Detect & Block)' :
-                                             data.ips_mode.toUpperCase();
-                            threatWatchStatus.innerHTML = `🛡️ ${modeLabel} on ${data.gateway_name}`;
                         } else {
+                            // IDS/IPS is enabled - no notification needed on dashboard
                             threatWatchStatus.style.display = 'none';
                         }
                     }
