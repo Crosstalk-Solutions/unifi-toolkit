@@ -366,7 +366,26 @@ docker compose --profile production restart
 
 ## Updating
 
-### Update from Git (Docker)
+### Upgrade Script (Recommended)
+
+The easiest way to update is using the upgrade script, which handles everything automatically:
+
+```bash
+cd /opt/unifi-toolkit
+./upgrade.sh
+```
+
+The upgrade script will:
+1. Detect your deployment mode (local or production)
+2. Stop the running containers
+3. Pull the latest code from git
+4. Rebuild the Docker image
+5. Run database migrations (with smart error handling)
+6. Restart the application
+
+### Manual Update (Docker)
+
+If you prefer to update manually:
 
 ```bash
 cd /opt/unifi-toolkit
@@ -387,7 +406,7 @@ docker compose exec unifi-toolkit alembic upgrade head
 docker compose restart
 ```
 
-### Update from Git (Python/non-Docker)
+### Manual Update (Python/non-Docker)
 
 ```bash
 cd /opt/unifi-toolkit
@@ -403,7 +422,7 @@ alembic upgrade head
 python run.py
 ```
 
-**Note:** Always run `alembic upgrade head` after pulling updates. Skipping this step can cause SQLite errors if the update includes database schema changes. See [Database Errors After Git Pull](#database-errors-after-git-pull) for troubleshooting.
+**Note:** Always run migrations after pulling updates. Skipping this step can cause SQLite errors if the update includes database schema changes. See [Database Errors After Git Pull](#database-errors-after-git-pull) for troubleshooting.
 
 ---
 
@@ -569,6 +588,7 @@ When managing multiple UniFi sites:
 | `/opt/unifi-toolkit/.env` | Configuration file |
 | `/opt/unifi-toolkit/data/` | Database and persistent data |
 | `/opt/unifi-toolkit/setup.sh` | Setup wizard |
+| `/opt/unifi-toolkit/upgrade.sh` | Upgrade script (handles git pull, rebuild, migrations) |
 | `/opt/unifi-toolkit/reset_password.sh` | Password reset utility |
 | `/opt/unifi-toolkit/Caddyfile` | Reverse proxy configuration |
 | `/opt/unifi-toolkit/docker-compose.yml` | Docker configuration |
@@ -608,8 +628,5 @@ docker compose --profile production up -d
 ### Updating (Docker)
 ```bash
 cd /opt/unifi-toolkit
-git pull origin main
-docker compose build && docker compose up -d
-docker compose exec unifi-toolkit alembic upgrade head
-docker compose restart
+./upgrade.sh
 ```

@@ -42,6 +42,22 @@ The project includes an interactive setup wizard (`setup.sh`) that:
 
 Run with: `./setup.sh`
 
+## Upgrade Script
+
+The project includes an upgrade script (`upgrade.sh`) for easy updates:
+- Detects deployment mode (local/production) from `.env`
+- Stops running containers
+- Pulls latest code from git
+- Rebuilds Docker image (with `--no-cache`)
+- Runs database migrations with smart error handling:
+  - Normal migrations: runs `alembic upgrade head`
+  - Tables already exist: automatically stamps database to current version
+- Restarts containers and verifies health
+
+Run with: `./upgrade.sh`
+
+This script eliminates the common "table already exists" migration errors that occur when upgrading from older versions.
+
 ## Authentication System
 
 Located in `app/routers/auth.py`:
