@@ -598,6 +598,7 @@ When managing multiple UniFi sites:
 
 ## Getting Help
 
+- **Community**: [#unifi-toolkit on Discord](https://discord.com/invite/crosstalksolutions)
 - **GitHub Issues**: [Report a bug or request a feature](https://github.com/Crosstalk-Solutions/unifi-toolkit/issues)
 - **Documentation**: Check the `docs/` directory for additional guides
 

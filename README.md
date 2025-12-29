@@ -336,6 +336,7 @@ Two specialized agents are available for development workflows:
 
 ## Support
 
+- **Community**: [#unifi-toolkit on Discord](https://discord.com/invite/crosstalksolutions)
 - **Issues**: [GitHub Issues](https://github.com/Crosstalk-Solutions/unifi-toolkit/issues)
 - **Documentation**: [docs/](docs/)
 
