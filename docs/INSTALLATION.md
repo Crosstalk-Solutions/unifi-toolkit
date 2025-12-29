@@ -518,6 +518,33 @@ rm -f data/unifi_toolkit.db
 docker compose up -d
 ```
 
+### Docker Permission Denied
+
+**"permission denied" when running `docker compose`:**
+
+This means your user isn't in the `docker` group. You have two options:
+
+**Option 1 - Add user to docker group (recommended):**
+```bash
+sudo usermod -aG docker $USER
+
+# Log out and back in, or run:
+newgrp docker
+
+# Verify it works
+docker ps
+```
+
+**Option 2 - Use sudo (less ideal):**
+```bash
+sudo docker compose up -d
+```
+
+Using `sudo` can cause file permission issues since containers create files as root. If you must use `sudo`, you may need to fix permissions later:
+```bash
+sudo chown -R $USER:$USER data/
+```
+
 ### Permission Errors
 
 **"unable to open database file" in Docker:**
