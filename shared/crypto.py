@@ -10,7 +10,23 @@ def get_cipher() -> Fernet:
     Get the Fernet cipher instance using the encryption key from settings
     """
     settings = get_settings()
-    return Fernet(settings.encryption_key.encode())
+
+    if not settings.encryption_key:
+        raise ValueError(
+            "ENCRYPTION_KEY is not set. Please run ./setup.sh to configure "
+            "the application, or generate a key manually with: "
+            "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+        )
+
+    try:
+        return Fernet(settings.encryption_key.encode())
+    except ValueError:
+        raise ValueError(
+            "Invalid ENCRYPTION_KEY in .env file. The key must be a valid Fernet key "
+            "(32 url-safe base64-encoded bytes). Please run ./setup.sh to generate a new key, "
+            "or generate one manually with: "
+            "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+        )
 
 
 def encrypt_password(password: str) -> bytes:
