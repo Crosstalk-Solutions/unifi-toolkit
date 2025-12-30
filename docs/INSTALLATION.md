@@ -2,6 +2,8 @@
 
 Complete installation instructions for Ubuntu Server (22.04 LTS or 24.04 LTS).
 
+> **Synology NAS users:** See [SYNOLOGY.md](SYNOLOGY.md) for Container Manager instructions.
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)

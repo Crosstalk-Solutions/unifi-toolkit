@@ -97,6 +97,7 @@ Access at **https://your-domain.com**
 | Guide | Description |
 |-------|-------------|
 | [INSTALLATION.md](docs/INSTALLATION.md) | Complete installation guide with troubleshooting |
+| [SYNOLOGY.md](docs/SYNOLOGY.md) | Synology NAS Container Manager setup |
 | [QUICKSTART.md](docs/QUICKSTART.md) | 5-minute quick start reference |
 
 ---
