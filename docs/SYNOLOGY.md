@@ -41,6 +41,15 @@ Your structure should look like:
 └── data/
 ```
 
+### Set Permissions
+
+The container runs as user ID 1000. Set ownership so it can write to the data directory:
+
+```bash
+sudo chown -R 1000:1000 /volume1/docker/unifi-toolkit/data
+sudo chmod 755 /volume1/docker/unifi-toolkit/data
+```
+
 ---
 
 ## Step 2: Create Configuration File
