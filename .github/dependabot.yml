@@ -1,0 +1,52 @@
+version: 2
+updates:
+  # Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    #labels: # Commented Out Labels due to the repo not having any
+    #  - "dependencies"
+    #  - "python"
+    ignore:
+      # aiounifi is locked to version 85 due to Python 3.9-3.12 constraint
+      - dependency-name: "aiounifi"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    assignees:
+      - "chriscrosstalk"
+
+  # Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 3
+    #labels: # Commented Out Labels due to the repo not having any
+    #  - "dependencies"
+    #  - "docker"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    assignees:
+      - "chriscrosstalk"
+
+  # GitHub Actions (if you add workflows in the future)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
