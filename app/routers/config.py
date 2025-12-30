@@ -87,63 +87,82 @@ async def save_unifi_config(
     Save UniFi controller configuration
     Supports both legacy (username/password) and UniFi OS (API key) authentication
     """
+    import logging
+    logger = logging.getLogger(__name__)
     from shared import cache
 
-    # Validate that either password or API key is provided
-    if not config.password and not config.api_key:
+    try:
+        # Validate that either password or API key is provided
+        if not config.password and not config.api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="Either password or api_key must be provided"
+            )
+
+        # Invalidate cache since config is changing
+        cache.invalidate_all()
+
+        # Encrypt credentials
+        encrypted_password = None
+        encrypted_api_key = None
+
+        if config.password:
+            logger.debug("Encrypting password...")
+            encrypted_password = encrypt_password(config.password)
+        if config.api_key:
+            logger.debug("Encrypting API key...")
+            encrypted_api_key = encrypt_api_key(config.api_key)
+
+        # Check if config already exists
+        logger.debug("Checking for existing config...")
+        result = await db.execute(select(UniFiConfig).where(UniFiConfig.id == 1))
+        existing_config = result.scalar_one_or_none()
+
+        # is_unifi_os is auto-detected during connection, default to False for storage
+        is_unifi_os = config.is_unifi_os if config.is_unifi_os is not None else False
+
+        if existing_config:
+            # Update existing config
+            logger.debug("Updating existing config...")
+            existing_config.controller_url = config.controller_url
+            existing_config.username = config.username
+            existing_config.password_encrypted = encrypted_password
+            existing_config.api_key_encrypted = encrypted_api_key
+            existing_config.site_id = config.site_id
+            existing_config.verify_ssl = config.verify_ssl
+            existing_config.is_unifi_os = is_unifi_os
+        else:
+            # Create new config
+            logger.debug("Creating new config...")
+            new_config = UniFiConfig(
+                id=1,
+                controller_url=config.controller_url,
+                username=config.username,
+                password_encrypted=encrypted_password,
+                api_key_encrypted=encrypted_api_key,
+                site_id=config.site_id,
+                verify_ssl=config.verify_ssl,
+                is_unifi_os=is_unifi_os
+            )
+            db.add(new_config)
+
+        logger.debug("Committing to database...")
+        await db.commit()
+        logger.info("UniFi configuration saved successfully")
+
+        return SuccessResponse(
+            success=True,
+            message="UniFi configuration saved successfully"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to save UniFi config: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=400,
-            detail="Either password or api_key must be provided"
+            status_code=500,
+            detail=f"Failed to save configuration: {type(e).__name__}: {str(e)}"
         )
-
-    # Invalidate cache since config is changing
-    cache.invalidate_all()
-
-    # Encrypt credentials
-    encrypted_password = None
-    encrypted_api_key = None
-
-    if config.password:
-        encrypted_password = encrypt_password(config.password)
-    if config.api_key:
-        encrypted_api_key = encrypt_api_key(config.api_key)
-
-    # Check if config already exists
-    result = await db.execute(select(UniFiConfig).where(UniFiConfig.id == 1))
-    existing_config = result.scalar_one_or_none()
-
-    # is_unifi_os is auto-detected during connection, default to False for storage
-    is_unifi_os = config.is_unifi_os if config.is_unifi_os is not None else False
-
-    if existing_config:
-        # Update existing config
-        existing_config.controller_url = config.controller_url
-        existing_config.username = config.username
-        existing_config.password_encrypted = encrypted_password
-        existing_config.api_key_encrypted = encrypted_api_key
-        existing_config.site_id = config.site_id
-        existing_config.verify_ssl = config.verify_ssl
-        existing_config.is_unifi_os = is_unifi_os
-    else:
-        # Create new config
-        new_config = UniFiConfig(
-            id=1,
-            controller_url=config.controller_url,
-            username=config.username,
-            password_encrypted=encrypted_password,
-            api_key_encrypted=encrypted_api_key,
-            site_id=config.site_id,
-            verify_ssl=config.verify_ssl,
-            is_unifi_os=is_unifi_os
-        )
-        db.add(new_config)
-
-    await db.commit()
-
-    return SuccessResponse(
-        success=True,
-        message="UniFi configuration saved successfully"
-    )
 
 
 @router.get("/unifi", response_model=UniFiConfigResponse)
