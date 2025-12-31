@@ -4,6 +4,8 @@ A comprehensive suite of tools for UniFi network management and monitoring.
 
 > **Note:** This project is not affiliated with, endorsed by, or sponsored by Ubiquiti Inc. UniFi is a trademark of Ubiquiti Inc.
 
+<img width="1094" height="748" alt="image" src="https://github.com/user-attachments/assets/a167fc5c-9db5-48f2-8b43-0dfdab3b08a8" />
+
 ## Features
 
 ### Dashboard
@@ -23,12 +25,16 @@ Track specific Wi-Fi client devices through your UniFi infrastructure.
 - Blocked device indicator in device list
 - Webhook alerts (Slack, Discord, n8n) for connect, disconnect, roam, block, and unblock events
 
+<img width="1355" height="702" alt="image" src="https://github.com/user-attachments/assets/383d3c84-1b24-480a-bbaf-e72c47953b85" />
+
 ### Threat Watch
 Monitor IDS/IPS security events from your UniFi gateway.
 - Real-time event monitoring
 - Threat categorization and analysis
 - Top attackers and targets
 - Webhook alerts (Slack, Discord, n8n)
+
+<img width="1359" height="468" alt="image" src="https://github.com/user-attachments/assets/7bfec7f7-bdf6-4ae2-af0e-143dcd982d4a" />
 
 ### Network Pulse
 Real-time network monitoring dashboard.
@@ -37,6 +43,8 @@ Real-time network monitoring dashboard.
 - Chart.js visualizations (clients by band, clients by SSID, top bandwidth)
 - Clickable AP cards with detailed client views
 - WebSocket-powered live updates
+
+<img width="1895" height="957" alt="image" src="https://github.com/user-attachments/assets/ca6f0df5-8657-4c2a-ad16-8807aa21bcac" />
 
 ### UI Product Selector *(External)*
 Build the perfect UniFi network at [uiproductselector.com](https://uiproductselector.com)
