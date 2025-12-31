@@ -75,3 +75,4 @@ docker-compose.override.yml
 # Internal project files (not for public repo)
 /build-notes/
 /assets/
+/drafts/
