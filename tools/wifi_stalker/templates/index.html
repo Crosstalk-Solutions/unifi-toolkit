@@ -562,7 +562,20 @@
                     <!-- Analytics Section (wireless only) -->
                     <div class="analytics-section" x-show="!deviceDetails?.is_wired">
                         <h3>Device Analytics</h3>
-                        <div class="analytics-grid">
+
+                        <!-- Analytics Loading State -->
+                        <div class="analytics-loading" x-show="analyticsLoading">
+                            <div class="loading-spinner"></div>
+                            <span>Loading analytics...</span>
+                        </div>
+
+                        <!-- Analytics Error State -->
+                        <div class="analytics-error" x-show="analyticsError && !analyticsLoading">
+                            <span x-text="analyticsError"></span>
+                        </div>
+
+                        <!-- Analytics Content -->
+                        <div class="analytics-grid" x-show="!analyticsLoading && !analyticsError">
                             <!-- Dwell Time Chart -->
                             <div class="analytics-card">
                                 <div class="analytics-header">
@@ -574,16 +587,16 @@
                                         <option value="all">All Time</option>
                                     </select>
                                 </div>
-                                <div class="chart-container" x-show="dwellTimeData?.total_minutes > 0">
+                                <div class="chart-container" x-show="dwellTimeData && dwellTimeData.total_minutes > 0">
                                     <canvas id="dwellTimeChart"></canvas>
                                 </div>
-                                <div class="no-data-message" x-show="!dwellTimeData?.total_minutes">
+                                <div class="no-data-message" x-show="dwellTimeData && dwellTimeData.total_minutes === 0">
                                     No dwell time data available for this period.
                                 </div>
                                 <a href="#"
                                    @click.prevent="toggleDwellTimeDisplay()"
                                    class="toggle-link"
-                                   x-show="dwellTimeData?.total_minutes > 0">
+                                   x-show="dwellTimeData && dwellTimeData.total_minutes > 0">
                                     Show <span x-text="dwellTimeShowHours ? 'percentages' : 'hours'"></span>
                                 </a>
                             </div>
@@ -593,7 +606,7 @@
                                 <div class="analytics-header">
                                     <span class="analytics-title">Presence Pattern</span>
                                 </div>
-                                <div class="heat-map-wrapper" x-show="presencePattern?.has_sufficient_data">
+                                <div class="heat-map-wrapper" x-show="presencePattern && presencePattern.has_sufficient_data">
                                     <!-- Day labels header -->
                                     <div class="heat-map-header">
                                         <div class="heat-map-corner"></div>
@@ -626,10 +639,10 @@
                                         <span class="legend-label">More</span>
                                     </div>
                                 </div>
-                                <div class="no-data-message" x-show="!presencePattern?.has_sufficient_data">
+                                <div class="no-data-message" x-show="presencePattern && !presencePattern.has_sufficient_data">
                                     Presence patterns require at least 7 days of data.
-                                    <span x-show="presencePattern?.days_of_data > 0">
-                                        Currently have <span x-text="presencePattern?.days_of_data"></span> day(s).
+                                    <span x-show="presencePattern.days_of_data > 0">
+                                        Currently have <span x-text="presencePattern.days_of_data"></span> day(s).
                                     </span>
                                 </div>
                             </div>

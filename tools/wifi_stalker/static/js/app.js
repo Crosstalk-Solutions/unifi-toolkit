@@ -48,6 +48,8 @@ function dashboard() {
         favoriteAP: null,
         presencePattern: null,
         dwellTimeChart: null,
+        analyticsLoading: false,
+        analyticsError: null,
 
         // Webhooks
         webhooks: [],
@@ -467,7 +469,9 @@ function dashboard() {
 
                 // Load analytics for wireless devices
                 if (!data.is_wired) {
-                    // Reset analytics data
+                    // Reset analytics data and set loading state
+                    this.analyticsLoading = true;
+                    this.analyticsError = null;
                     this.dwellTimeData = null;
                     this.favoriteAP = null;
                     this.presencePattern = null;
@@ -478,12 +482,19 @@ function dashboard() {
                         this.dwellTimeChart = null;
                     }
 
-                    // Load analytics data in parallel
-                    await Promise.all([
-                        this.loadDwellTime(deviceId),
-                        this.loadFavoriteAP(deviceId),
-                        this.loadPresencePattern(deviceId)
-                    ]);
+                    try {
+                        // Load analytics data in parallel
+                        await Promise.all([
+                            this.loadDwellTime(deviceId),
+                            this.loadFavoriteAP(deviceId),
+                            this.loadPresencePattern(deviceId)
+                        ]);
+                    } catch (analyticsError) {
+                        console.error('Failed to load analytics:', analyticsError);
+                        this.analyticsError = 'Failed to load analytics data';
+                    } finally {
+                        this.analyticsLoading = false;
+                    }
                 }
             } catch (error) {
                 console.error('Failed to load device details:', error);

@@ -348,18 +348,66 @@ async def process_device(
                 # Get AP name
                 ap_name = await unifi_client.get_ap_name_by_mac(ap_mac)
 
-                # Check if AP changed (roaming event)
-                if device.current_ap_mac != ap_mac:
+                # Determine if this is a new connection or roaming event
+                was_offline = not device.is_connected
+                ap_changed = device.current_ap_mac != ap_mac
+
+                if was_offline:
+                    # Device just came online - always create new history entry
+                    logger.info(f"Device {device.mac_address} came online on AP {ap_name}")
+
+                    # Create new history entry for this connection
+                    new_history = ConnectionHistory(
+                        device_id=device.id,
+                        ap_mac=ap_mac,
+                        ap_name=ap_name,
+                        connected_at=datetime.now(timezone.utc),
+                        signal_strength=signal_strength,
+                        is_wired=False
+                    )
+                    session.add(new_history)
+
+                    # Update device current AP
+                    device.current_ap_mac = ap_mac
+                    device.current_ap_name = ap_name
+                    device.is_connected = True
+
+                    # Broadcast connection event via WebSocket
+                    await ws_manager.broadcast_device_update(_device_to_dict(device))
+
+                    # Calculate offline duration for webhook
+                    offline_duration = None
+                    history_result = await session.execute(
+                        select(ConnectionHistory)
+                        .where(ConnectionHistory.device_id == device.id)
+                        .where(ConnectionHistory.disconnected_at.isnot(None))
+                        .order_by(ConnectionHistory.disconnected_at.desc())
+                    )
+                    last_disconnect = history_result.scalars().first()
+
+                    if last_disconnect and last_disconnect.disconnected_at:
+                        disconnected_at = last_disconnect.disconnected_at
+                        if disconnected_at.tzinfo is None:
+                            disconnected_at = disconnected_at.replace(tzinfo=timezone.utc)
+                        now = datetime.now(timezone.utc)
+                        offline_duration = int((now - disconnected_at).total_seconds())
+                        logger.debug(f"Device {device.mac_address} was offline for {offline_duration} seconds")
+
+                    # Trigger connection webhooks with offline duration
+                    await trigger_webhooks(session, 'connected', device, offline_duration=offline_duration)
+
+                elif ap_changed:
+                    # Device roamed to a different AP
                     logger.info(
                         f"Device {device.mac_address} roamed from "
                         f"{device.current_ap_name or 'unknown'} to {ap_name}"
                     )
 
-                    # Close previous history entry if exists
-                    if device.is_connected and device.current_ap_mac:
+                    # Close previous history entry
+                    if device.current_ap_mac:
                         await close_connection_history(session, device)
 
-                    # Create new history entry
+                    # Create new history entry for new AP
                     new_history = ConnectionHistory(
                         device_id=device.id,
                         ap_mac=ap_mac,
@@ -380,38 +428,8 @@ async def process_device(
                     # Trigger roaming webhooks
                     await trigger_webhooks(session, 'roamed', device)
 
-        # Mark device as connected
-        if not device.is_connected:
-            logger.info(f"Device {device.mac_address} came online")
-            # Broadcast connection event via WebSocket
-            device.is_connected = True
-            await ws_manager.broadcast_device_update(_device_to_dict(device))
-
-            # Calculate offline duration for webhook
-            # Find the most recent closed history entry (where disconnected_at is set)
-            offline_duration = None
-            history_result = await session.execute(
-                select(ConnectionHistory)
-                .where(ConnectionHistory.device_id == device.id)
-                .where(ConnectionHistory.disconnected_at.isnot(None))
-                .order_by(ConnectionHistory.disconnected_at.desc())
-            )
-            last_disconnect = history_result.scalars().first()
-
-            if last_disconnect and last_disconnect.disconnected_at:
-                # Calculate time since last disconnect
-                disconnected_at = last_disconnect.disconnected_at
-                if disconnected_at.tzinfo is None:
-                    disconnected_at = disconnected_at.replace(tzinfo=timezone.utc)
-
-                now = datetime.now(timezone.utc)
-                offline_duration = int((now - disconnected_at).total_seconds())
-                logger.debug(f"Device {device.mac_address} was offline for {offline_duration} seconds")
-
-            # Trigger connection webhooks with offline duration
-            await trigger_webhooks(session, 'connected', device, offline_duration=offline_duration)
-        else:
-            device.is_connected = True
+        # Ensure device is marked as connected
+        device.is_connected = True
 
     else:
         # Device is offline
