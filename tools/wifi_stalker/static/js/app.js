@@ -1071,9 +1071,35 @@ function dashboard() {
         },
 
         /**
-         * Format hour for heat map labels (e.g., "12a", "3p")
+         * Aggregate 24-hour data into 12 2-hour blocks
          */
-        formatHour(hour) {
+        getAggregatedPresenceData() {
+            if (!this.presencePattern?.data) return [];
+            const data = this.presencePattern.data;
+            const aggregated = [];
+
+            // Combine every 2 hours into one row
+            for (let block = 0; block < 12; block++) {
+                const hour1 = block * 2;
+                const hour2 = hour1 + 1;
+                const row = [];
+
+                for (let day = 0; day < 7; day++) {
+                    // Average the two hours for this block
+                    const val1 = data[hour1]?.[day] || 0;
+                    const val2 = data[hour2]?.[day] || 0;
+                    row.push(Math.round((val1 + val2) / 2));
+                }
+                aggregated.push(row);
+            }
+            return aggregated;
+        },
+
+        /**
+         * Format 2-hour block for heat map labels (e.g., "12a", "2a", "4a")
+         */
+        formatHourBlock(block) {
+            const hour = block * 2;
             if (hour === 0) return '12a';
             if (hour === 12) return '12p';
             if (hour < 12) return `${hour}a`;
@@ -1093,22 +1119,24 @@ function dashboard() {
         },
 
         /**
-         * Get tooltip text for heat map cell
+         * Get tooltip text for heat map cell (2-hour blocks)
          */
-        getHeatTooltip(hour, day, value) {
+        getHeatTooltip(block, day, value) {
             const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-            const hourStr = this.formatHour(hour);
+            const startHour = block * 2;
+            const endHour = startHour + 2;
+            const startStr = this.formatHourBlock(block);
+            const endStr = endHour === 24 ? '12a' : this.formatHourBlock(block + 1);
             const dayStr = days[day];
 
             if (value === 0) {
-                return `${dayStr} ${hourStr}: Rarely connected`;
+                return `${dayStr} ${startStr}-${endStr}: Rarely connected`;
             }
 
-            const avgMinutes = value;
-            if (avgMinutes >= 50) {
-                return `${dayStr} ${hourStr}: Usually connected (~${avgMinutes}min avg)`;
+            if (value >= 50) {
+                return `${dayStr} ${startStr}-${endStr}: Usually connected (~${value}min avg)`;
             }
-            return `${dayStr} ${hourStr}: Sometimes connected (~${avgMinutes}min avg)`;
+            return `${dayStr} ${startStr}-${endStr}: Sometimes connected (~${value}min avg)`;
         }
     };
 }

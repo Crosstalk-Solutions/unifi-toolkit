@@ -979,9 +979,8 @@ code {
 }
 
 .heat-map-cell {
-    aspect-ratio: 1;
     border-radius: 2px;
-    min-height: 12px;
+    height: 14px;
     cursor: default;
     transition: transform 0.1s ease;
 }

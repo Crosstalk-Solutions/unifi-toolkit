@@ -614,15 +614,15 @@
                                             <div class="heat-map-day-label" x-text="day"></div>
                                         </template>
                                     </div>
-                                    <!-- Heat map grid with hour labels -->
+                                    <!-- Heat map grid with 2-hour block labels -->
                                     <div class="heat-map-body">
-                                        <template x-for="(row, hour) in presencePattern?.data || []" :key="hour">
+                                        <template x-for="(row, block) in getAggregatedPresenceData()" :key="block">
                                             <div class="heat-map-row">
-                                                <div class="heat-map-hour-label" x-text="formatHour(hour)"></div>
+                                                <div class="heat-map-hour-label" x-text="formatHourBlock(block)"></div>
                                                 <template x-for="(value, day) in row" :key="day">
                                                     <div class="heat-map-cell"
                                                          :class="getHeatClass(value)"
-                                                         :title="getHeatTooltip(hour, day, value)">
+                                                         :title="getHeatTooltip(block, day, value)">
                                                     </div>
                                                 </template>
                                             </div>

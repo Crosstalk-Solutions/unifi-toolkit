@@ -2,6 +2,15 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.8.3] - 2025-01-10
+
+### Wi-Fi Stalker v0.11.2
+
+#### Improved
+- **Condensed Presence Pattern heat map** - Reduced heat map from 24 rows to 12 by aggregating data into 2-hour blocks. Cells are now shorter rectangles instead of squares, allowing the entire heat map to fit within the modal without scrolling.
+
+---
+
 ## [1.8.2] - 2025-01-10
 
 ### Wi-Fi Stalker v0.11.1
