@@ -12,7 +12,7 @@ services:
       # Core settings (loaded from .env)
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./data/unifi_toolkit.db}
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./app/data/unifi_toolkit.db}
       # Deployment settings
       - DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE:-local}
       - AUTH_USERNAME=${AUTH_USERNAME:-}
