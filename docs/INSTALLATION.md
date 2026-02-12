@@ -83,15 +83,16 @@ docker run hello-world
 sudo apt update
 
 # Install Python and required packages
-# Ubuntu 24.04: Python 3.12 is the default
-sudo apt install -y python3.12 python3.12-venv git
+# Ubuntu 24.04: install Python 3.14 (preferred)
+sudo apt install -y python3.14 python3.14-venv git
 
-# Ubuntu 22.04: Python 3.10 is the default, install 3.11 or 3.12
-sudo apt install -y python3.11 python3.11-venv git
-# OR use the deadsnakes PPA for Python 3.12
+# Ubuntu 22.04: Python 3.10 is the default, install 3.14 via deadsnakes
+sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt update
+sudo apt install -y python3.14 python3.14-venv git
 
-# Verify Python version (must be 3.9-3.12, NOT 3.13+)
-python3.12 --version
+# Verify Python version (must be 3.13-3.14)
+python3.14 --version
 ```
 
 > **Note for Ubuntu 24.04 users:** The system Python is "externally managed" (PEP 668), which prevents system-wide pip installs. This is expected - you **must** use a virtual environment (venv) as shown in the installation steps below. The venv approach works around this protection.
@@ -160,8 +161,8 @@ The pre-built image is pulled automatically from GitHub Container Registry.
 ### Start with Python (Alternative)
 
 ```bash
-# Create virtual environment (use python3.12 on Ubuntu 24.04, python3.11 on 22.04)
-python3.12 -m venv venv
+# Create virtual environment (python3.14 preferred)
+python3.14 -m venv venv
 
 # Activate virtual environment
 source venv/bin/activate
@@ -481,11 +482,11 @@ error: externally-managed-environment
 
 **Fix:** Use a virtual environment (venv):
 ```bash
-# Install Python 3.12 venv support
-sudo apt install python3.12 python3.12-venv
+# Install Python 3.14 venv support
+sudo apt install python3.14 python3.14-venv
 
 # Create and activate virtual environment
-python3.12 -m venv venv
+python3.14 -m venv venv
 source venv/bin/activate
 
 # Now pip install works

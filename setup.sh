@@ -50,7 +50,7 @@ check_python() {
         PYTHON_CMD="python"
     else
         print_error "Python 3 is required but not found!"
-        print_info "Please install Python 3.9-3.12 and try again."
+        print_info "Please install Python 3.13-3.14 and try again."
         exit 1
     fi
 
@@ -59,25 +59,25 @@ check_python() {
     MAJOR=$($PYTHON_CMD -c 'import sys; print(sys.version_info.major)')
     MINOR=$($PYTHON_CMD -c 'import sys; print(sys.version_info.minor)')
 
-    if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 9 ]); then
-        print_error "Python 3.9 or higher is required (found $PYTHON_VERSION)"
+    if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 13 ]); then
+        print_error "Python 3.13 or higher is required (found $PYTHON_VERSION)"
         exit 1
     fi
 
-    if [ "$MAJOR" -ge 3 ] && [ "$MINOR" -ge 13 ]; then
-        print_error "Python $PYTHON_VERSION detected. This project requires Python 3.9-3.12."
+    if [ "$MAJOR" -ge 3 ] && [ "$MINOR" -ge 15 ]; then
+        print_error "Python $PYTHON_VERSION detected. This project requires Python 3.13-3.14."
         echo ""
-        print_info "The aiounifi library does not support Python 3.13+."
+        print_info "The aiounifi library requires Python 3.13+; this project supports 3.13-3.14."
         echo ""
-        echo "To fix this, install Python 3.12:"
+        echo "To fix this, install Python 3.14:"
         echo ""
         echo "  Ubuntu/Debian:"
         printf "    ${CYAN}sudo add-apt-repository ppa:deadsnakes/ppa${NC}\n"
         printf "    ${CYAN}sudo apt update${NC}\n"
-        printf "    ${CYAN}sudo apt install python3.12 python3.12-venv python3.12-dev${NC}\n"
+        printf "    ${CYAN}sudo apt install python3.14 python3.14-venv python3.14-dev${NC}\n"
         echo ""
-        echo "  Then create a virtual environment with Python 3.12:"
-        printf "    ${CYAN}python3.12 -m venv venv${NC}\n"
+        echo "  Then create a virtual environment with Python 3.14:"
+        printf "    ${CYAN}python3.14 -m venv venv${NC}\n"
         printf "    ${CYAN}source venv/bin/activate${NC}\n"
         printf "    ${CYAN}pip install -r requirements.txt${NC}\n"
         printf "    ${CYAN}./setup.sh${NC}\n"

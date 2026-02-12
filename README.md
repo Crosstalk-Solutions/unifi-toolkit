@@ -54,7 +54,7 @@ Build the perfect UniFi network at [uiproductselector.com](https://uiproductsele
 ## Quick Start
 
 ### Requirements
-- **Docker** (recommended) or Python 3.9-3.12
+- **Docker** (recommended) or Python 3.13-3.14 (3.14 preferred)
 - **Ubuntu 22.04/24.04** (or other Linux)
 - Access to UniFi Controller
 
@@ -253,7 +253,7 @@ Never expose UniFi controllers via port forwarding
 git clone https://github.com/Crosstalk-Solutions/unifi-toolkit.git
 cd unifi-toolkit
 
-# Create virtual environment (Python 3.9-3.12 only, NOT 3.13+)
+# Create virtual environment (Python 3.13-3.14 (3.14 preferred))
 python3 -m venv venv
 source venv/bin/activate
 
