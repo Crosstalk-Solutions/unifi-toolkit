@@ -25,7 +25,7 @@ class UniFiConfig(Base):
     api_key_encrypted = Column(LargeBinary, nullable=True)
 
     site_id = Column(String, default="default", nullable=False)
-    verify_ssl = Column(Boolean, default=True, nullable=False)
+    verify_ssl = Column(Boolean, default=False, nullable=False)
     is_unifi_os = Column(Boolean, default=False, nullable=False)  # True for UDM/UDR/UCG/UX devices
     last_successful_connection = Column(DateTime, nullable=True)
 

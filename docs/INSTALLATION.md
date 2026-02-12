@@ -3,6 +3,7 @@
 Complete installation instructions for Ubuntu Server (22.04 LTS or 24.04 LTS).
 
 > **Synology NAS users:** See [SYNOLOGY.md](SYNOLOGY.md) for Container Manager instructions.
+> **QNAP NAS users:** See the [community QNAP deployment guide](https://github.com/Crosstalk-Solutions/unifi-toolkit/issues/29) for Container Station instructions.
 
 ## Table of Contents
 

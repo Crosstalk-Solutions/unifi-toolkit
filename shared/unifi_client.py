@@ -7,7 +7,6 @@ from aiounifi.controller import Controller
 from aiounifi.models.configuration import Configuration
 from aiounifi.interfaces.clients import ClientListRequest
 from aiounifi.interfaces.devices import DeviceListRequest
-import ssl
 import logging
 from urllib.parse import urlparse
 
@@ -24,6 +23,7 @@ IDS_IPS_SUPPORTED_MODELS = {
     "UDMSE",        # UDM SE
     "UDR",          # UDR (Dream Router)
     "UDR7",         # UDR7 (Dream Router 7)
+    "UDMA67A",      # UDR7 (Dream Router 7 - actual API model code)
     "UDW",          # UDW (Dream Wall)
     # UXG series (Next-Gen Gateway)
     "UXG",          # UXG Lite (model code is just "UXG" not "UXGLITE")
@@ -54,6 +54,7 @@ UNIFI_MODEL_NAMES = {
     "UDMSE": "UDM SE",
     "UDR": "UDR",
     "UDR7": "Dream Router 7",
+    "UDMA67A": "Dream Router 7",
     "UDW": "UDW",
     # UXG series - Note: "UXG" is the model code for UXG Lite
     "UXG": "UXG Lite",
@@ -77,6 +78,7 @@ UNIFI_MODEL_NAMES = {
     "UXBSDM": "UniFi Express",
     # Access Points
     "U7PROMAX": "U7 Pro Max",
+    "UAPA6A4": "U7 Pro XGS",
     "U7PRO": "U7 Pro",
     "U7PIW": "U7 Pro Wall",
     "U7LR": "U7 LR",
@@ -211,16 +213,12 @@ class UniFiClient:
             logger.debug(f"Authentication method: {'API Key' if self.api_key else 'Username/Password'}")
             logger.debug(f"Site: {self.site}, Verify SSL: {self.verify_ssl}")
 
-            # Create SSL context
-            ssl_context = None
-            if not self.verify_ssl:
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-                logger.debug("SSL verification disabled")
-
             # Create aiohttp session
-            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            # ssl=False disables all SSL verification (for self-signed certs)
+            ssl_param = False if not self.verify_ssl else None
+            if not self.verify_ssl:
+                logger.debug("SSL verification disabled")
+            connector = aiohttp.TCPConnector(ssl=ssl_param)
 
             # Add API key header if using UniFi OS with API key
             headers = {}
