@@ -11,12 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_database
-from shared.models.unifi_config import UniFiConfig
 from shared.unifi_client import UniFiClient
-from shared.crypto import decrypt_password, decrypt_api_key
 from shared.config import get_settings
 from shared.websocket_manager import get_ws_manager
 from shared.webhooks import deliver_webhook
+from shared.unifi_session import get_shared_client, invalidate_shared_client
 from tools.wifi_stalker.database import TrackedDevice, ConnectionHistory, WebhookConfig, HourlyPresence
 
 logger = logging.getLogger(__name__)
@@ -67,19 +66,15 @@ async def refresh_tracked_devices():
     try:
         logger.info("Starting device refresh task")
 
+        # Get shared UniFi client (reuses persistent session)
+        unifi_client = await get_shared_client()
+        if not unifi_client:
+            logger.warning("No UniFi connection available, skipping refresh")
+            return
+
         # Get database session
         db_instance = get_database()
         async for session in db_instance.get_session():
-            # Get UniFi config
-            config_result = await session.execute(
-                select(UniFiConfig).where(UniFiConfig.id == 1)
-            )
-            unifi_config = config_result.scalar_one_or_none()
-
-            if not unifi_config:
-                logger.warning("No UniFi configuration found, skipping refresh")
-                return
-
             # Get all tracked devices
             devices_result = await session.execute(select(TrackedDevice))
             tracked_devices = devices_result.scalars().all()
@@ -90,61 +85,30 @@ async def refresh_tracked_devices():
 
             logger.info(f"Refreshing {len(tracked_devices)} tracked devices")
 
-            # Decrypt UniFi credentials and create client
-            password = None
-            api_key = None
+            # Get all active clients from UniFi
+            active_clients = await unifi_client.get_clients()
+            logger.info(f"Retrieved {len(active_clients)} active clients from UniFi")
 
-            try:
-                if unifi_config.password_encrypted:
-                    password = decrypt_password(unifi_config.password_encrypted)
-                if unifi_config.api_key_encrypted:
-                    api_key = decrypt_api_key(unifi_config.api_key_encrypted)
-            except Exception as e:
-                logger.error(f"Failed to decrypt UniFi credentials: {e}")
-                return
+            # Process each tracked device
+            for device in tracked_devices:
+                await process_device(
+                    session,
+                    device,
+                    active_clients,
+                    unifi_client
+                )
 
-            # is_unifi_os is auto-detected during connection
-            unifi_client = UniFiClient(
-                host=unifi_config.controller_url,
-                username=unifi_config.username,
-                password=password,
-                api_key=api_key,
-                site=unifi_config.site_id,
-                verify_ssl=unifi_config.verify_ssl
-            )
-
-            # Connect to UniFi controller
-            connected = await unifi_client.connect()
-            if not connected:
-                logger.error("Failed to connect to UniFi controller")
-                return
-
-            try:
-                # Get all active clients from UniFi
-                active_clients = await unifi_client.get_clients()
-                logger.info(f"Retrieved {len(active_clients)} active clients from UniFi")
-
-                # Process each tracked device
-                for device in tracked_devices:
-                    await process_device(
-                        session,
-                        device,
-                        active_clients,
-                        unifi_client
-                    )
-
-                # Commit all changes
-                await session.commit()
-                _last_refresh = datetime.now(timezone.utc)
-                logger.info("Device refresh completed successfully")
-
-            finally:
-                await unifi_client.disconnect()
+            # Commit all changes
+            await session.commit()
+            _last_refresh = datetime.now(timezone.utc)
+            logger.info("Device refresh completed successfully")
 
             break  # Exit the async for loop after processing
 
     except Exception as e:
         logger.error(f"Error in refresh task: {e}", exc_info=True)
+        # Invalidate shared session so next cycle reconnects (handles session expiry)
+        await invalidate_shared_client()
 
 
 def _device_to_dict(device: TrackedDevice) -> dict:
@@ -516,6 +480,12 @@ async def refresh_single_device(device_id: int):
     try:
         logger.info(f"Refreshing single device ID: {device_id}")
 
+        # Get shared UniFi client (reuses persistent session)
+        unifi_client = await get_shared_client()
+        if not unifi_client:
+            logger.warning("No UniFi connection available, skipping refresh")
+            return
+
         # Get database session
         db_instance = get_database()
         async for session in db_instance.get_session():
@@ -529,68 +499,27 @@ async def refresh_single_device(device_id: int):
                 logger.warning(f"Device ID {device_id} not found")
                 return
 
-            # Get UniFi config
-            config_result = await session.execute(
-                select(UniFiConfig).where(UniFiConfig.id == 1)
-            )
-            unifi_config = config_result.scalar_one_or_none()
+            # Get all active clients from UniFi
+            active_clients = await unifi_client.get_clients()
 
-            if not unifi_config:
-                logger.warning("No UniFi configuration found, skipping refresh")
-                return
-
-            # Decrypt UniFi credentials and create client
-            password = None
-            api_key = None
-
-            try:
-                if unifi_config.password_encrypted:
-                    password = decrypt_password(unifi_config.password_encrypted)
-                if unifi_config.api_key_encrypted:
-                    api_key = decrypt_api_key(unifi_config.api_key_encrypted)
-            except Exception as e:
-                logger.error(f"Failed to decrypt UniFi credentials: {e}")
-                return
-
-            # is_unifi_os is auto-detected during connection
-            unifi_client = UniFiClient(
-                host=unifi_config.controller_url,
-                username=unifi_config.username,
-                password=password,
-                api_key=api_key,
-                site=unifi_config.site_id,
-                verify_ssl=unifi_config.verify_ssl
+            # Process this specific device
+            await process_device(
+                session,
+                device,
+                active_clients,
+                unifi_client
             )
 
-            # Connect to UniFi controller
-            connected = await unifi_client.connect()
-            if not connected:
-                logger.error("Failed to connect to UniFi controller")
-                return
-
-            try:
-                # Get all active clients from UniFi
-                active_clients = await unifi_client.get_clients()
-
-                # Process this specific device
-                await process_device(
-                    session,
-                    device,
-                    active_clients,
-                    unifi_client
-                )
-
-                # Commit changes
-                await session.commit()
-                logger.info(f"Single device refresh completed for ID: {device_id}")
-
-            finally:
-                await unifi_client.disconnect()
+            # Commit changes
+            await session.commit()
+            logger.info(f"Single device refresh completed for ID: {device_id}")
 
             break  # Exit the async for loop after processing
 
     except Exception as e:
         logger.error(f"Error refreshing single device: {e}", exc_info=True)
+        # Invalidate shared session so next cycle reconnects (handles session expiry)
+        await invalidate_shared_client()
 
 
 async def start_scheduler():

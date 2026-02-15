@@ -10,12 +10,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_database
-from shared.models.unifi_config import UniFiConfig
-from shared.unifi_client import UniFiClient
-from shared.crypto import decrypt_password, decrypt_api_key
 from shared.config import get_settings
 from shared.websocket_manager import get_ws_manager
 from shared.webhooks import deliver_webhook
+from shared.unifi_session import get_shared_client, invalidate_shared_client
 from tools.threat_watch.database import ThreatEvent, ThreatWebhookConfig, ThreatIgnoreRule
 
 logger = logging.getLogger(__name__)
@@ -347,132 +345,97 @@ async def refresh_threat_events():
     try:
         logger.info("Starting threat events refresh task")
 
+        # Get shared UniFi client (reuses persistent session)
+        unifi_client = await get_shared_client()
+        if not unifi_client:
+            logger.warning("No UniFi connection available, skipping refresh")
+            return
+
         db_instance = get_database()
         async for session in db_instance.get_session():
-            # Get UniFi config
-            config_result = await session.execute(
-                select(UniFiConfig).where(UniFiConfig.id == 1)
+            # Get the most recent event timestamp from our database
+            latest_result = await session.execute(
+                select(func.max(ThreatEvent.timestamp))
             )
-            unifi_config = config_result.scalar_one_or_none()
+            latest_timestamp = latest_result.scalar()
 
-            if not unifi_config:
-                logger.warning("No UniFi configuration found, skipping refresh")
-                return
+            # Calculate start time for query
+            # If we have events, get from last event time; otherwise get last 24 hours
+            if latest_timestamp:
+                # Add 1 second to avoid duplicates
+                start_ms = int((latest_timestamp.timestamp() + 1) * 1000)
+            else:
+                # First run - get last 24 hours
+                start_ms = int((datetime.now(timezone.utc) - timedelta(days=1)).timestamp() * 1000)
 
-            # Decrypt credentials
-            password = None
-            api_key = None
+            # Fetch events from UniFi
+            logger.debug(f"Fetching IPS events starting from timestamp: {start_ms}")
+            raw_events = await unifi_client.get_ips_events(start=start_ms)
+            logger.info(f"Retrieved {len(raw_events)} IPS events from UniFi")
 
-            try:
-                if unifi_config.password_encrypted:
-                    password = decrypt_password(unifi_config.password_encrypted)
-                if unifi_config.api_key_encrypted:
-                    api_key = decrypt_api_key(unifi_config.api_key_encrypted)
-            except Exception as e:
-                logger.error(f"Failed to decrypt UniFi credentials: {e}")
-                return
+            # Log if no events returned for debugging
+            if not raw_events:
+                logger.debug("No IPS events returned from UniFi API - this may be normal if no threats detected")
 
-            # is_unifi_os is auto-detected during connection
-            unifi_client = UniFiClient(
-                host=unifi_config.controller_url,
-                username=unifi_config.username,
-                password=password,
-                api_key=api_key,
-                site=unifi_config.site_id,
-                verify_ssl=unifi_config.verify_ssl
-            )
+            # Process and store new events
+            new_count = 0
+            ignored_count = 0
+            for raw_event in raw_events:
+                event_data = parse_unifi_event(raw_event)
 
-            # Connect to UniFi controller
-            connected = await unifi_client.connect()
-            if not connected:
-                logger.error("Failed to connect to UniFi controller")
-                return
-
-            try:
-                # Get the most recent event timestamp from our database
-                latest_result = await session.execute(
-                    select(func.max(ThreatEvent.timestamp))
+                # Check if event already exists
+                existing = await session.execute(
+                    select(ThreatEvent).where(
+                        ThreatEvent.unifi_event_id == event_data['unifi_event_id']
+                    )
                 )
-                latest_timestamp = latest_result.scalar()
+                if existing.scalar_one_or_none():
+                    continue  # Skip duplicate
 
-                # Calculate start time for query
-                # If we have events, get from last event time; otherwise get last 24 hours
-                if latest_timestamp:
-                    # Add 1 second to avoid duplicates
-                    start_ms = int((latest_timestamp.timestamp() + 1) * 1000)
+                # Check ignore rules
+                should_ignore, ignore_rule_id = await check_ignore_rules(session, event_data)
+
+                # Create new event with ignored flag
+                new_event = ThreatEvent(
+                    **event_data,
+                    ignored=should_ignore,
+                    ignored_by_rule_id=ignore_rule_id
+                )
+                session.add(new_event)
+                new_count += 1
+
+                if should_ignore:
+                    ignored_count += 1
+                    continue  # Skip webhooks for ignored events
+
+                # Trigger webhooks only for non-ignored events
+                action = event_data.get('action') or 'alert'
+                await trigger_threat_webhooks(session, event_data, action)
+
+            await session.commit()
+            _last_refresh = datetime.now(timezone.utc)
+
+            if new_count > 0:
+                if ignored_count > 0:
+                    logger.info(f"Stored {new_count} new threat events ({ignored_count} ignored)")
                 else:
-                    # First run - get last 24 hours
-                    start_ms = int((datetime.now(timezone.utc) - timedelta(days=1)).timestamp() * 1000)
+                    logger.info(f"Stored {new_count} new threat events")
 
-                # Fetch events from UniFi
-                logger.debug(f"Fetching IPS events starting from timestamp: {start_ms}")
-                raw_events = await unifi_client.get_ips_events(start=start_ms)
-                logger.info(f"Retrieved {len(raw_events)} IPS events from UniFi")
-
-                # Log if no events returned for debugging
-                if not raw_events:
-                    logger.debug("No IPS events returned from UniFi API - this may be normal if no threats detected")
-
-                # Process and store new events
-                new_count = 0
-                ignored_count = 0
-                for raw_event in raw_events:
-                    event_data = parse_unifi_event(raw_event)
-
-                    # Check if event already exists
-                    existing = await session.execute(
-                        select(ThreatEvent).where(
-                            ThreatEvent.unifi_event_id == event_data['unifi_event_id']
-                        )
-                    )
-                    if existing.scalar_one_or_none():
-                        continue  # Skip duplicate
-
-                    # Check ignore rules
-                    should_ignore, ignore_rule_id = await check_ignore_rules(session, event_data)
-
-                    # Create new event with ignored flag
-                    new_event = ThreatEvent(
-                        **event_data,
-                        ignored=should_ignore,
-                        ignored_by_rule_id=ignore_rule_id
-                    )
-                    session.add(new_event)
-                    new_count += 1
-
-                    if should_ignore:
-                        ignored_count += 1
-                        continue  # Skip webhooks for ignored events
-
-                    # Trigger webhooks only for non-ignored events
-                    action = event_data.get('action') or 'alert'
-                    await trigger_threat_webhooks(session, event_data, action)
-
-                await session.commit()
-                _last_refresh = datetime.now(timezone.utc)
-
-                if new_count > 0:
-                    if ignored_count > 0:
-                        logger.info(f"Stored {new_count} new threat events ({ignored_count} ignored)")
-                    else:
-                        logger.info(f"Stored {new_count} new threat events")
-
-                    # Broadcast update via WebSocket
-                    ws_manager = get_ws_manager()
-                    await ws_manager.broadcast({
-                        'type': 'threat_update',
-                        'new_events': new_count
-                    })
-                else:
-                    logger.debug("No new threat events")
-
-            finally:
-                await unifi_client.disconnect()
+                # Broadcast update via WebSocket
+                ws_manager = get_ws_manager()
+                await ws_manager.broadcast({
+                    'type': 'threat_update',
+                    'new_events': new_count
+                })
+            else:
+                logger.debug("No new threat events")
 
             break  # Exit the async for loop
 
     except Exception as e:
         logger.error(f"Error in threat refresh task: {e}", exc_info=True)
+        # Invalidate shared session so next cycle reconnects (handles session expiry)
+        await invalidate_shared_client()
 
 
 async def start_scheduler():

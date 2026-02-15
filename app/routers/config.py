@@ -90,6 +90,7 @@ async def save_unifi_config(
     import logging
     logger = logging.getLogger(__name__)
     from shared import cache
+    from shared.unifi_session import invalidate_shared_client
 
     try:
         # Validate that either password or API key is provided
@@ -99,8 +100,9 @@ async def save_unifi_config(
                 detail="Either password or api_key must be provided"
             )
 
-        # Invalidate cache since config is changing
+        # Invalidate cache and shared session since config is changing
         cache.invalidate_all()
+        await invalidate_shared_client()
 
         # Encrypt credentials
         encrypted_password = None

@@ -2,6 +2,13 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.9.7] - 2026-02-15
+
+### Changed
+- **Shared UniFi session** - All three schedulers (Threat Watch, Wi-Fi Stalker, Network Pulse) now share a single persistent UniFi controller session instead of each creating a new connection every polling cycle. This reduces login attempts from 3/minute to 1 total, preventing fail2ban lockouts on username/password auth controllers. The session reconnects automatically if it goes stale and invalidates when config is saved via the web UI. (#35)
+
+---
+
 ## [1.9.5] - 2026-02-13
 
 ### Fixed

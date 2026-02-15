@@ -10,11 +10,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
 from shared.database import get_database
-from shared.models.unifi_config import UniFiConfig
-from shared.unifi_client import UniFiClient
-from shared.crypto import decrypt_password, decrypt_api_key
 from shared.config import get_settings
 from shared.websocket_manager import get_ws_manager
+from shared.unifi_session import get_shared_client, invalidate_shared_client
 from tools.network_pulse.models import (
     DashboardData,
     GatewayStats,
@@ -93,256 +91,213 @@ async def refresh_network_stats():
     try:
         logger.info("Starting network stats refresh")
 
-        # Get database session for UniFi config
-        db_instance = get_database()
-        async for session in db_instance.get_session():
-            # Get UniFi config
-            config_result = await session.execute(
-                select(UniFiConfig).where(UniFiConfig.id == 1)
+        # Get shared UniFi client (reuses persistent session)
+        unifi_client = await get_shared_client()
+        if not unifi_client:
+            logger.warning("No UniFi connection available, skipping refresh")
+            _last_error = "No UniFi connection available"
+            return
+
+        logger.info("Using shared UniFi session, fetching data...")
+
+        # Fetch all data in parallel where possible
+        system_info_task = unifi_client.get_system_info()
+        health_task = unifi_client.get_health()
+        ap_details_task = unifi_client.get_ap_details()
+        top_clients_task = unifi_client.get_top_clients(limit=10)
+
+        # Await all tasks
+        system_info, health, ap_details, top_clients = await asyncio.gather(
+            system_info_task,
+            health_task,
+            ap_details_task,
+            top_clients_task
+        )
+
+        # Build dashboard data
+        settings = get_settings()
+
+        # Gateway stats
+        gateway = GatewayStats(
+            model=system_info.get('gateway_model'),
+            name=system_info.get('gateway_name'),
+            version=system_info.get('gateway_version'),
+            uptime=system_info.get('uptime'),
+            cpu_utilization=system_info.get('cpu_utilization'),
+            mem_utilization=system_info.get('mem_utilization'),
+            wan_status=system_info.get('wan_status'),
+            wan_ip=system_info.get('wan_ip')
+        )
+
+        # WAN health
+        wan_health_data = health.get('wan', {})
+        wan = WanHealth(
+            status=wan_health_data.get('status', 'unknown'),
+            wan_ip=wan_health_data.get('wan_ip'),
+            isp_name=wan_health_data.get('isp_name'),
+            availability=wan_health_data.get('availability'),
+            latency=health.get('www', {}).get('latency'),
+            tx_bytes_rate=wan_health_data.get('tx_bytes', 0),
+            rx_bytes_rate=wan_health_data.get('rx_bytes', 0)
+        )
+
+        # Device counts
+        clients = await unifi_client.get_clients()
+        wired_count = sum(1 for c in clients.values() if c.get('is_wired', False))
+        wireless_count = len(clients) - wired_count
+
+        devices = DeviceCounts(
+            clients=len(clients),
+            wired_clients=wired_count,
+            wireless_clients=wireless_count,
+            aps=system_info.get('ap_count', 0),
+            switches=system_info.get('switch_count', 0)
+        )
+
+        # AP status list
+        access_points = [
+            APStatus(
+                mac=ap.get('mac', ''),
+                name=ap.get('name', 'Unknown'),
+                model=ap.get('model', 'Unknown'),
+                model_code=ap.get('model_code'),
+                num_sta=ap.get('num_sta', 0),
+                user_num_sta=ap.get('user_num_sta', 0),
+                guest_num_sta=ap.get('guest_num_sta', 0),
+                channels=ap.get('channels'),
+                state=ap.get('state', 0),
+                uptime=ap.get('uptime', 0),
+                satisfaction=ap.get('satisfaction'),
+                tx_bytes=ap.get('tx_bytes', 0),
+                rx_bytes=ap.get('rx_bytes', 0)
             )
-            unifi_config = config_result.scalar_one_or_none()
+            for ap in ap_details
+        ]
 
-            if not unifi_config:
-                logger.warning("No UniFi configuration found, skipping refresh")
-                _last_error = "No UniFi configuration found"
-                return
-
-            # Decrypt UniFi credentials
-            password = None
-            api_key = None
-
-            try:
-                if unifi_config.password_encrypted:
-                    password = decrypt_password(unifi_config.password_encrypted)
-                if unifi_config.api_key_encrypted:
-                    api_key = decrypt_api_key(unifi_config.api_key_encrypted)
-            except Exception as e:
-                logger.error(f"Failed to decrypt UniFi credentials: {e}")
-                _last_error = "Failed to decrypt credentials"
-                return
-
-            # Create UniFi client
-            # is_unifi_os is auto-detected during connection
-            unifi_client = UniFiClient(
-                host=unifi_config.controller_url,
-                username=unifi_config.username,
-                password=password,
-                api_key=api_key,
-                site=unifi_config.site_id,
-                verify_ssl=unifi_config.verify_ssl
+        # Top clients (top 10 for display)
+        top_clients_list = [
+            TopClient(
+                mac=client.get('mac', ''),
+                name=client.get('name', 'Unknown'),
+                hostname=client.get('hostname'),
+                ip=client.get('ip'),
+                tx_bytes=client.get('tx_bytes', 0),
+                rx_bytes=client.get('rx_bytes', 0),
+                total_bytes=client.get('total_bytes', 0),
+                rssi=client.get('rssi'),
+                is_wired=client.get('is_wired', False),
+                uptime=client.get('uptime'),
+                essid=client.get('essid'),
+                network=client.get('network'),
+                radio=get_radio_band_name(client.get('radio', ''), client.get('is_wired', False)),
+                ap_mac=client.get('ap_mac')
             )
+            for client in top_clients
+        ]
 
-            # Connect to UniFi controller
-            connected = await unifi_client.connect()
-            if not connected:
-                logger.error("Failed to connect to UniFi controller")
-                _last_error = "Failed to connect to UniFi controller"
-                return
+        # All clients list (for AP detail pages)
+        all_clients_list = []
+        clients_by_band: Dict[str, int] = {}
+        clients_by_ssid: Dict[str, int] = {}
 
-            logger.info("Connected to UniFi controller, fetching data...")
+        for client_data in clients.values():
+            is_wired = client_data.get('is_wired', False)
+            radio_band = get_radio_band_name(client_data.get('radio', ''), is_wired)
+            essid = client_data.get('essid')
 
-            try:
-                # Fetch all data in parallel where possible
-                system_info_task = unifi_client.get_system_info()
-                health_task = unifi_client.get_health()
-                ap_details_task = unifi_client.get_ap_details()
-                top_clients_task = unifi_client.get_top_clients(limit=10)
+            # Handle None values for bytes
+            tx_bytes = client_data.get('tx_bytes') or 0
+            rx_bytes = client_data.get('rx_bytes') or 0
 
-                # Await all tasks
-                system_info, health, ap_details, top_clients = await asyncio.gather(
-                    system_info_task,
-                    health_task,
-                    ap_details_task,
-                    top_clients_task
-                )
+            # Build client object
+            client_obj = TopClient(
+                mac=client_data.get('mac', ''),
+                name=client_data.get('name') or client_data.get('hostname') or 'Unknown',
+                hostname=client_data.get('hostname'),
+                ip=client_data.get('ip'),
+                tx_bytes=tx_bytes,
+                rx_bytes=rx_bytes,
+                total_bytes=tx_bytes + rx_bytes,
+                rssi=client_data.get('rssi'),
+                is_wired=is_wired,
+                uptime=client_data.get('uptime'),
+                essid=essid,
+                network=client_data.get('network'),
+                radio=radio_band,
+                ap_mac=client_data.get('ap_mac')
+            )
+            all_clients_list.append(client_obj)
 
-                # Build dashboard data
-                settings = get_settings()
+            # Aggregate by band
+            if is_wired:
+                band_key = "Wired"
+            elif radio_band:
+                band_key = radio_band
+            else:
+                band_key = "Unknown"
+            clients_by_band[band_key] = clients_by_band.get(band_key, 0) + 1
 
-                # Gateway stats
-                gateway = GatewayStats(
-                    model=system_info.get('gateway_model'),
-                    name=system_info.get('gateway_name'),
-                    version=system_info.get('gateway_version'),
-                    uptime=system_info.get('uptime'),
-                    cpu_utilization=system_info.get('cpu_utilization'),
-                    mem_utilization=system_info.get('mem_utilization'),
-                    wan_status=system_info.get('wan_status'),
-                    wan_ip=system_info.get('wan_ip')
-                )
+            # Aggregate by SSID
+            if essid:
+                clients_by_ssid[essid] = clients_by_ssid.get(essid, 0) + 1
+            elif is_wired:
+                clients_by_ssid["Wired"] = clients_by_ssid.get("Wired", 0) + 1
 
-                # WAN health
-                wan_health_data = health.get('wan', {})
-                wan = WanHealth(
-                    status=wan_health_data.get('status', 'unknown'),
-                    wan_ip=wan_health_data.get('wan_ip'),
-                    isp_name=wan_health_data.get('isp_name'),
-                    availability=wan_health_data.get('availability'),
-                    latency=health.get('www', {}).get('latency'),
-                    tx_bytes_rate=wan_health_data.get('tx_bytes', 0),
-                    rx_bytes_rate=wan_health_data.get('rx_bytes', 0)
-                )
+        # Sort all_clients by total bandwidth descending
+        all_clients_list.sort(key=lambda c: c.total_bytes, reverse=True)
 
-                # Device counts
-                clients = await unifi_client.get_clients()
-                wired_count = sum(1 for c in clients.values() if c.get('is_wired', False))
-                wireless_count = len(clients) - wired_count
+        # Build chart data
+        chart_data = ChartData(
+            clients_by_band=clients_by_band,
+            clients_by_ssid=clients_by_ssid
+        )
 
-                devices = DeviceCounts(
-                    clients=len(clients),
-                    wired_clients=wired_count,
-                    wireless_clients=wireless_count,
-                    aps=system_info.get('ap_count', 0),
-                    switches=system_info.get('switch_count', 0)
-                )
+        # Network health
+        network_health = NetworkHealth(
+            wan=health.get('wan'),
+            wan2=health.get('wan2'),
+            lan=health.get('lan'),
+            wlan=health.get('wlan'),
+            vpn=health.get('vpn'),
+            www=health.get('www')
+        )
 
-                # AP status list
-                access_points = [
-                    APStatus(
-                        mac=ap.get('mac', ''),
-                        name=ap.get('name', 'Unknown'),
-                        model=ap.get('model', 'Unknown'),
-                        model_code=ap.get('model_code'),
-                        num_sta=ap.get('num_sta', 0),
-                        user_num_sta=ap.get('user_num_sta', 0),
-                        guest_num_sta=ap.get('guest_num_sta', 0),
-                        channels=ap.get('channels'),
-                        state=ap.get('state', 0),
-                        uptime=ap.get('uptime', 0),
-                        satisfaction=ap.get('satisfaction'),
-                        tx_bytes=ap.get('tx_bytes', 0),
-                        rx_bytes=ap.get('rx_bytes', 0)
-                    )
-                    for ap in ap_details
-                ]
+        # Build complete dashboard data
+        _cached_data = DashboardData(
+            gateway=gateway,
+            wan=wan,
+            devices=devices,
+            current_tx_rate=wan_health_data.get('tx_bytes', 0),
+            current_rx_rate=wan_health_data.get('rx_bytes', 0),
+            access_points=access_points,
+            top_clients=top_clients_list,
+            all_clients=all_clients_list,
+            chart_data=chart_data,
+            health=network_health,
+            last_refresh=datetime.now(timezone.utc),
+            refresh_interval=60
+        )
 
-                # Top clients (top 10 for display)
-                top_clients_list = [
-                    TopClient(
-                        mac=client.get('mac', ''),
-                        name=client.get('name', 'Unknown'),
-                        hostname=client.get('hostname'),
-                        ip=client.get('ip'),
-                        tx_bytes=client.get('tx_bytes', 0),
-                        rx_bytes=client.get('rx_bytes', 0),
-                        total_bytes=client.get('total_bytes', 0),
-                        rssi=client.get('rssi'),
-                        is_wired=client.get('is_wired', False),
-                        uptime=client.get('uptime'),
-                        essid=client.get('essid'),
-                        network=client.get('network'),
-                        radio=get_radio_band_name(client.get('radio', ''), client.get('is_wired', False)),
-                        ap_mac=client.get('ap_mac')
-                    )
-                    for client in top_clients
-                ]
+        _last_refresh = datetime.now(timezone.utc)
+        _last_error = None
 
-                # All clients list (for AP detail pages)
-                all_clients_list = []
-                clients_by_band: Dict[str, int] = {}
-                clients_by_ssid: Dict[str, int] = {}
+        logger.info(
+            f"Network stats refresh completed: "
+            f"{devices.clients} clients, {devices.aps} APs"
+        )
 
-                for client_data in clients.values():
-                    is_wired = client_data.get('is_wired', False)
-                    radio_band = get_radio_band_name(client_data.get('radio', ''), is_wired)
-                    essid = client_data.get('essid')
-
-                    # Handle None values for bytes
-                    tx_bytes = client_data.get('tx_bytes') or 0
-                    rx_bytes = client_data.get('rx_bytes') or 0
-
-                    # Build client object
-                    client_obj = TopClient(
-                        mac=client_data.get('mac', ''),
-                        name=client_data.get('name') or client_data.get('hostname') or 'Unknown',
-                        hostname=client_data.get('hostname'),
-                        ip=client_data.get('ip'),
-                        tx_bytes=tx_bytes,
-                        rx_bytes=rx_bytes,
-                        total_bytes=tx_bytes + rx_bytes,
-                        rssi=client_data.get('rssi'),
-                        is_wired=is_wired,
-                        uptime=client_data.get('uptime'),
-                        essid=essid,
-                        network=client_data.get('network'),
-                        radio=radio_band,
-                        ap_mac=client_data.get('ap_mac')
-                    )
-                    all_clients_list.append(client_obj)
-
-                    # Aggregate by band
-                    if is_wired:
-                        band_key = "Wired"
-                    elif radio_band:
-                        band_key = radio_band
-                    else:
-                        band_key = "Unknown"
-                    clients_by_band[band_key] = clients_by_band.get(band_key, 0) + 1
-
-                    # Aggregate by SSID
-                    if essid:
-                        clients_by_ssid[essid] = clients_by_ssid.get(essid, 0) + 1
-                    elif is_wired:
-                        clients_by_ssid["Wired"] = clients_by_ssid.get("Wired", 0) + 1
-
-                # Sort all_clients by total bandwidth descending
-                all_clients_list.sort(key=lambda c: c.total_bytes, reverse=True)
-
-                # Build chart data
-                chart_data = ChartData(
-                    clients_by_band=clients_by_band,
-                    clients_by_ssid=clients_by_ssid
-                )
-
-                # Network health
-                network_health = NetworkHealth(
-                    wan=health.get('wan'),
-                    wan2=health.get('wan2'),
-                    lan=health.get('lan'),
-                    wlan=health.get('wlan'),
-                    vpn=health.get('vpn'),
-                    www=health.get('www')
-                )
-
-                # Build complete dashboard data
-                _cached_data = DashboardData(
-                    gateway=gateway,
-                    wan=wan,
-                    devices=devices,
-                    current_tx_rate=wan_health_data.get('tx_bytes', 0),
-                    current_rx_rate=wan_health_data.get('rx_bytes', 0),
-                    access_points=access_points,
-                    top_clients=top_clients_list,
-                    all_clients=all_clients_list,
-                    chart_data=chart_data,
-                    health=network_health,
-                    last_refresh=datetime.now(timezone.utc),
-                    refresh_interval=60
-                )
-
-                _last_refresh = datetime.now(timezone.utc)
-                _last_error = None
-
-                logger.info(
-                    f"Network stats refresh completed: "
-                    f"{devices.clients} clients, {devices.aps} APs"
-                )
-
-                # Broadcast update via WebSocket
-                ws_manager = get_ws_manager()
-                await ws_manager.broadcast({
-                    "type": "stats_update",
-                    "data": _cached_data.model_dump()
-                })
-
-            finally:
-                await unifi_client.disconnect()
-
-            break  # Exit the async for loop after processing
+        # Broadcast update via WebSocket
+        ws_manager = get_ws_manager()
+        await ws_manager.broadcast({
+            "type": "stats_update",
+            "data": _cached_data.model_dump()
+        })
 
     except Exception as e:
         logger.error(f"Error in network stats refresh: {e}", exc_info=True)
         _last_error = str(e)
+        # Invalidate shared session so next cycle reconnects (handles session expiry)
+        await invalidate_shared_client()
 
 
 async def start_scheduler():

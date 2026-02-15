@@ -15,6 +15,7 @@ from pathlib import Path
 from shared.database import get_database
 from shared.config import get_settings
 from shared.websocket_manager import get_ws_manager
+from shared.unifi_session import close_shared_client
 from tools.wifi_stalker.main import create_app as create_stalker_app
 from tools.wifi_stalker.scheduler import start_scheduler, stop_scheduler
 from tools.threat_watch.main import create_app as create_threat_watch_app
@@ -141,6 +142,9 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down UI Toolkit...")
 
+    # Close shared UniFi session
+    await close_shared_client()
+
     # Stop Network Pulse scheduler
     logger.info("Stopping Network Pulse scheduler...")
     await stop_pulse_scheduler()
@@ -163,7 +167,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="UI Toolkit",
     description="Comprehensive toolkit for UniFi network management and monitoring",
-    version="1.9.5",
+    version="1.9.7",
     lifespan=lifespan
 )
 
