@@ -28,6 +28,7 @@ IDS_IPS_SUPPORTED_MODELS = {
     # UXG series (Next-Gen Gateway)
     "UXG",          # UXG Lite (model code is just "UXG" not "UXGLITE")
     "UXGPRO",       # UXG Pro
+    "UXGB",         # Gateway Max
     "UXGA6AA",      # UXG Fiber
     # UCG series (Cloud Gateway)
     "UCG",          # UCG
@@ -60,6 +61,7 @@ UNIFI_MODEL_NAMES = {
     # UXG series - Note: "UXG" is the model code for UXG Lite
     "UXG": "UXG Lite",
     "UXGPRO": "UXG Pro",
+    "UXGB": "Gateway Max",
     "UXGA6AA": "UXG Fiber",
     # UCG series
     "UCG": "UCG",
@@ -369,7 +371,7 @@ class UniFiClient:
             # Parse host and port from URL
             parsed = urlparse(self.host)
             host = parsed.hostname or self.host
-            port = parsed.port or 8443
+            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
 
             logger.debug(f"Using legacy controller mode - host: {host}, port: {port}")
 
