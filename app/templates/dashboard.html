@@ -213,7 +213,9 @@
                     <h2>UniFi Controller Configuration</h2>
                     <button class="close-btn" id="close-modal-btn">&times;</button>
                 </div>
+                
                 <div class="modal-body">
+                    <div id="config-message" class="message" style="display: none;"></div>
                     <form id="config-form">
                         <div class="form-group">
                             <label for="controller_url">Controller URL *</label>
@@ -235,51 +237,66 @@
                             </p>
                         </div>
 
-                        <div class="form-group">
-                            <label for="api_key">API Key</label>
-                            <input type="password"
-                                   id="api_key"
-                                   name="api_key"
-                                   placeholder="Enter API key from UniFi Settings > Integrations">
-                            <small>Found in UniFi OS: Settings → Integrations → API Keys. Leave blank if using username/password.</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="username">Username</label>
-                            <input type="text"
-                                   id="username"
-                                   name="username"
-                                   placeholder="admin"
-                                   value="admin">
-                            <small>Leave blank if using API key</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="password">Password</label>
-                            <input type="password"
-                                   id="password"
-                                   name="password"
-                                   placeholder="Your password">
-                            <small>Leave blank if using API key</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="site_id">Site ID</label>
-                            <input type="text"
-                                   id="site_id"
-                                   name="site_id"
-                                   value="default">
-                            <small>Use "default" for single-site setups. For multi-site, use the ID from the URL (not the friendly name). Example: if URL is <code>/manage/site/abc123/...</code> use <code>abc123</code></small>
-                        </div>
-
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox"
-                                       id="verify_ssl"
-                                       name="verify_ssl">
-                                Verify SSL Certificates
+                        <div class="auth-mode-switch" role="radiogroup" aria-label="Authentication method">
+                            <label class="auth-mode-option">
+                                <input type="radio" name="auth_mode" value="api_key" checked>
+                                <span>API Key</span>
                             </label>
-                            <small>Uncheck for self-signed certificates (most UniFi deployments)</small>
+                            <label class="auth-mode-option">
+                                <input type="radio" name="auth_mode" value="username_password">
+                                <span>Username/Password</span>
+                            </label>
+                        </div>
+
+                        <div id="auth-api-fields" class="auth-fields-group">
+                            <div class="form-group">
+                                <label for="api_key">API Key</label>
+                                <input type="password"
+                                       id="api_key"
+                                       name="api_key"
+                                       placeholder="Enter API key from UniFi Settings > Integrations">
+                                <small>Found in UniFi OS: Settings → Integrations → API Keys.</small>
+                            </div>
+                        </div>
+
+                        <div id="auth-credentials-fields" class="auth-fields-group" style="display: none;">
+                            <div class="form-group">
+                                <label for="username">Username</label>
+                                <input type="text"
+                                       id="username"
+                                       name="username"
+                                       placeholder="admin"
+                                       value="admin">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="password">Password</label>
+                                <input type="password"
+                                       id="password"
+                                       name="password"
+                                       placeholder="Your password">
+                            </div>
+                        </div>
+
+                        <div class="form-row form-row-2">
+                            <div class="form-group form-group-compact">
+                                <label for="site_id">Site ID</label>
+                                <input type="text"
+                                       id="site_id"
+                                       name="site_id"
+                                       value="default">
+                                <small>Usually <code>default</code>, or the ID from <code>/manage/site/&lt;id&gt;/...</code></small>
+                            </div>
+
+                            <div class="form-group form-group-compact checkbox-group">
+                                <label class="checkbox-label" for="verify_ssl">
+                                    <input type="checkbox"
+                                           id="verify_ssl"
+                                           name="verify_ssl">
+                                    Verify SSL Certificates
+                                </label>
+                                <small>Enable only with trusted certs</small>
+                            </div>
                         </div>
 
                         <div class="form-actions">
@@ -291,8 +308,6 @@
                                 Cancel
                             </button>
                         </div>
-
-                        <div id="config-message" class="message" style="display: none;"></div>
                     </form>
                 </div>
             </div>
@@ -741,6 +756,69 @@
             const configForm = document.getElementById('config-form');
             const testConnectionBtn = document.getElementById('test-connection-btn');
             const configMessage = document.getElementById('config-message');
+            const authModeInputs = document.querySelectorAll('input[name="auth_mode"]');
+            const authApiFields = document.getElementById('auth-api-fields');
+            const authCredentialsFields = document.getElementById('auth-credentials-fields');
+            const apiKeyInput = document.getElementById('api_key');
+            const passwordInput = document.getElementById('password');
+            const autoTestInputs = configForm.querySelectorAll('input[type="text"], input[type="password"]');
+            let autoTestTimer = null;
+            let isTestingConnection = false;
+            let pendingAutoTest = false;
+
+            function setAuthMode(mode) {
+                const useApiKey = mode === 'api_key';
+                authApiFields.style.display = useApiKey ? 'block' : 'none';
+                authCredentialsFields.style.display = useApiKey ? 'none' : 'block';
+                apiKeyInput.required = useApiKey;
+                passwordInput.required = !useApiKey;
+            }
+
+            function getAuthMode() {
+                const selected = document.querySelector('input[name="auth_mode"]:checked');
+                return selected ? selected.value : 'api_key';
+            }
+
+            function hasRequiredFieldsForTest() {
+                const formData = new FormData(configForm);
+                const authMode = getAuthMode();
+                const controllerUrl = (formData.get('controller_url') || '').trim();
+                const apiKey = (formData.get('api_key') || '').trim();
+                const password = (formData.get('password') || '').trim();
+
+                if (!controllerUrl) {
+                    return false;
+                }
+
+                if (authMode === 'api_key') {
+                    return !!apiKey;
+                }
+
+                return !!password;
+            }
+
+            function scheduleAutoTest() {
+                if (!configModal || configModal.style.display !== 'flex') {
+                    return;
+                }
+
+                if (autoTestTimer) {
+                    clearTimeout(autoTestTimer);
+                }
+
+                autoTestTimer = setTimeout(async () => {
+                    if (isTestingConnection) {
+                        pendingAutoTest = true;
+                        return;
+                    }
+
+                    if (!hasRequiredFieldsForTest()) {
+                        return;
+                    }
+
+                    await testConnection(true);
+                }, 800);
+            }
 
             // Show config message
             function showConfigMessage(message, type = 'info') {
@@ -774,6 +852,13 @@
                         document.getElementById('username').value = config.username || 'admin';
                         document.getElementById('site_id').value = config.site_id || 'default';
                         document.getElementById('verify_ssl').checked = config.verify_ssl || false;
+
+                        const authMode = config.has_api_key ? 'api_key' : 'username_password';
+                        const selectedAuthInput = document.querySelector(`input[name="auth_mode"][value="${authMode}"]`);
+                        if (selectedAuthInput) {
+                            selectedAuthInput.checked = true;
+                        }
+                        setAuthMode(authMode);
                     }
                 } catch (error) {
                     console.log('No existing config found');
@@ -785,18 +870,24 @@
                 e.preventDefault();
 
                 const formData = new FormData(configForm);
+                const authMode = getAuthMode();
                 const data = {
                     controller_url: formData.get('controller_url'),
                     username: formData.get('username') || 'admin',
-                    password: formData.get('password') || null,
-                    api_key: formData.get('api_key') || null,
+                    password: authMode === 'username_password' ? (formData.get('password') || null) : null,
+                    api_key: authMode === 'api_key' ? (formData.get('api_key') || null) : null,
                     site_id: formData.get('site_id') || 'default',
                     verify_ssl: formData.get('verify_ssl') === 'on'
                 };
 
-                // Validate that either password or API key is provided
-                if (!data.password && !data.api_key) {
-                    showConfigMessage('Please provide either a password or API key', 'error');
+                // Validate auth fields based on selected auth mode
+                if (authMode === 'api_key' && !data.api_key) {
+                    showConfigMessage('Please provide an API key', 'error');
+                    return;
+                }
+
+                if (authMode === 'username_password' && !data.password) {
+                    showConfigMessage('Please provide a password', 'error');
                     return;
                 }
 
@@ -861,31 +952,51 @@
             }
 
             // Test connection (tests the form data, not saved config)
-            async function testConnection() {
+            async function testConnection(isAuto = false) {
+                if (isTestingConnection) {
+                    pendingAutoTest = isAuto;
+                    return;
+                }
+
                 const formData = new FormData(configForm);
+                const authMode = getAuthMode();
                 const data = {
                     controller_url: formData.get('controller_url'),
                     username: formData.get('username') || 'admin',
-                    password: formData.get('password') || null,
-                    api_key: formData.get('api_key') || null,
+                    password: authMode === 'username_password' ? (formData.get('password') || null) : null,
+                    api_key: authMode === 'api_key' ? (formData.get('api_key') || null) : null,
                     site_id: formData.get('site_id') || 'default',
                     verify_ssl: formData.get('verify_ssl') === 'on'
                 };
 
-                // Validate that either password or API key is provided
-                if (!data.password && !data.api_key) {
-                    showConfigMessage('Please provide either a password or API key', 'error');
+                // Validate auth fields based on selected auth mode
+                if (authMode === 'api_key' && !data.api_key) {
+                    if (!isAuto) {
+                        showConfigMessage('Please provide an API key', 'error');
+                    }
+                    return;
+                }
+
+                if (authMode === 'username_password' && !data.password) {
+                    if (!isAuto) {
+                        showConfigMessage('Please provide a password', 'error');
+                    }
                     return;
                 }
 
                 if (!data.controller_url) {
-                    showConfigMessage('Please enter a controller URL', 'error');
+                    if (!isAuto) {
+                        showConfigMessage('Please enter a controller URL', 'error');
+                    }
                     return;
                 }
 
+                isTestingConnection = true;
                 testConnectionBtn.disabled = true;
                 testConnectionBtn.textContent = 'Testing...';
-                showConfigMessage('Testing connection to UniFi controller...', 'info');
+                if (!isAuto) {
+                    showConfigMessage('Testing connection to UniFi controller...', 'info');
+                }
 
                 try {
                     const response = await fetch('/api/config/unifi/test', {
@@ -910,8 +1021,14 @@
                 } catch (error) {
                     showConfigMessage('Error testing connection: ' + error.message, 'error');
                 } finally {
+                    isTestingConnection = false;
                     testConnectionBtn.disabled = false;
                     testConnectionBtn.textContent = 'Test Connection';
+
+                    if (pendingAutoTest) {
+                        pendingAutoTest = false;
+                        scheduleAutoTest();
+                    }
                 }
             }
 
@@ -924,6 +1041,20 @@
                 e.preventDefault();
                 openModal();
             });
+
+            authModeInputs.forEach((input) => {
+                input.addEventListener('change', () => {
+                    setAuthMode(input.value);
+                    scheduleAutoTest();
+                });
+            });
+
+            autoTestInputs.forEach((input) => {
+                input.addEventListener('input', scheduleAutoTest);
+                input.addEventListener('change', scheduleAutoTest);
+            });
+
+            setAuthMode(getAuthMode());
 
             closeModalBtn.addEventListener('click', closeModal);
             cancelConfigBtn.addEventListener('click', closeModal);

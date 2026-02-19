@@ -891,16 +891,16 @@ body {
     border-radius: 12px;
     box-shadow: var(--shadow-lg);
     width: 100%;
-    max-width: 600px;
-    max-height: 90vh;
-    overflow-y: auto;
+    max-width: 760px;
+    max-height: 95vh;
+    overflow-y: hidden;
 }
 
 .modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1.5rem;
+    padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--border-color);
 }
 
@@ -932,11 +932,11 @@ body {
 }
 
 .modal-body {
-    padding: 1.5rem;
+    padding: 1rem 1.25rem;
 }
 
 .form-group {
-    margin-bottom: 1.5rem;
+    margin-bottom: 0.9rem;
 }
 
 .form-group label {
@@ -972,15 +972,16 @@ body {
     display: block;
     margin-top: 0.25rem;
     color: var(--text-secondary);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+    line-height: 1.35;
 }
 
 .auth-info-box {
     background: var(--background);
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1.5rem;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
 }
 
 .auth-info-box strong {
@@ -988,22 +989,91 @@ body {
 }
 
 .auth-info-box p {
-    margin: 0.5rem 0 0 0;
+    margin: 0.25rem 0 0 0;
     color: var(--text-secondary);
-    line-height: 1.6;
+    line-height: 1.35;
+    font-size: 0.9rem;
+}
+
+.auth-mode-switch {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.8rem;
+}
+
+.auth-mode-option {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--background);
+    color: var(--text-secondary);
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.2s, background-color 0.2s, color 0.2s;
+}
+
+.auth-mode-option input[type="radio"] {
+    margin: 0;
+}
+
+.auth-mode-option:has(input:checked) {
+    border-color: var(--primary-color);
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .auth-mode-option:has(input:checked) {
+    background: var(--surface);
+}
+
+.auth-fields-group {
+    margin-bottom: 0.25rem;
+}
+
+.form-row {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.form-row-2 {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+}
+
+.form-group-compact {
+    margin-bottom: 0;
+}
+
+.checkbox-group {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: var(--background);
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0;
 }
 
 .form-actions {
     display: flex;
     gap: 0.75rem;
-    margin-top: 2rem;
+    margin-top: 1rem;
     flex-wrap: wrap;
 }
 
 .message {
     padding: 0.75rem 1rem;
     border-radius: 6px;
-    margin-top: 1rem;
+    margin: 0 0 1rem 0;
     font-size: 0.9rem;
 }
 
@@ -1044,6 +1114,12 @@ body {
     .modal-content {
         max-width: 100%;
         margin: 1rem;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    .form-row-2 {
+        grid-template-columns: 1fr;
     }
 
     .form-actions {
