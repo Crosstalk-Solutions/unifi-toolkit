@@ -447,10 +447,13 @@
             </div>
 
             <!-- Rogue Support Banner -->
-            <div class="promo-banner">
-                <a href="https://Rogue.Support" target="_blank" rel="noopener noreferrer" title="Rogue Support - Networking Consultation for Home Users">
-                    <img src="/static/images/RS-banner-new3-1200x400.png" alt="Rogue Support - Your Uber for Computer Networking">
-                </a>
+            <div class="promo-banner" id="promo-banner">
+                <div class="promo-banner-media">
+                    <button type="button" class="promo-close-btn" id="promo-close-btn" aria-label="Hide banner permanently">&times;</button>
+                    <a href="https://Rogue.Support" target="_blank" rel="noopener noreferrer" title="Rogue Support - Networking Consultation for Home Users">
+                        <img src="/static/images/RS-banner-new3-1200x400.png" alt="Rogue Support - Your Uber for Computer Networking">
+                    </a>
+                </div>
             </div>
         </main>
 
@@ -1247,6 +1250,25 @@
 
                 // Open in new tab
                 window.open(issueUrl, '_blank');
+            });
+        })();
+
+        // Dismissible promo banner
+        (function() {
+            const banner = document.getElementById('promo-banner');
+            const closeBtn = document.getElementById('promo-close-btn');
+            const storageKey = 'unifi-toolkit-hide-promo-banner';
+
+            if (!banner || !closeBtn) return;
+
+            if (localStorage.getItem(storageKey) === 'true') {
+                banner.style.display = 'none';
+                return;
+            }
+
+            closeBtn.addEventListener('click', () => {
+                localStorage.setItem(storageKey, 'true');
+                banner.style.display = 'none';
             });
         })();
     </script>

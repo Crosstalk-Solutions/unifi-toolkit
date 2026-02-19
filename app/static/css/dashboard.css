@@ -650,10 +650,14 @@ body {
     text-align: center;
 }
 
-.promo-banner a {
-    display: block;
+.promo-banner-media {
+    position: relative;
     border-radius: 12px;
     overflow: hidden;
+}
+
+.promo-banner a {
+    display: block;
     box-shadow: var(--shadow);
     transition: transform 0.2s, box-shadow 0.2s;
 }
@@ -667,6 +671,31 @@ body {
     width: 100%;
     height: auto;
     display: block;
+}
+
+.promo-close-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.promo-close-btn:hover {
+    background: var(--border-color);
+    color: var(--text-primary);
 }
 
 @media (max-width: 768px) {
