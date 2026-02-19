@@ -382,6 +382,31 @@ body {
     transition: transform 0.2s, box-shadow 0.2s;
     display: flex;
     flex-direction: column;
+    position: relative;
+}
+
+.tool-card-close-btn {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.6rem;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--background);
+    color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.tool-card-close-btn:hover {
+    background: var(--border-color);
+    color: var(--text-primary);
 }
 
 .tool-card:hover {

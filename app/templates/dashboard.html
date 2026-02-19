@@ -382,7 +382,8 @@
                     </div>
                 </div>
 
-                <div class="tool-card">
+                <div class="tool-card" id="ui-product-selector-card">
+                    <button type="button" class="tool-card-close-btn" id="ui-product-selector-close-btn" aria-label="Hide UI Product Selector permanently">&times;</button>
                     <div class="tool-icon tool-icon-image">
                         <img src="/static/images/ui-product-selector-logo-280x80.png" alt="UI Product Selector">
                     </div>
@@ -402,47 +403,6 @@
                         </div>
                         <div class="tool-version">&nbsp;</div>
                     </div>
-                </div>
-            </div>
-
-            <!-- Info Section -->
-            <div class="info-section">
-                <div class="info-card">
-                    <h3>About UniFi Toolkit</h3>
-                    <p>
-                        UniFi Toolkit is a comprehensive collection of tools designed to enhance
-                        your UniFi network management experience. Each tool is purpose-built to
-                        solve specific networking challenges and provide deep insights into your
-                        infrastructure.
-                    </p>
-                    <p>
-                        All tools share a common UniFi controller configuration, making it easy
-                        to manage multiple capabilities from a single installation.
-                    </p>
-                </div>
-
-                <div class="info-card">
-                    <h3>Getting Started</h3>
-                    <ol>
-                        <li>Select a tool from the grid above</li>
-                        <li>Configure your UniFi controller connection</li>
-                        <li>Start using the tool's features</li>
-                        <li>If you like this project, consider <a href="https://ko-fi.com/crosstalk" target="_blank">buying me a coffee</a>!</li>
-                    </ol>
-                    <p>
-                        Each tool has its own configuration and data, but they all leverage
-                        shared infrastructure for authentication and UniFi API access.
-                    </p>
-                </div>
-
-                <div class="info-card">
-                    <h3>System Requirements</h3>
-                    <ul>
-                        <li>UniFi Network Controller (Cloud Key, UDM, UCG, or standalone)</li>
-                        <li>Python 3.9 - 3.12</li>
-                        <li>Access to UniFi Controller API</li>
-                        <li>Modern web browser with JavaScript enabled</li>
-                    </ul>
                 </div>
             </div>
 
@@ -1269,6 +1229,25 @@
             closeBtn.addEventListener('click', () => {
                 localStorage.setItem(storageKey, 'true');
                 banner.style.display = 'none';
+            });
+        })();
+
+        // Dismissible UI Product Selector card
+        (function() {
+            const card = document.getElementById('ui-product-selector-card');
+            const closeBtn = document.getElementById('ui-product-selector-close-btn');
+            const storageKey = 'unifi-toolkit-hide-ui-product-selector';
+
+            if (!card || !closeBtn) return;
+
+            if (localStorage.getItem(storageKey) === 'true') {
+                card.style.display = 'none';
+                return;
+            }
+
+            closeBtn.addEventListener('click', () => {
+                localStorage.setItem(storageKey, 'true');
+                card.style.display = 'none';
             });
         })();
     </script>
