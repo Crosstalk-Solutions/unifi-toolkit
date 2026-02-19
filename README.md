@@ -107,6 +107,7 @@ Access at **https://your-domain.com**
 | [INSTALLATION.md](docs/INSTALLATION.md) | Complete installation guide with troubleshooting |
 | [SYNOLOGY.md](docs/SYNOLOGY.md) | Synology NAS Container Manager setup |
 | [QNAP Guide](https://github.com/Crosstalk-Solutions/unifi-toolkit/issues/29) | QNAP Container Station setup (community) |
+| [Unraid Guide] (docs/UNRAID.md) | Unraid Community apps Setup |
 | [QUICKSTART.md](docs/QUICKSTART.md) | 5-minute quick start reference |
 
 ---
