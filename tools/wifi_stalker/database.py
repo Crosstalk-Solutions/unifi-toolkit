@@ -23,6 +23,7 @@ class TrackedDevice(Base):
     current_ssid = Column(String, nullable=True)
     current_ip_address = Column(String, nullable=True)
     current_signal_strength = Column(Integer, nullable=True)
+    current_radio = Column(String, nullable=True)  # "ng" (2.4GHz), "na" (5GHz), "6e" (6GHz)
     is_connected = Column(Boolean, default=False, nullable=False)
     is_blocked = Column(Boolean, default=False, nullable=False)
     site_id = Column(String, nullable=False)

@@ -152,12 +152,19 @@
                                         <span class="wired-badge">Wired</span>
                                     </template>
                                     <template x-if="!device.is_wired">
-                                        <span x-show="device.current_signal_strength"
-                                              class="signal-badge"
-                                              :class="getSignalClass(device.current_signal_strength)"
-                                              x-text="device.current_signal_strength + ' dBm'">
+                                        <span>
+                                            <span x-show="device.current_signal_strength"
+                                                  class="signal-badge"
+                                                  :class="getSignalClass(device.current_signal_strength)"
+                                                  x-text="device.current_signal_strength + ' dBm'">
+                                            </span>
+                                            <span x-show="!device.current_signal_strength">-</span>
+                                            <br x-show="device.current_radio">
+                                            <span x-show="device.current_radio"
+                                                  class="radio-label"
+                                                  x-text="getRadioBand(device.current_radio)">
+                                            </span>
                                         </span>
-                                        <span x-show="!device.current_signal_strength && !device.is_wired">-</span>
                                     </template>
                                 </td>
                                 <td x-text="formatDateTime(device.last_seen)"></td>

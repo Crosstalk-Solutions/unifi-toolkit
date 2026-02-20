@@ -131,6 +131,7 @@ def _device_to_dict(device: TrackedDevice) -> dict:
         'current_ap_mac': device.current_ap_mac,
         'current_ip_address': device.current_ip_address,
         'current_signal_strength': device.current_signal_strength,
+        'current_radio': device.current_radio,
         'last_seen': device.last_seen.isoformat() if device.last_seen else None,
         'added_at': device.added_at.isoformat() if device.added_at else None,
         # Wired device fields
@@ -240,6 +241,7 @@ async def process_device(
             sw_mac = client.get('sw_mac')
             sw_port = client.get('sw_port')
             essid = client.get('essid')
+            radio = client.get('radio')
         else:
             ap_mac = getattr(client, 'ap_mac', None)
             ip_address = getattr(client, 'ip', None)
@@ -248,6 +250,7 @@ async def process_device(
             sw_mac = getattr(client, 'sw_mac', None)
             sw_port = getattr(client, 'sw_port', None)
             essid = getattr(client, 'essid', None)
+            radio = getattr(client, 'radio', None)
 
         # Update current IP
         device.current_ip_address = ip_address
@@ -259,6 +262,7 @@ async def process_device(
             # Wired device - track switch/port instead of AP
             device.current_signal_strength = None  # No signal for wired
             device.current_ssid = None  # No SSID for wired
+            device.current_radio = None  # No radio for wired
 
             if sw_mac:
                 # Get switch name
@@ -307,6 +311,7 @@ async def process_device(
             # Wireless device - track AP
             device.current_signal_strength = signal_strength
             device.current_ssid = essid
+            device.current_radio = radio
 
             # Clear switch fields for wireless devices
             device.current_switch_mac = None

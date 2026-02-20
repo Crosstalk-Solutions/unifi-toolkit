@@ -781,6 +781,11 @@ code {
     margin-left: 0.25rem;
 }
 
+.radio-label {
+    color: var(--text-secondary);
+    font-size: 0.75em;
+}
+
 /* Wired Device Indicator */
 .wired-indicator {
     color: var(--primary-color);

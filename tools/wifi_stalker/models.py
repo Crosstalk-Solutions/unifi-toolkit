@@ -87,6 +87,7 @@ class DeviceResponse(BaseModel):
     current_ssid: Optional[str] = None
     current_ip_address: Optional[str]
     current_signal_strength: Optional[int]
+    current_radio: Optional[str] = None  # "ng" (2.4GHz), "na" (5GHz), "6e" (6GHz)
     is_connected: bool
     is_blocked: bool = False
     site_id: str
