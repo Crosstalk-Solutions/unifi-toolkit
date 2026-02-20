@@ -67,12 +67,12 @@ def _parse_v2_traffic_flow(event: dict) -> dict:
     The v2 format has IPS data nested in an 'ips' object and source/destination
     info in 'source' and 'destination' objects.
     """
-    # Parse timestamp - v2 uses 'time' in milliseconds
+    # Parse timestamp - v2 typically uses 'time' in milliseconds
+    # but _normalize_timestamp handles either format safely
     timestamp = None
     if 'time' in event:
         try:
-            ts_ms = event['time']
-            timestamp = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+            timestamp = _normalize_timestamp(event['time'])
         except (ValueError, TypeError):
             pass
     if not timestamp:
@@ -145,22 +145,33 @@ def _parse_v2_traffic_flow(event: dict) -> dict:
     }
 
 
+def _normalize_timestamp(value) -> datetime:
+    """
+    Convert a UniFi timestamp to a datetime object.
+    Handles both seconds and milliseconds formats by checking magnitude.
+    Values > 10 billion are treated as milliseconds, otherwise as seconds.
+    """
+    ts = float(value)
+    if ts > 1e10:
+        ts = ts / 1000
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
 def _parse_legacy_ips_event(event: dict) -> dict:
     """
     Parse a legacy stat/ips/event response (pre-Network 10.x) into our database format.
     """
-    # Parse timestamp - UniFi uses milliseconds
+    # Parse timestamp — 'timestamp' is typically seconds, 'time' is typically milliseconds,
+    # but _normalize_timestamp handles either format safely.
     timestamp = None
     if 'timestamp' in event:
         try:
-            ts_ms = event['timestamp']
-            timestamp = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+            timestamp = _normalize_timestamp(event['timestamp'])
         except (ValueError, TypeError):
             pass
     if not timestamp and 'time' in event:
         try:
-            ts_ms = event['time']
-            timestamp = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+            timestamp = _normalize_timestamp(event['time'])
         except (ValueError, TypeError):
             pass
     if not timestamp:
