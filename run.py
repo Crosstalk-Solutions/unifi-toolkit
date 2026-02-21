@@ -168,42 +168,58 @@ def _repair_schema():
     if not db_path.exists():
         return  # No database yet, nothing to repair
 
+    def _add_missing_columns(cursor, table, columns):
+        """Check a table for missing columns and add them."""
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cursor.fetchall()}
+        if not existing:
+            return  # Table doesn't exist yet
+        for col_name, col_sql in columns.items():
+            if col_name not in existing:
+                print(f"Schema repair: adding missing column '{col_name}' to {table}")
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_sql}")
+
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
-        # Get existing columns for threats_events
-        cursor.execute("PRAGMA table_info(threats_events)")
-        existing_columns = {row[1] for row in cursor.fetchall()}
+        # threats_events — migrations #8 (ignore rules)
+        _add_missing_columns(cursor, 'threats_events', {
+            'ignored': "ignored BOOLEAN NOT NULL DEFAULT 0",
+            'ignored_by_rule_id': "ignored_by_rule_id INTEGER",
+        })
 
-        if not existing_columns:
-            conn.close()
-            return  # Table doesn't exist yet
+        # stalker_tracked_devices — migrations #2, #5, #9, #10
+        _add_missing_columns(cursor, 'stalker_tracked_devices', {
+            'is_blocked': "is_blocked BOOLEAN",
+            'is_wired': "is_wired BOOLEAN",
+            'current_switch_mac': "current_switch_mac VARCHAR",
+            'current_switch_name': "current_switch_name VARCHAR",
+            'current_switch_port': "current_switch_port INTEGER",
+            'current_ssid': "current_ssid VARCHAR",
+            'current_radio': "current_radio VARCHAR",
+        })
 
-        # Check for missing columns and add them
-        missing_columns = {
-            'ignored': "ALTER TABLE threats_events ADD COLUMN ignored BOOLEAN NOT NULL DEFAULT 0",
-            'ignored_by_rule_id': "ALTER TABLE threats_events ADD COLUMN ignored_by_rule_id INTEGER",
-        }
+        # stalker_connection_history — migrations #5, #9
+        _add_missing_columns(cursor, 'stalker_connection_history', {
+            'is_wired': "is_wired BOOLEAN",
+            'switch_mac': "switch_mac VARCHAR",
+            'switch_name': "switch_name VARCHAR",
+            'switch_port': "switch_port INTEGER",
+            'ssid': "ssid VARCHAR",
+        })
 
-        for col_name, sql in missing_columns.items():
-            if col_name not in existing_columns:
-                print(f"Schema repair: adding missing column '{col_name}' to threats_events")
-                cursor.execute(sql)
+        # stalker_webhook_config — migration #3
+        _add_missing_columns(cursor, 'stalker_webhook_config', {
+            'event_device_blocked': "event_device_blocked BOOLEAN",
+            'event_device_unblocked': "event_device_unblocked BOOLEAN",
+        })
 
-        # Repair stalker_tracked_devices
-        cursor.execute("PRAGMA table_info(stalker_tracked_devices)")
-        stalker_columns = {row[1] for row in cursor.fetchall()}
-        if stalker_columns and 'current_ssid' not in stalker_columns:
-            print("Schema repair: adding missing column 'current_ssid' to stalker_tracked_devices")
-            cursor.execute("ALTER TABLE stalker_tracked_devices ADD COLUMN current_ssid VARCHAR")
-
-        # Repair stalker_connection_history
-        cursor.execute("PRAGMA table_info(stalker_connection_history)")
-        history_columns = {row[1] for row in cursor.fetchall()}
-        if history_columns and 'ssid' not in history_columns:
-            print("Schema repair: adding missing column 'ssid' to stalker_connection_history")
-            cursor.execute("ALTER TABLE stalker_connection_history ADD COLUMN ssid VARCHAR")
+        # unifi_config — migrations #4, #6
+        _add_missing_columns(cursor, 'unifi_config', {
+            'is_unifi_os': "is_unifi_os BOOLEAN",
+            'api_key_encrypted': "api_key_encrypted BLOB",
+        })
 
         conn.commit()
         conn.close()
