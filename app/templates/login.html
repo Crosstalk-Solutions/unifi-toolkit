@@ -280,16 +280,22 @@
     <script>
         // Apply saved theme immediately to prevent flash
         (function() {
-            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || 'dark';
-            document.documentElement.setAttribute('data-theme', savedTheme);
+            const DEFAULT_THEME = 'auto';
+            function getResolvedTheme(preference) {
+                if (preference === 'dark') return 'dark';
+                if (preference === 'light') return 'light';
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || DEFAULT_THEME;
+            document.documentElement.setAttribute('data-theme', getResolvedTheme(savedTheme));
         })();
     </script>
 </head>
 <body>
     <!-- Theme Toggle -->
     <div class="theme-toggle">
-        <button class="theme-toggle-btn" id="theme-toggle" title="Toggle dark/light mode">
-            <span id="theme-icon">☀️</span>
+        <button class="theme-toggle-btn" id="theme-toggle" title="Toggle theme (auto/light/dark)">
+            <span id="theme-icon">🔄</span>
         </button>
     </div>
 
@@ -361,27 +367,45 @@
     </div>
 
     <script>
-        // Theme toggle functionality
+        // Theme toggle functionality (auto / light / dark)
         (function() {
             const themeToggle = document.getElementById('theme-toggle');
             const themeIcon = document.getElementById('theme-icon');
+            const THEMES = ['auto', 'light', 'dark'];
 
-            function updateThemeUI(theme) {
-                themeIcon.textContent = theme === 'dark' ? '☀️' : '🌙';
+            function getResolvedTheme(preference) {
+                if (preference === 'dark') return 'dark';
+                if (preference === 'light') return 'light';
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
             }
 
-            // Initialize UI based on current theme
-            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-            updateThemeUI(currentTheme);
+            function applyTheme(preference) {
+                document.documentElement.setAttribute('data-theme', getResolvedTheme(preference));
+                localStorage.setItem('unifi-toolkit-theme', preference);
+            }
 
-            // Toggle theme on click
+            function updateThemeUI(preference) {
+                const icons = { auto: '🔄', light: '🌙', dark: '☀️' };
+                themeIcon.textContent = icons[preference] || icons.auto;
+            }
+
+            const savedPreference = localStorage.getItem('unifi-toolkit-theme') || 'auto';
+            applyTheme(savedPreference);
+            updateThemeUI(savedPreference);
+
             themeToggle.addEventListener('click', function() {
-                const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-                const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                const currentPreference = localStorage.getItem('unifi-toolkit-theme') || 'auto';
+                const idx = THEMES.indexOf(currentPreference);
+                const newPreference = THEMES[(idx + 1) % THEMES.length];
+                applyTheme(newPreference);
+                updateThemeUI(newPreference);
+            });
 
-                document.documentElement.setAttribute('data-theme', newTheme);
-                localStorage.setItem('unifi-toolkit-theme', newTheme);
-                updateThemeUI(newTheme);
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+                const preference = localStorage.getItem('unifi-toolkit-theme') || 'auto';
+                if (preference === 'auto') {
+                    document.documentElement.setAttribute('data-theme', getResolvedTheme('auto'));
+                }
             });
         })();
 

@@ -13,10 +13,19 @@ function apDetail() {
         clientsByBand: {},
         isLoading: true,
         error: null,
-        theme: 'dark',
+        theme: 'auto',
 
         // Chart instance
         bandChart: null,
+
+        /**
+         * Resolve theme preference (auto -> light/dark based on OS)
+         */
+        getResolvedTheme(preference) {
+            if (preference === 'dark') return 'dark';
+            if (preference === 'light') return 'light';
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        },
 
         /**
          * Initialize the AP detail page
@@ -35,8 +44,9 @@ function apDetail() {
                 return;
             }
 
-            // Load theme from localStorage
-            this.theme = localStorage.getItem('unifi-toolkit-theme') || 'dark';
+            // Load theme from localStorage (resolve 'auto' to light/dark for display)
+            const preference = localStorage.getItem('unifi-toolkit-theme') || 'auto';
+            this.theme = this.getResolvedTheme(preference);
             document.documentElement.setAttribute('data-theme', this.theme);
 
             // Load data

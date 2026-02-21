@@ -9,8 +9,14 @@
     <script>
         // Apply saved theme immediately to prevent flash
         (function() {
-            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || 'light';
-            document.documentElement.setAttribute('data-theme', savedTheme);
+            const DEFAULT_THEME = 'auto';
+            function getResolvedTheme(preference) {
+                if (preference === 'dark') return 'dark';
+                if (preference === 'light') return 'light';
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || DEFAULT_THEME;
+            document.documentElement.setAttribute('data-theme', getResolvedTheme(savedTheme));
         })();
     </script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>

@@ -7,10 +7,16 @@
     <link rel="icon" type="image/jpeg" href="/static/images/favicon16x16.jpg">
     <link rel="stylesheet" href="/pulse/static/css/styles.css">
     <script>
-        // Apply saved theme immediately (default to dark for monitoring displays)
+        // Apply saved theme immediately
         (function() {
-            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || 'dark';
-            document.documentElement.setAttribute('data-theme', savedTheme);
+            const DEFAULT_THEME = 'auto';
+            function getResolvedTheme(preference) {
+                if (preference === 'dark') return 'dark';
+                if (preference === 'light') return 'light';
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || DEFAULT_THEME;
+            document.documentElement.setAttribute('data-theme', getResolvedTheme(savedTheme));
         })();
     </script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
