@@ -37,6 +37,7 @@ IDS_IPS_SUPPORTED_MODELS = {
     "UDRULT",       # UCG Ultra
     # UniFi Express 7 (supports IDS/IPS unlike original Express)
     "UX7",          # UniFi Express 7
+    "UDMA69B",      # UniFi Express 7 (actual API model code)
     # USG series (Security Gateway - legacy)
     "USG",          # USG (base)
     "USG3P",        # USG 3P
@@ -47,6 +48,11 @@ IDS_IPS_SUPPORTED_MODELS = {
     "UGWHD4",       # USG HD
     "UGWXG",        # USG XG 8
 }
+
+# UniFi Express model codes — used to detect Express devices which can be
+# either a standalone gateway OR just a mesh AP. Express sometimes reports
+# type 'udm' instead of 'ux', so we detect by model code too.
+EXPRESS_MODEL_CODES = {'UX', 'UXBSDM', 'UX7', 'UDMA69B'}
 
 # UniFi device model code to friendly name mapping
 UNIFI_MODEL_NAMES = {
@@ -83,6 +89,7 @@ UNIFI_MODEL_NAMES = {
     "UX": "UniFi Express",
     "UXBSDM": "UniFi Express",
     "UX7": "UniFi Express 7",
+    "UDMA69B": "UniFi Express 7",
     # Access Points
     "U7PROMAX": "U7 Pro Max",
     "UAPA6A4": "U7 Pro XGS",
@@ -1163,6 +1170,25 @@ class UniFiClient:
                     data = await resp.json()
                     devices = data.get('data', [])
 
+                    # First pass: find the correct gateway device
+                    # Prioritize dedicated gateways over Express (which may be in AP mode)
+                    gateway_device = None
+                    express_device = None
+                    for device in devices:
+                        device_type = device.get('type', '')
+                        if device_type in ('ugw', 'udm', 'uxg', 'ux'):
+                            model_code = device.get('model', '').upper()
+                            is_express = device_type == 'ux' or model_code in EXPRESS_MODEL_CODES
+                            if is_express:
+                                if express_device is None:
+                                    express_device = device
+                            elif gateway_device is None:
+                                gateway_device = device
+
+                    # Fall back to Express if no dedicated gateway
+                    if gateway_device is None:
+                        gateway_device = express_device
+
                     for device in devices:
                         device_type = device.get('type', '')
 
@@ -1172,8 +1198,8 @@ class UniFiClient:
                         elif device_type == 'usw':
                             result['switch_count'] += 1
 
-                        # Find gateway (UDM, USG, UCG, UXG, UX)
-                        if device_type in ('ugw', 'udm', 'uxg', 'ux'):
+                        # Extract info from the selected gateway device
+                        if device is gateway_device:
                             model_code = device.get('model', 'Unknown')
                             result['gateway_model'] = get_friendly_model_name(model_code)
                             result['gateway_name'] = device.get('name', result['gateway_model'])
@@ -1430,7 +1456,6 @@ class UniFiClient:
                     # because Express can be either a standalone gateway OR just a mesh AP.
                     # Note: UniFi Express sometimes reports type 'udm' instead of 'ux',
                     # so we also detect Express by model code.
-                    EXPRESS_MODEL_CODES = {'UX', 'UXBSDM', 'UX7'}
                     express_device = None
                     for device in devices:
                         device_type = device.get('type', '')

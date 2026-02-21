@@ -1,0 +1,30 @@
+name: Close Stale Issues
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # Daily at 9:00 UTC
+  workflow_dispatch:       # Allow manual trigger
+
+permissions:
+  issues: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 7
+          days-before-close: 7
+          stale-issue-label: stale
+          stale-issue-message: >
+            This issue has been automatically marked as stale because it has not
+            had activity in 7 days. It will be closed in 7 days if no further
+            activity occurs. If this is still relevant, please leave a comment.
+          close-issue-message: >
+            This issue has been automatically closed due to inactivity. If the
+            problem persists, feel free to reopen or file a new issue.
+          only-issue-labels: ''
+          only-pr-labels: ''
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
