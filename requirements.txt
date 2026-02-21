@@ -2,6 +2,7 @@ fastapi>=0.115.6
 uvicorn[standard]>=0.32.0
 aiounifi==85
 sqlalchemy>=2.0.36
+greenlet>=3.0.0
 aiosqlite>=0.20.0
 alembic>=1.13.0
 apscheduler>=3.10.4
