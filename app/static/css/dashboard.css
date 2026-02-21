@@ -1090,3 +1090,18 @@ body {
         width: 100%;
     }
 }
+
+/* Debug Info Modal */
+#debug-info-text {
+    width: 100%;
+    font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    padding: 1rem;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    resize: vertical;
+    box-sizing: border-box;
+}

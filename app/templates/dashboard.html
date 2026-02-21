@@ -291,6 +291,32 @@
             </div>
         </div>
 
+        <!-- Debug Info Modal -->
+        <div id="debug-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Debug Info</h2>
+                    <button class="close-btn" id="close-debug-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-top: 0; color: var(--text-secondary); font-size: 0.9rem;">
+                        This is non-sensitive system info you can share when reporting issues.
+                        No passwords, IPs, or API keys are included.
+                    </p>
+                    <textarea id="debug-info-text" readonly rows="14">Loading...</textarea>
+                    <div style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                        <button id="copy-debug-btn" class="btn btn-primary">Copy to Clipboard</button>
+                        <span id="copy-debug-msg" style="font-size: 0.9rem; color: var(--accent-color); opacity: 0; transition: opacity 0.3s;">Copied!</span>
+                    </div>
+                    <p style="margin-bottom: 0; margin-top: 1rem; color: var(--text-muted); font-size: 0.85rem;">
+                        Paste this into your
+                        <a href="https://github.com/Crosstalk-Solutions/unifi-toolkit/issues" target="_blank">GitHub issue</a>
+                        or share it when asking for help.
+                    </p>
+                </div>
+            </div>
+        </div>
+
         <!-- Main Content -->
         <main class="main-content">
             <!-- Tools Grid -->
@@ -429,6 +455,7 @@
             <p class="footer-links">
                 <a href="/health">Health Check</a> |
                 <a href="#" id="report-issue-link" target="_blank">Report Issue</a> |
+                <a href="#" id="debug-info-link">Debug Info</a> |
                 <a href="https://github.com/Crosstalk-Solutions/unifi-toolkit#readme" target="_blank">Documentation</a> |
                 <a href="https://ko-fi.com/crosstalk" target="_blank" class="donate-link">☕ Buy Me a Coffee</a>
             </p>
@@ -1182,6 +1209,83 @@
                     checkGatewayAvailability();
                 }
             }, 5000);
+        })();
+
+        // Debug Info Modal
+        (function() {
+            const debugLink = document.getElementById('debug-info-link');
+            const debugModal = document.getElementById('debug-modal');
+            const debugText = document.getElementById('debug-info-text');
+            const copyBtn = document.getElementById('copy-debug-btn');
+            const copyMsg = document.getElementById('copy-debug-msg');
+            const closeBtn = document.getElementById('close-debug-btn');
+
+            function closeModal() {
+                debugModal.style.display = 'none';
+            }
+
+            function formatDebugInfo(info) {
+                let text = 'UniFi Toolkit Debug Info\n';
+                text += '========================\n';
+                text += `App Version: ${info.app_version}\n`;
+                text += `Tool Versions:\n`;
+                text += `  Wi-Fi Stalker: ${info.tool_versions.wifi_stalker}\n`;
+                text += `  Threat Watch: ${info.tool_versions.threat_watch}\n`;
+                text += `  Network Pulse: ${info.tool_versions.network_pulse}\n`;
+                text += `Deployment:\n`;
+                text += `  Type: ${info.deployment.type}\n`;
+                text += `  Docker: ${info.deployment.docker ? 'Yes' : 'No'}\n`;
+                text += `  Python: ${info.deployment.python_version}\n`;
+                if (info.gateway.model) {
+                    text += `Gateway:\n`;
+                    text += `  Model: ${info.gateway.model}`;
+                    if (info.gateway.name) text += ` (${info.gateway.name})`;
+                    text += `\n`;
+                    text += `  UniFi OS: ${info.gateway.is_unifi_os ? 'Yes' : 'No'}\n`;
+                    text += `  IDS/IPS Support: ${info.gateway.supports_ids_ips ? 'Yes' : 'No'}\n`;
+                    if (info.gateway.ips_mode) {
+                        text += `  IPS Mode: ${info.gateway.ips_mode}\n`;
+                    }
+                } else {
+                    text += `Gateway: Not configured or not connected\n`;
+                }
+                text += `Browser: ${navigator.userAgent}\n`;
+                return text;
+            }
+
+            debugLink.addEventListener('click', async function(e) {
+                e.preventDefault();
+                debugModal.style.display = 'flex';
+                debugText.value = 'Loading...';
+                copyMsg.style.opacity = '0';
+
+                try {
+                    const response = await fetch('/api/debug-info');
+                    const info = await response.json();
+                    debugText.value = formatDebugInfo(info);
+                } catch (error) {
+                    debugText.value = `UniFi Toolkit Debug Info\n========================\nApp Version: {{ app_version }}\n(Could not fetch additional debug info)\nBrowser: ${navigator.userAgent}\n`;
+                }
+            });
+
+            copyBtn.addEventListener('click', async function() {
+                try {
+                    await navigator.clipboard.writeText(debugText.value);
+                } catch {
+                    debugText.select();
+                    document.execCommand('copy');
+                }
+                copyMsg.style.opacity = '1';
+                setTimeout(() => { copyMsg.style.opacity = '0'; }, 2000);
+            });
+
+            closeBtn.addEventListener('click', closeModal);
+            debugModal.addEventListener('click', function(e) {
+                if (e.target === debugModal) closeModal();
+            });
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && debugModal.style.display === 'flex') closeModal();
+            });
         })();
 
         // Report Issue Link Builder
