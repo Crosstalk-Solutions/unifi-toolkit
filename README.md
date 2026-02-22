@@ -14,24 +14,28 @@ Real-time system status including:
 - **Resource Usage** - CPU and RAM utilization
 - **Network Health** - WAN, LAN, WLAN, VPN status with diagnostic reasons
 - **Connected Clients** - Wired and wireless counts
-- **WAN Status** - IP, ISP, latency, uptime (supports multi-WAN)
+- **WAN Status** - IP, ISP, latency, uptime (supports 3+ WANs dynamically)
+- **Debug Info** - One-click copy of system info for issue reporting
 
 ### Wi-Fi Stalker
-Track specific Wi-Fi client devices through your UniFi infrastructure.
-- Device tracking by MAC address
+Track specific client devices through your UniFi infrastructure.
+- Device tracking by MAC address (wireless and wired)
 - Roaming detection between access points
-- Connection history with timestamps
+- Connection history with timestamps and CSV export
+- Signal strength, radio band (2.4/5/6 GHz), and SSID tracking
+- Device analytics: dwell time, favorite AP, presence pattern heatmap
 - Block/unblock devices directly from the UI
-- Blocked device indicator in device list
 - Webhook alerts (Slack, Discord, n8n) for connect, disconnect, roam, block, and unblock events
 
 <img width="1355" height="702" alt="image" src="https://github.com/user-attachments/assets/383d3c84-1b24-480a-bbaf-e72c47953b85" />
 
 ### Threat Watch
 Monitor IDS/IPS security events from your UniFi gateway.
-- Real-time event monitoring
+- Real-time event monitoring (supports UniFi Network 10.x and legacy firmware)
 - Threat categorization and analysis
 - Top attackers and targets
+- Ignore rules: filter noise by IP address and severity level
+- Sortable event columns and advanced filtering
 - Webhook alerts (Slack, Discord, n8n)
 
 <img width="1359" height="468" alt="image" src="https://github.com/user-attachments/assets/7bfec7f7-bdf6-4ae2-af0e-143dcd982d4a" />
@@ -322,10 +326,10 @@ pytest tests/ --cov=shared --cov=app -v
 ```
 
 **Test modules:**
-- `tests/test_auth.py` - Authentication, session management, rate limiting (22 tests)
-- `tests/test_cache.py` - In-memory caching with TTL expiration (18 tests)
+- `tests/test_auth.py` - Authentication, session management, rate limiting (23 tests)
+- `tests/test_cache.py` - In-memory caching with TTL expiration (19 tests)
 - `tests/test_config.py` - Pydantic settings and environment variables (13 tests)
-- `tests/test_crypto.py` - Fernet encryption for credentials (15 tests)
+- `tests/test_crypto.py` - Fernet encryption for credentials (14 tests)
 
 ---
 
