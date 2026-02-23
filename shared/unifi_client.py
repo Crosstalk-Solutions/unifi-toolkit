@@ -579,15 +579,21 @@ class UniFiClient:
                     # Convert to dictionary indexed by MAC, filter for APs
                     aps_dict = {}
                     for device in devices_list:
-                        # Only include access points (type 'uap')
-                        if device.get('type') == 'uap':
+                        device_type = device.get('type', '')
+                        model_code = device.get('model', '').upper()
+                        # Include regular APs and Express devices in AP-only mode
+                        is_express_ap = (
+                            (device_type == 'ux' or model_code in EXPRESS_MODEL_CODES)
+                            and device.get('device_mode_override') == 'mesh'
+                        )
+                        if device_type == 'uap' or is_express_ap:
                             mac = device.get('mac', '').lower()
                             if mac:
                                 aps_dict[mac] = {
                                     'mac': mac,
                                     'name': device.get('name'),
                                     'model': device.get('model'),
-                                    'type': device.get('type')
+                                    'type': 'uap' if is_express_ap else device_type
                                 }
 
                     return aps_dict
@@ -604,14 +610,20 @@ class UniFiClient:
                 aps_dict = {}
                 devices_list = response.get('data', []) if isinstance(response, dict) else []
                 for device in devices_list:
-                    if device.get('type') == 'uap':
+                    device_type = device.get('type', '')
+                    model_code = device.get('model', '').upper()
+                    is_express_ap = (
+                        (device_type == 'ux' or model_code in EXPRESS_MODEL_CODES)
+                        and device.get('device_mode_override') == 'mesh'
+                    )
+                    if device_type == 'uap' or is_express_ap:
                         mac = device.get('mac', '').lower()
                         if mac:
                             aps_dict[mac] = {
                                 'mac': mac,
                                 'name': device.get('name'),
                                 'model': device.get('model'),
-                                'type': device.get('type')
+                                'type': 'uap' if is_express_ap else device_type
                             }
 
                 return aps_dict
@@ -1323,6 +1335,7 @@ class UniFiClient:
 
                     # First pass: find the correct gateway device
                     # Prioritize dedicated gateways over Express (which may be in AP mode)
+                    # Express in AP-only mode reports type "udm" with device_mode_override "mesh"
                     gateway_device = None
                     express_device = None
                     for device in devices:
@@ -1331,6 +1344,9 @@ class UniFiClient:
                             model_code = device.get('model', '').upper()
                             is_express = device_type == 'ux' or model_code in EXPRESS_MODEL_CODES
                             if is_express:
+                                # Skip Express in AP-only mode — not a gateway
+                                if device.get('device_mode_override') == 'mesh':
+                                    continue
                                 if express_device is None:
                                     express_device = device
                             elif gateway_device is None:
@@ -1342,9 +1358,16 @@ class UniFiClient:
 
                     for device in devices:
                         device_type = device.get('type', '')
+                        model_code = device.get('model', '').upper()
+
+                        # Express in AP-only mode reports type "udm" — count as AP
+                        is_express_ap = (
+                            (device_type == 'ux' or model_code in EXPRESS_MODEL_CODES)
+                            and device.get('device_mode_override') == 'mesh'
+                        )
 
                         # Count device types
-                        if device_type == 'uap':
+                        if device_type == 'uap' or is_express_ap:
                             result['ap_count'] += 1
                         elif device_type == 'usw':
                             result['switch_count'] += 1
@@ -1557,6 +1580,11 @@ class UniFiClient:
                     for device in devices:
                         device_type = device.get('type', '')
                         if device_type in ('ugw', 'udm', 'uxg', 'ux'):
+                            # Skip Express in AP-only mode — not a gateway
+                            model_code = device.get('model', '').upper()
+                            is_express = device_type == 'ux' or model_code in EXPRESS_MODEL_CODES
+                            if is_express and device.get('device_mode_override') == 'mesh':
+                                continue
                             logger.info(f"Found gateway: {device.get('model', 'Unknown')} (type: {device_type})")
                             return True
 
@@ -1625,6 +1653,9 @@ class UniFiClient:
                             )
                             return result
                         elif is_express and express_device is None:
+                            # Skip Express in AP-only mode — not a gateway
+                            if device.get('device_mode_override') == 'mesh':
+                                continue
                             # UniFi Express — save as fallback in case no dedicated gateway exists
                             express_device = device
 
