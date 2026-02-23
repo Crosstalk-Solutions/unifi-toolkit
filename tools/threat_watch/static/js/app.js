@@ -41,6 +41,7 @@ function dashboard() {
 
         // Filters
         filters: {
+            timeRange: '7d',
             severity: '',
             action: '',
             category: '',
@@ -139,6 +140,7 @@ function dashboard() {
                 params.append('page', this.currentPage);
                 params.append('page_size', this.pageSize);
 
+                if (this.filters.timeRange) params.append('time_range', this.filters.timeRange);
                 if (this.filters.severity) params.append('severity', this.filters.severity);
                 if (this.filters.action) params.append('action', this.filters.action);
                 if (this.filters.category) params.append('category', this.filters.category);
@@ -169,6 +171,7 @@ function dashboard() {
         async loadStats() {
             try {
                 const params = new URLSearchParams();
+                if (this.filters.timeRange) params.append('time_range', this.filters.timeRange);
                 if (this.filters.includeIgnored) params.append('include_ignored', 'true');
 
                 const response = await fetch(`/threats/api/events/stats?${params}`);

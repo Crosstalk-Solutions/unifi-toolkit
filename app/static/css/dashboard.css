@@ -802,6 +802,31 @@ body {
     font-weight: 500;
 }
 
+/* Update Badge */
+.update-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    background: var(--accent-color);
+    color: #ffffff;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.update-badge:hover {
+    filter: brightness(1.1);
+    transform: scale(1.05);
+}
+
+.update-icon {
+    font-size: 0.9rem;
+}
+
 
 /* Responsive Design */
 @media (max-width: 768px) {
@@ -849,6 +874,14 @@ body {
 
     .theme-toggle-label {
         display: none;
+    }
+
+    .update-text {
+        display: none;
+    }
+
+    .update-badge {
+        padding: 0.375rem 0.5rem;
     }
 
     .logout-label {

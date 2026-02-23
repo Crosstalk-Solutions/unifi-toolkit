@@ -27,6 +27,12 @@
                 </div>
                 <div class="header-right">
                     <div class="header-actions">
+                        <a href="#" id="update-badge" class="update-badge" style="display: none;"
+                           target="_blank" rel="noopener noreferrer"
+                           title="A new version is available">
+                            <span class="update-icon">&#x2B06;</span>
+                            <span class="update-text" id="update-text">Update</span>
+                        </a>
                         <div class="theme-toggle">
                             <span class="theme-toggle-label" id="theme-label">Light</span>
                             <button class="theme-toggle-btn" id="theme-toggle" title="Toggle dark/light mode">
@@ -218,9 +224,9 @@
                             <input type="text"
                                    id="controller_url"
                                    name="controller_url"
-                                   placeholder="https://192.168.200.1"
+                                   aria-describedby="controller_url_hint"
                                    required>
-                            <small>UCG/UDM/UDR: https://192.168.x.x &nbsp;|&nbsp; Legacy controller: https://192.168.x.x:8443</small>
+                            <small id="controller_url_hint">UCG/UDM/UDR: https://192.168.x.x &nbsp;|&nbsp; Legacy controller: https://192.168.x.x:8443</small>
                         </div>
 
                         <div class="form-group">
@@ -228,8 +234,8 @@
                             <input type="password"
                                    id="api_key"
                                    name="api_key"
-                                   placeholder="Enter API key from UniFi Settings > Integrations">
-                            <small>Found in UniFi OS: Settings → Integrations → API Keys</small>
+                                   aria-describedby="api_key_hint">
+                            <small id="api_key_hint">Found in UniFi OS: Settings → Integrations → API Keys</small>
                         </div>
 
                         <div class="form-group">
@@ -252,16 +258,14 @@
                                     <label for="username">Username</label>
                                     <input type="text"
                                            id="username"
-                                           name="username"
-                                           placeholder="Enter username">
+                                           name="username">
                                 </div>
 
                                 <div class="form-group">
                                     <label for="password">Password</label>
                                     <input type="password"
                                            id="password"
-                                           name="password"
-                                           placeholder="Enter password">
+                                           name="password">
                                 </div>
 
                                 <div class="form-group">
@@ -269,8 +273,8 @@
                                     <input type="text"
                                            id="site_id"
                                            name="site_id"
-                                           placeholder="default">
-                                    <small>Use "default" for single-site setups. For multi-site, use the ID from the URL (not the friendly name). Example: if URL is <code>/manage/site/abc123/...</code> use <code>abc123</code></small>
+                                           aria-describedby="site_id_hint">
+                                    <small id="site_id_hint">Use "default" for single-site setups. For multi-site, use the ID from the URL (not the friendly name). Example: if URL is <code>/manage/site/abc123/...</code> use <code>abc123</code></small>
                                 </div>
                             </div>
                         </div>
@@ -1286,6 +1290,31 @@
             document.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape' && debugModal.style.display === 'flex') closeModal();
             });
+        })();
+
+        // Update Check
+        (function() {
+            const updateBadge = document.getElementById('update-badge');
+            const updateText = document.getElementById('update-text');
+
+            async function checkForUpdate() {
+                try {
+                    const response = await fetch('/api/update-check');
+                    const data = await response.json();
+
+                    if (data.update_available && data.release_url) {
+                        updateText.textContent = 'v' + data.latest_version;
+                        updateBadge.href = data.release_url;
+                        updateBadge.title = 'Update available: v' + data.latest_version + ' (current: v' + data.current_version + ')';
+                        updateBadge.style.display = 'flex';
+                    }
+                } catch (error) {
+                    // Silently fail — don't show badge if check fails
+                }
+            }
+
+            // Check after a short delay so it doesn't compete with initial page load
+            setTimeout(checkForUpdate, 3000);
         })();
 
         // Report Issue Link Builder

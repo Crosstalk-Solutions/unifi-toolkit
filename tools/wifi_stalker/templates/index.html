@@ -198,15 +198,17 @@
                                    id="mac_address"
                                    x-model="newDevice.mac_address"
                                    @input="formatMacAddress()"
-                                   placeholder="AA:BB:CC:DD:EE:FF"
+                                   aria-describedby="mac_hint"
                                    required>
+                            <small id="mac_hint">Format: AA:BB:CC:DD:EE:FF</small>
                         </div>
                         <div class="form-group">
                             <label for="friendly_name">Friendly Name</label>
                             <input type="text"
                                    id="friendly_name"
                                    x-model="newDevice.friendly_name"
-                                   placeholder="John's iPhone">
+                                   aria-describedby="friendly_name_hint">
+                            <small id="friendly_name_hint">e.g. John's iPhone</small>
                         </div>
                         <div class="form-group">
                             <label for="site_id">Site ID</label>
@@ -297,7 +299,8 @@
                                    id="webhook_name"
                                    x-model="webhookForm.name"
                                    required
-                                   placeholder="My Slack Webhook">
+                                   aria-describedby="wh_name_hint">
+                            <small id="wh_name_hint">e.g. My Slack Webhook</small>
                         </div>
 
                         <div class="form-group">
@@ -315,7 +318,8 @@
                                    id="webhook_url"
                                    x-model="webhookForm.url"
                                    required
-                                   placeholder="https://hooks.slack.com/services/...">
+                                   aria-describedby="wh_url_hint">
+                            <small id="wh_url_hint">e.g. https://hooks.slack.com/services/...</small>
                         </div>
 
                         <div class="form-group">

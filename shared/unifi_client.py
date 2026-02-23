@@ -211,6 +211,7 @@ class UniFiClient:
         # API key always means UniFi OS; otherwise we'll probe during connect
         self.is_unifi_os = api_key is not None
         self._detected_type: Optional[str] = None  # Track what we detected
+        self._v2_uses_new_payload: Optional[bool] = None  # None=unknown, True/False=cached
 
     async def connect(self) -> bool:
         """
@@ -459,6 +460,7 @@ class UniFiClient:
                                 'ip': client.get('ip'),
                                 'last_seen': client.get('last_seen'),
                                 'rssi': client.get('rssi'),
+                                'signal': client.get('signal'),
                                 'hostname': client.get('hostname'),
                                 'name': client.get('name'),
                                 'oui': client.get('oui'),  # Manufacturer from UniFi
@@ -510,6 +512,7 @@ class UniFiClient:
                             'ip': client.get('ip'),
                             'last_seen': client.get('last_seen'),
                             'rssi': client.get('rssi'),
+                            'signal': client.get('signal'),
                             'hostname': client.get('hostname'),
                             'name': client.get('name'),
                             'oui': client.get('oui'),
@@ -962,23 +965,27 @@ class UniFiClient:
 
     async def get_traffic_flows(
         self,
-        limit: int = 100,
-        time_range: str = "24h",
-        policy_types: List[str] = None
+        timestamp_from: int = None,
+        timestamp_to: int = None,
+        page_size: int = 100,
+        policy_types: List[str] = None,
+        max_events: int = 1000
     ) -> List[Dict]:
         """
         Get traffic flows from UniFi Network 10.x v2 API.
 
         This is the new endpoint that replaces stat/ips/event in Network 10.x.
-        Traffic flows include IPS events when they have an 'ips' object.
+        Uses server-side policy_type filtering to request only IPS events.
 
         Args:
-            limit: Maximum number of events to return (default: 100, max per request)
-            time_range: Time range string like "24h", "7d" (default: "24h")
-            policy_types: Filter by policy types (not reliably supported server-side)
+            timestamp_from: Start time in milliseconds (default: 24 hours ago)
+            timestamp_to: End time in milliseconds (default: now)
+            page_size: Events per page (default: 100)
+            policy_types: Filter by policy types (default: ["INTRUSION_PREVENTION"])
+            max_events: Maximum total events to return (default: 1000)
 
         Returns:
-            List of traffic flow dictionaries that contain IPS data
+            List of traffic flow dictionaries (normalized to legacy format)
         """
         if not self._session:
             raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
@@ -987,25 +994,165 @@ class UniFiClient:
             logger.debug("Traffic flows v2 API only available on UniFi OS")
             return []
 
-        try:
-            url = f"{self.host}/proxy/network/v2/api/site/{self.site}/traffic-flows"
+        # Default time range: last 24 hours
+        import time as time_module
+        now_ms = int(time_module.time() * 1000)
+        if timestamp_to is None:
+            timestamp_to = now_ms
+        if timestamp_from is None:
+            timestamp_from = now_ms - (24 * 60 * 60 * 1000)
 
+        # Try new filtered payload first, fall back to legacy pagination
+        if self._v2_uses_new_payload is not False:
+            result = await self._fetch_traffic_flows_v2_filtered(
+                timestamp_from, timestamp_to, page_size, policy_types, max_events
+            )
+            if result is not None:
+                self._v2_uses_new_payload = True
+                return result
+            # New format rejected — cache and fall back
+            self._v2_uses_new_payload = False
+            logger.info("v2 filtered payload not supported, falling back to legacy pagination")
+
+        return await self._fetch_traffic_flows_v2_legacy(
+            timestamp_from, timestamp_to, page_size, max_events
+        )
+
+    async def _fetch_traffic_flows_v2_filtered(
+        self,
+        timestamp_from: int,
+        timestamp_to: int,
+        page_size: int,
+        policy_types: List[str] = None,
+        max_events: int = 1000
+    ) -> Optional[List[Dict]]:
+        """
+        Fetch traffic flows using the filtered payload format (Network 10.x+).
+
+        Server-side filtering via policy_type eliminates the need to paginate
+        through all traffic flows to find IPS events.
+
+        Returns None if the server rejects this payload format (triggers fallback).
+        Returns [] if format works but no events found.
+
+        Available filter arrays (currently only policy_type is used):
+            risk, action, direction, protocol, policy, policy_type, service,
+            source_host, source_mac, source_ip, source_port, source_network_id,
+            source_domain, source_zone_id, source_region,
+            destination_host, destination_mac, destination_ip, destination_port,
+            destination_network_id, destination_domain, destination_zone_id,
+            destination_region, in_network_id, out_network_id
+        """
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/traffic-flows"
+
+        try:
+            all_events = []
+            page_number = 0
+            max_iterations = 50
+
+            while len(all_events) < max_events and max_iterations > 0:
+                max_iterations -= 1
+
+                payload = {
+                    "timestampFrom": timestamp_from,
+                    "timestampTo": timestamp_to,
+                    "pageNumber": page_number,
+                    "pageSize": min(page_size, 100),
+                    "skip_count": False,
+                    "policy_type": policy_types or ["INTRUSION_PREVENTION"],
+                    "risk": [],
+                    "action": [],
+                    "direction": [],
+                    "protocol": [],
+                    "policy": [],
+                    "service": [],
+                    "source_host": [],
+                    "source_mac": [],
+                    "source_ip": [],
+                    "source_port": [],
+                    "source_network_id": [],
+                    "source_domain": [],
+                    "source_zone_id": [],
+                    "source_region": [],
+                    "destination_host": [],
+                    "destination_mac": [],
+                    "destination_ip": [],
+                    "destination_port": [],
+                    "destination_network_id": [],
+                    "destination_domain": [],
+                    "destination_zone_id": [],
+                    "destination_region": [],
+                    "in_network_id": [],
+                    "out_network_id": [],
+                    "next_ai_query": [],
+                    "except_for": [],
+                    "search_text": ""
+                }
+
+                logger.debug(f"Fetching traffic flows (filtered) page {page_number} from: {url}")
+
+                async with self._session.post(url, json=payload) as resp:
+                    if resp.status in (400, 405, 422):
+                        logger.debug(f"v2 filtered payload rejected: HTTP {resp.status}")
+                        return None  # Triggers fallback
+                    if resp.status != 200:
+                        resp_text = await resp.text()
+                        logger.error(f"Failed to get traffic flows: HTTP {resp.status}")
+                        logger.debug(f"Traffic flows error response: {resp_text[:500] if resp_text else 'empty'}")
+                        return []
+
+                    data = await resp.json()
+                    flows = data.get('data', [])
+                    all_events.extend(flows)
+
+                    logger.debug(f"Page {page_number}: {len(flows)} IPS events")
+
+                    if not flows or len(flows) < payload["pageSize"]:
+                        break
+
+                    page_number += 1
+
+            logger.info(f"Retrieved {len(all_events)} IPS events from traffic flows v2 API (filtered)")
+
+            # Normalize v2 events to legacy format for parser compatibility
+            normalized_events = [self._normalize_v2_event(e) for e in all_events]
+            return normalized_events
+
+        except Exception as e:
+            logger.error(f"Failed to get traffic flows (filtered): {e}")
+            return []
+
+    async def _fetch_traffic_flows_v2_legacy(
+        self,
+        timestamp_from: int,
+        timestamp_to: int,
+        page_size: int,
+        max_events: int = 1000
+    ) -> List[Dict]:
+        """
+        Fetch traffic flows using the legacy limit/offset payload format.
+
+        Fallback for older firmware that doesn't support the filtered format.
+        Requires client-side filtering for IPS events.
+        """
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/traffic-flows"
+
+        try:
             all_events = []
             offset = 0
-            max_iterations = 50  # Safety limit
+            max_iterations = 50
 
-            while len(all_events) < limit and max_iterations > 0:
+            while len(all_events) < max_events and max_iterations > 0:
                 max_iterations -= 1
-                batch_limit = min(100, limit - len(all_events))
+                batch_limit = min(100, max_events - len(all_events))
 
                 payload = {
                     "limit": batch_limit,
                     "offset": offset,
-                    "timeRange": time_range
+                    "timeRange": "24h"
                 }
 
-                logger.debug(f"Fetching traffic flows from: {url}")
-                logger.debug(f"Traffic flows payload: {payload}")
+                logger.debug(f"Fetching traffic flows (legacy) from: {url}")
 
                 async with self._session.post(url, json=payload) as resp:
                     if resp.status == 405:
@@ -1021,7 +1168,7 @@ class UniFiClient:
                     flows = data.get('data', [])
                     has_next = data.get('has_next', False)
 
-                    # Filter for flows that have IPS data
+                    # Client-side filter for flows with IPS data
                     ips_flows = [f for f in flows if f.get('ips')]
                     all_events.extend(ips_flows)
 
@@ -1032,14 +1179,14 @@ class UniFiClient:
 
                     offset += len(flows)
 
-            logger.info(f"Retrieved {len(all_events)} IPS events from traffic flows v2 API")
+            logger.info(f"Retrieved {len(all_events)} IPS events from traffic flows v2 API (legacy)")
 
             # Normalize v2 events to legacy format for parser compatibility
             normalized_events = [self._normalize_v2_event(e) for e in all_events]
             return normalized_events
 
         except Exception as e:
-            logger.error(f"Failed to get traffic flows: {e}")
+            logger.error(f"Failed to get traffic flows (legacy): {e}")
             return []
 
     async def get_ips_events(
@@ -1067,7 +1214,11 @@ class UniFiClient:
 
         # For UniFi OS, try the v2 traffic-flows API first (Network 10.x)
         if self.is_unifi_os:
-            v2_events = await self.get_traffic_flows(limit=min(limit, 1000), time_range="24h")
+            v2_events = await self.get_traffic_flows(
+                timestamp_from=start,
+                timestamp_to=end,
+                max_events=min(limit, 1000)
+            )
             if v2_events:
                 logger.info(f"Using v2 traffic-flows API - got {len(v2_events)} IPS events")
                 return v2_events
@@ -1793,7 +1944,7 @@ class UniFiClient:
                     'rx_bytes': rx_bytes,
                     'total_bytes': total_bytes,
                     'rssi': client.get('rssi'),
-                    'signal': client.get('rssi'),  # alias for convenience
+                    'signal': client.get('signal') or client.get('rssi'),
                     'is_wired': client.get('is_wired', False),
                     'ap_mac': client.get('ap_mac'),
                     'uptime': client.get('uptime'),

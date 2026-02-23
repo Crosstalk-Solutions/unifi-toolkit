@@ -35,11 +35,18 @@ SEVERITY_LABELS = {
     3: "Low"
 }
 
+TIME_RANGE_MAP = {
+    "24h": timedelta(days=1),
+    "7d": timedelta(days=7),
+    "30d": timedelta(days=30),
+}
+
 
 @router.get("", response_model=ThreatEventsListResponse)
 async def get_events(
     start_time: Optional[datetime] = Query(None, description="Filter events after this time"),
     end_time: Optional[datetime] = Query(None, description="Filter events before this time"),
+    time_range: Optional[str] = Query(None, pattern="^(24h|7d|30d)$", description="Time range shortcut (24h, 7d, 30d)"),
     severity: Optional[int] = Query(None, ge=1, le=3, description="Filter by severity (1=high, 2=medium, 3=low)"),
     category: Optional[str] = Query(None, description="Filter by category"),
     action: Optional[str] = Query(None, description="Filter by action (alert, block)"),
@@ -67,7 +74,11 @@ async def get_events(
     if not include_ignored:
         filters.append(ThreatEvent.ignored == False)
 
-    if start_time:
+    # time_range shortcut overrides start_time
+    if time_range and time_range in TIME_RANGE_MAP:
+        cutoff = datetime.now(timezone.utc) - TIME_RANGE_MAP[time_range]
+        filters.append(ThreatEvent.timestamp >= cutoff)
+    elif start_time:
         filters.append(ThreatEvent.timestamp >= start_time)
     if end_time:
         filters.append(ThreatEvent.timestamp <= end_time)
@@ -130,29 +141,36 @@ async def get_events(
 
 @router.get("/stats", response_model=ThreatStatsResponse)
 async def get_stats(
+    time_range: Optional[str] = Query(None, pattern="^(24h|7d|30d)$", description="Time range shortcut (24h, 7d, 30d)"),
     include_ignored: bool = Query(False, description="Include ignored events in stats"),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
-    Get threat statistics overview
+    Get threat statistics overview, scoped to the selected time range
     """
     now = datetime.now(timezone.utc)
     day_ago = now - timedelta(days=1)
     week_ago = now - timedelta(days=7)
 
-    # Count of ignored events (always returned)
+    # Count of ignored events (always returned, not scoped to time range)
     ignored_result = await db.execute(
         select(func.count(ThreatEvent.id)).where(ThreatEvent.ignored == True)
     )
     ignored_count = ignored_result.scalar() or 0
 
-    # Base filter - exclude ignored events unless include_ignored is True
-    if include_ignored:
-        base_filters = []  # No filtering
-    else:
-        base_filters = [ThreatEvent.ignored == False]
+    # Base filters
+    base_filters = []
 
-    # Total events
+    # Exclude ignored events unless include_ignored is True
+    if not include_ignored:
+        base_filters.append(ThreatEvent.ignored == False)
+
+    # Apply time range filter to all stats
+    if time_range and time_range in TIME_RANGE_MAP:
+        cutoff = now - TIME_RANGE_MAP[time_range]
+        base_filters.append(ThreatEvent.timestamp >= cutoff)
+
+    # Total events (within time range)
     total_query = select(func.count(ThreatEvent.id))
     if base_filters:
         total_query = total_query.where(*base_filters)
@@ -161,19 +179,19 @@ async def get_stats(
 
     # Events in last 24 hours
     query_24h = select(func.count(ThreatEvent.id)).where(ThreatEvent.timestamp >= day_ago)
-    if base_filters:
-        query_24h = query_24h.where(*base_filters)
+    if not include_ignored:
+        query_24h = query_24h.where(ThreatEvent.ignored == False)
     result_24h = await db.execute(query_24h)
     events_24h = result_24h.scalar() or 0
 
     # Events in last 7 days
     query_7d = select(func.count(ThreatEvent.id)).where(ThreatEvent.timestamp >= week_ago)
-    if base_filters:
-        query_7d = query_7d.where(*base_filters)
+    if not include_ignored:
+        query_7d = query_7d.where(ThreatEvent.ignored == False)
     result_7d = await db.execute(query_7d)
     events_7d = result_7d.scalar() or 0
 
-    # Blocked vs Alert counts
+    # Blocked vs Alert counts (within time range)
     blocked_query = select(func.count(ThreatEvent.id)).where(ThreatEvent.action == "block")
     if base_filters:
         blocked_query = blocked_query.where(*base_filters)
@@ -186,7 +204,7 @@ async def get_stats(
     alert_result = await db.execute(alert_query)
     alert_count = alert_result.scalar() or 0
 
-    # By severity
+    # By severity (within time range)
     severity_query = (
         select(ThreatEvent.severity, func.count(ThreatEvent.id))
         .where(ThreatEvent.severity.isnot(None))
@@ -204,7 +222,7 @@ async def get_stats(
         for sev, count in severity_result.all()
     ]
 
-    # By category (top 10)
+    # By category (top 10, within time range)
     category_query = (
         select(ThreatEvent.category, func.count(ThreatEvent.id))
         .where(ThreatEvent.category.isnot(None))
@@ -218,7 +236,7 @@ async def get_stats(
         for cat, count in category_result.all()
     ]
 
-    # By source country (top 10)
+    # By source country (top 10, within time range)
     country_query = (
         select(ThreatEvent.src_country, func.count(ThreatEvent.id))
         .where(ThreatEvent.src_country.isnot(None))
@@ -232,7 +250,7 @@ async def get_stats(
         for country, count in country_result.all()
     ]
 
-    # Top attackers (top 10 source IPs)
+    # Top attackers (top 10 source IPs, within time range)
     attackers_query = (
         select(
             ThreatEvent.src_ip,
@@ -535,7 +553,12 @@ async def debug_test_fetch(
         # Test v2 traffic-flows API (Network 10.x+)
         if client.is_unifi_os:
             try:
-                v2_events = await client.get_traffic_flows(limit=10, time_range="24h")
+                v2_events = await client.get_traffic_flows(
+                    timestamp_from=day_ago_ms,
+                    timestamp_to=now_ms,
+                    page_size=25,
+                    max_events=25
+                )
             except Exception as e:
                 v2_error = str(e)
 
@@ -584,6 +607,7 @@ async def debug_test_fetch(
                     "available": client.is_unifi_os,
                     "events_returned": len(v2_events),
                     "error": v2_error,
+                    "payload_format": "v2_filtered" if client._v2_uses_new_payload else "legacy_pagination" if client._v2_uses_new_payload is False else "unknown",
                     "sample_event_keys": list(v2_events[0].keys()) if v2_events else None,
                     "sample_event": v2_events[0] if v2_events else None,
                     "endpoint": "/proxy/network/v2/api/site/{site}/traffic-flows"

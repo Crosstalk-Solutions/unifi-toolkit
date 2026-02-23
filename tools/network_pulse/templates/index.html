@@ -7,9 +7,9 @@
     <link rel="icon" type="image/jpeg" href="/static/images/favicon16x16.jpg">
     <link rel="stylesheet" href="/pulse/static/css/styles.css">
     <script>
-        // Apply saved theme immediately (default to dark for monitoring displays)
+        // Apply saved theme immediately to prevent flash
         (function() {
-            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || 'dark';
+            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || 'light';
             document.documentElement.setAttribute('data-theme', savedTheme);
         })();
     </script>

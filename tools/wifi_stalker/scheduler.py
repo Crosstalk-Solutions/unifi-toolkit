@@ -236,7 +236,7 @@ async def process_device(
         if isinstance(client, dict):
             ap_mac = client.get('ap_mac')
             ip_address = client.get('ip')
-            signal_strength = client.get('rssi')
+            signal_strength = client.get('signal') or client.get('rssi')
             is_wired = client.get('is_wired', False)
             sw_mac = client.get('sw_mac')
             sw_port = client.get('sw_port')
@@ -245,7 +245,7 @@ async def process_device(
         else:
             ap_mac = getattr(client, 'ap_mac', None)
             ip_address = getattr(client, 'ip', None)
-            signal_strength = getattr(client, 'rssi', None)
+            signal_strength = getattr(client, 'signal', None) or getattr(client, 'rssi', None)
             is_wired = getattr(client, 'is_wired', False)
             sw_mac = getattr(client, 'sw_mac', None)
             sw_port = getattr(client, 'sw_port', None)

@@ -224,7 +224,7 @@ header h1 {
     background: var(--surface);
     border-radius: 12px;
     box-shadow: var(--shadow);
-    overflow: hidden;
+    overflow-x: auto;
 }
 
 table {
@@ -282,6 +282,8 @@ tbody tr.disconnected {
 
 tbody td {
     padding: 1rem;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .status-indicator {

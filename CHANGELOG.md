@@ -2,6 +2,84 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.9.17] - 2026-02-21
+
+### Fixed
+- **Wi-Fi Stalker signal strength mismatch** - Use UniFi API `signal` field instead of `rssi` for accurate dBm display that matches the UniFi console. `get_clients()` now captures both fields; scheduler and client summary prefer `signal` with `rssi` fallback. (#60)
+
+---
+
+## [1.9.16] - 2026-02-21
+
+### Fixed
+- **Dashboard gateway detection** - Prioritize dedicated gateways over UniFi Express devices in AP mode, preventing misidentification when both are present. (#58)
+- **Network Pulse accessibility** - Bumped `--text-muted` and `--text-secondary` color contrast to meet WCAG AA requirements. (#65)
+
+### Added
+- **UX7 actual API model code** - Added `UDMA69B` as reported model code for UniFi Express 7, confirmed by community reporter. (#62)
+- **Stale issues workflow** - GitHub Actions workflow to auto-mark issues stale after 7 days of inactivity and close after 7 more days.
+
+---
+
+## [1.9.15] - 2026-02-20
+
+### Fixed
+- **Schema repair coverage** - Expanded `_repair_schema()` to cover all 18 migration-added columns across 4 tables. Existing users upgrading were hitting missing column errors. (#64)
+
+### Added
+- **UniFi Express 7 (UX7) IDS/IPS support** - Added UX7 model code to the Threat Watch supported gateways list. (#62)
+- **Debug Info modal** - Dashboard footer now has a "Debug Info" link that opens a modal with non-sensitive system info (version, deployment type, gateway) and one-click copy-to-clipboard for issue reporting.
+
+---
+
+## [1.9.14] - 2026-02-20
+
+### Added
+- **Wi-Fi Stalker radio band display** - Signal/Type column now shows the radio band (2.4 GHz, 5 GHz, 6 GHz) for each tracked device. Added `current_radio` column to TrackedDevice with Alembic migration. (#60)
+
+---
+
+## [1.9.13] - 2026-02-20
+
+### Fixed
+- **Threat Watch column sorting** - Wired up `sort` and `sort_direction` parameters from the frontend to the backend API, enabling clickable column headers in the events table. (#61)
+
+---
+
+## [1.9.12] - 2026-02-20
+
+### Added
+- **Dynamic multi-WAN support** - Dashboard and Network Pulse now display 3+ WAN interfaces dynamically instead of being hardcoded for dual-WAN. (#59)
+
+---
+
+## [1.9.11] - 2026-02-20
+
+### Fixed
+- **UniFi Express detection** - Detect Express devices by model code instead of device type for more reliable identification. (#47)
+- **Legacy IPS timestamps** - Handle both seconds and milliseconds timestamp formats in legacy IPS events. (#48)
+- **Security headers** - Moved security headers (X-Content-Type-Options, X-Frame-Options, etc.) from Caddy to FastAPI middleware so they apply in both local and production deployments. (#54)
+- **API key auth** - Username is now optional when using API key authentication; improved config error handling. (#55)
+- **setup.sh portability** - Removed bash 4+ syntax for compatibility with older systems (macOS, some NAS platforms). (#56)
+
+### Changed
+- **Dashboard layout** - Consolidated info cards into the tools grid and removed standalone System Requirements card.
+- **Config modal** - Legacy auth (username/password) section is now collapsible, defaulting to the cleaner API key flow.
+
+---
+
+## [1.9.9] - 2026-02-17
+
+### Added
+- **Wi-Fi Stalker SSID tracking** - Track which SSID each device connects to. Added `current_ssid` field to device data and connection history. (#43)
+
+### Fixed
+- **Gateway Max support** - Added UXGB model code to supported gateways. (#40)
+- **UXG Fiber support** - Added UXGA6AA model code to IDS/IPS supported models. (#35)
+- **Legacy controller port detection** - Fixed issue where port was not correctly detected for self-hosted controllers. (#35)
+
+---
+
 ## [1.9.7] - 2026-02-15
 
 ### Changed
@@ -138,11 +216,11 @@ All notable changes to UI Toolkit will be documented in this file.
 ### Testing Infrastructure
 
 #### Added
-- **Comprehensive test suite** - 68 tests across 4 test modules covering core shared infrastructure
-  - `tests/test_auth.py` - Authentication, session management, rate limiting (22 tests)
-  - `tests/test_cache.py` - In-memory caching with TTL expiration (18 tests)
+- **Comprehensive test suite** - 69 tests across 4 test modules covering core shared infrastructure
+  - `tests/test_auth.py` - Authentication, session management, rate limiting (23 tests)
+  - `tests/test_cache.py` - In-memory caching with TTL expiration (19 tests)
   - `tests/test_config.py` - Pydantic settings and environment variables (13 tests)
-  - `tests/test_crypto.py` - Fernet encryption for credentials (15 tests)
+  - `tests/test_crypto.py` - Fernet encryption for credentials (14 tests)
 - **Test configuration** - pytest.ini with asyncio mode and test path settings
 - **Development dependencies** - requirements-dev.txt with pytest, pytest-asyncio, pytest-mock
 - **Test fixtures** - conftest.py with shared fixtures for async database testing
