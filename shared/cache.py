@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 # Cache TTL in seconds (how long before data is considered stale)
 CACHE_TTL_SECONDS = 30
 
+# Update check TTL — 1 hour to avoid GitHub API rate limits
+UPDATE_CHECK_TTL_SECONDS = 3600
+
 # Global cache storage
 _cache: Dict[str, Dict[str, Any]] = {}
 
@@ -108,6 +111,32 @@ def set_system_status(data: Dict):
         "timestamp": datetime.now(timezone.utc)
     }
     logger.debug("Cached system status")
+
+
+def _is_expired_custom(cache_entry: Dict[str, Any], ttl_seconds: int) -> bool:
+    """Check if a cache entry has expired with a custom TTL."""
+    if not cache_entry or "timestamp" not in cache_entry:
+        return True
+    age = datetime.now(timezone.utc) - cache_entry["timestamp"]
+    return age.total_seconds() > ttl_seconds
+
+
+def get_update_check() -> Optional[Dict]:
+    """Get cached update check result (1-hour TTL)."""
+    entry = _cache.get("update_check")
+    if entry and not _is_expired_custom(entry, UPDATE_CHECK_TTL_SECONDS):
+        logger.debug("Returning cached update check")
+        return entry.get("data")
+    return None
+
+
+def set_update_check(data: Dict):
+    """Cache update check result."""
+    _cache["update_check"] = {
+        "data": data,
+        "timestamp": datetime.now(timezone.utc)
+    }
+    logger.debug(f"Cached update check: update_available={data.get('update_available')}")
 
 
 def invalidate_all():

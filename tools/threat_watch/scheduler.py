@@ -6,13 +6,13 @@ import logging
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.database import get_database
 from shared.config import get_settings
 from shared.websocket_manager import get_ws_manager
-from shared.webhooks import deliver_webhook
+from shared.webhooks import deliver_threat_webhook
 from shared.unifi_session import get_shared_client, invalidate_shared_client
 from tools.threat_watch.database import ThreatEvent, ThreatWebhookConfig, ThreatIgnoreRule
 
@@ -21,9 +21,14 @@ logger = logging.getLogger(__name__)
 # Global scheduler instance
 _scheduler: AsyncIOScheduler = None
 _last_refresh: datetime = None
+_last_purge: datetime = None
 
 # Default refresh interval (seconds)
 DEFAULT_REFRESH_INTERVAL = 60
+
+# Retention: purge events older than 30 days, check once per hour
+RETENTION_DAYS = 30
+PURGE_INTERVAL_SECONDS = 3600
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -261,28 +266,15 @@ async def trigger_threat_webhooks(
             continue
 
         try:
-            # Build message for webhook
-            severity_labels = {1: "🔴 High", 2: "🟠 Medium", 3: "🟡 Low"}
-            severity_label = severity_labels.get(severity, f"Severity {severity}")
-
-            message = f"**Threat Detected** ({severity_label})\n"
-            message += f"**Signature:** {event_data.get('signature', 'Unknown')}\n"
-            message += f"**Category:** {event_data.get('category', 'Unknown')}\n"
-            message += f"**Action:** {action.upper()}\n"
-            message += f"**Source:** {event_data.get('src_ip', '?')}:{event_data.get('src_port', '?')}"
-            if event_data.get('src_country'):
-                message += f" ({event_data['src_country']})"
-            message += f"\n**Destination:** {event_data.get('dest_ip', '?')}:{event_data.get('dest_port', '?')}\n"
-
-            await deliver_webhook(
+            await deliver_threat_webhook(
                 webhook_url=webhook.url,
                 webhook_type=webhook.webhook_type,
-                event_type='threat',
-                device_name=event_data.get('signature', 'Unknown Threat'),
-                device_mac=event_data.get('src_mac', ''),
-                ap_name=None,
-                signal_strength=None,
-                custom_message=message
+                threat_message=event_data.get('signature', 'Unknown Threat'),
+                severity=severity,
+                action=action,
+                src_ip=event_data.get('src_ip', 'Unknown'),
+                dest_ip=event_data.get('dest_ip'),
+                category=event_data.get('category')
             )
 
             webhook.last_triggered = datetime.now(timezone.utc)
@@ -443,10 +435,43 @@ async def refresh_threat_events():
 
             break  # Exit the async for loop
 
+        # Purge old events (runs at most once per hour)
+        await purge_old_threat_events()
+
     except Exception as e:
         logger.error(f"Error in threat refresh task: {e}", exc_info=True)
         # Invalidate shared session so next cycle reconnects (handles session expiry)
         await invalidate_shared_client()
+
+
+async def purge_old_threat_events():
+    """Delete threat events older than RETENTION_DAYS to keep database size in check."""
+    global _last_purge
+
+    now = datetime.now(timezone.utc)
+
+    # Only run once per PURGE_INTERVAL_SECONDS
+    if _last_purge and (now - _last_purge).total_seconds() < PURGE_INTERVAL_SECONDS:
+        return
+
+    try:
+        cutoff = now - timedelta(days=RETENTION_DAYS)
+        db_instance = get_database()
+        async for session in db_instance.get_session():
+            result = await session.execute(
+                delete(ThreatEvent).where(ThreatEvent.timestamp < cutoff)
+            )
+            deleted = result.rowcount
+            await session.commit()
+            _last_purge = now
+
+            if deleted > 0:
+                logger.info(f"Purged {deleted} threat events older than {RETENTION_DAYS} days")
+            else:
+                logger.debug(f"No threat events older than {RETENTION_DAYS} days to purge")
+            break
+    except Exception as e:
+        logger.error(f"Error purging old threat events: {e}", exc_info=True)
 
 
 async def start_scheduler():

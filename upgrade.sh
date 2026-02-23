@@ -97,6 +97,14 @@ run_preflight_checks() {
         print_success "git is available"
     fi
 
+    # Check curl is available (used for health verification)
+    if ! command -v curl >/dev/null 2>&1; then
+        print_error "curl is not installed (required for health verification)"
+        PREFLIGHT_PASSED=false
+    else
+        print_success "curl is available"
+    fi
+
     # Check we're in a git repo
     if ! git rev-parse --git-dir >/dev/null 2>&1; then
         print_error "Not in a git repository"

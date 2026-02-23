@@ -68,6 +68,7 @@ alembic/versions/__pycache__/
 *.bak
 *.backup
 .temp/
+nul
 
 # Upgrade backups
 backups/

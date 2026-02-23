@@ -1,6 +1,6 @@
 [project]
 name = "unifi-toolkit"
-version = "1.9.16"
+version = "1.9.20"
 description = "A suite of tools for UniFi network management"
 authors = [{name = "Crosstalk Solutions"}]
 requires-python = ">=3.9,<3.13"

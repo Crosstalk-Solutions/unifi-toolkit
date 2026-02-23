@@ -63,9 +63,8 @@ function networkPulse() {
 
             console.log('Initializing Network Pulse dashboard');
 
-            // Load theme from localStorage (resolve 'auto' to light/dark for display)
-            const preference = localStorage.getItem('unifi-toolkit-theme') || 'auto';
-            this.theme = this.getResolvedTheme(preference);
+            // Load theme from localStorage
+            this.theme = localStorage.getItem('unifi-toolkit-theme') || 'light';
             document.documentElement.setAttribute('data-theme', this.theme);
 
             // Load chart filter preferences from localStorage

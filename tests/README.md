@@ -7,10 +7,10 @@ This directory contains comprehensive test coverage for the UI Toolkit project.
 ```
 tests/
 ├── conftest.py          # Pytest configuration and shared fixtures
-├── test_auth.py         # Authentication tests (22 tests)
-├── test_cache.py        # Caching system tests (18 tests)
+├── test_auth.py         # Authentication tests (23 tests)
+├── test_cache.py        # Caching system tests (19 tests)
 ├── test_config.py       # Configuration management tests (13 tests)
-└── test_crypto.py       # Encryption utilities tests (15 tests)
+└── test_crypto.py       # Encryption utilities tests (14 tests)
 ```
 
 ## Running Tests
@@ -64,13 +64,13 @@ pytest tests/ --cov=app --cov=shared --cov=tools
 
 ## Test Coverage Summary
 
-### Authentication (test_auth.py) - 22 tests
+### Authentication (test_auth.py) - 23 tests
 - **Auth enabled check**: Tests for local vs production mode detection
 - **Password verification**: bcrypt password hashing and verification
 - **Session management**: Token creation, validation, and expiration
 - **Rate limiting**: Failed login attempt tracking and IP-based blocking
 
-### Caching (test_cache.py) - 18 tests
+### Caching (test_cache.py) - 19 tests
 - **Gateway info cache**: Storing and retrieving gateway device information
 - **IPS settings cache**: Caching IDS/IPS configuration
 - **System status cache**: Full system status caching
@@ -85,7 +85,7 @@ pytest tests/ --cov=app --cov=shared --cov=tools
 - **Environment overrides**: Loading from .env and environment variables
 - **Singleton pattern**: get_settings() returns same instance
 
-### Cryptography (test_crypto.py) - 15 tests
+### Cryptography (test_crypto.py) - 14 tests
 - **Password encryption**: Fernet symmetric encryption for passwords
 - **Decryption**: Reversible encryption/decryption cycle
 - **Special characters**: Unicode and special character handling
