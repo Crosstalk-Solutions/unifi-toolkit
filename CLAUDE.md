@@ -77,6 +77,13 @@ UniFi Controller → unifi_client.py (get_health, get_system_info)
 
 ## Completed Work
 
+### v1.9.21
+- Fix UniFi Express in AP-only mode not detected as AP (#71) — Express reports `type: "udm"` with `device_mode_override: "mesh"` when in AP mode
+- Skip Express with `device_mode_override: "mesh"` as gateway candidate in `get_system_info()`, `get_gateway_info()`, and `has_gateway()`
+- Count Express in AP mode as AP in device counts and `get_access_points()`
+- Merged PR #68 (greenlet dependency), closed PR #69 (auto dark mode — not needed after v1.9.19 theme fix)
+- Closed #55 (user resolved), #75 (shipped in v1.9.20), #77 (shipped in v1.9.20)
+
 ### v1.9.20
 - Add Threat Watch time range dropdown — 24h / 7d (default) / 30d filter in filter bar, scopes both events table and stat cards (#75)
 - Add `time_range` query param to `/api/events` and `/api/events/stats` endpoints
@@ -147,5 +154,5 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
 
 ### Known API Quirks
 - The legacy `stat/ips/event` endpoint returns 0 on Network 10.x+ — effectively deprecated
-- Express devices in AP mode still report `type: "ux"` not `type: "uap"` — needs special handling
+- Express in AP-only mode reports `type: "udm"` (not `uap` or `ux`) with `device_mode_override: "mesh"` and `model: "UX"` — detect via `device_mode_override` field
 - The `rssi` and `signal` fields are separate values; the console displays `signal`
