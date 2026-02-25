@@ -219,6 +219,87 @@ body {
 }
 
 /* ============================================
+   WAN Card - Multi-WAN Support
+   ============================================ */
+.wan-card .card-content {
+    min-width: 0;
+}
+
+.wan-entry {
+    margin-bottom: 0.25rem;
+}
+
+.wan-entry-extra {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.wan-entry-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.15rem;
+}
+
+.wan-detail-row {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.15rem;
+}
+
+.wan-detail-sep {
+    margin: 0 0.35rem;
+    color: var(--border-color);
+}
+
+.wan-ip-toggle {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    transition: color 0.2s;
+}
+
+.wan-ip-toggle:hover {
+    color: var(--accent-color);
+}
+
+/* ============================================
+   WAN Throughput Tabs
+   ============================================ */
+.wan-tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 0.75rem;
+}
+
+.wan-tab {
+    background: var(--surface-alt);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.3rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.03em;
+}
+
+.wan-tab:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.wan-tab.active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: #ffffff;
+}
+
+/* ============================================
    Throughput + AP Row
    ============================================ */
 .throughput-ap-row {

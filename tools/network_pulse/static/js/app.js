@@ -30,6 +30,10 @@ function networkPulse() {
         wsReconnectTimer: null,
         wsPingInterval: null,
 
+        // WAN selection & IP reveal
+        selectedWan: 'wan',
+        wanIpRevealed: {},
+
         // Charts
         bandChart: null,
         ssidChart: null,
@@ -246,6 +250,75 @@ function networkPulse() {
             // Recreate charts since Chart.js doesn't handle segment removal well
             this.destroyCharts();
             this.initCharts();
+        },
+
+        /**
+         * Get all WAN keys (primary + extras), sorted
+         */
+        getWanKeys() {
+            const keys = ['wan'];
+            if (this.data.health?.extra_wans) {
+                const extraKeys = Object.keys(this.data.health.extra_wans).sort((a, b) => {
+                    const numA = parseInt(a.replace('wan', '') || '1');
+                    const numB = parseInt(b.replace('wan', '') || '1');
+                    return numA - numB;
+                });
+                keys.push(...extraKeys);
+            }
+            return keys;
+        },
+
+        /**
+         * Get WAN data by key (works for primary and extra WANs)
+         */
+        getWanData(wanKey) {
+            if (wanKey === 'wan') {
+                return this.data.health?.wan || {};
+            }
+            return this.data.health?.extra_wans?.[wanKey] || {};
+        },
+
+        /**
+         * Get throughput for selected WAN
+         */
+        getSelectedThroughput() {
+            if (this.selectedWan === 'wan') {
+                return {
+                    tx: this.data.current_tx_rate || 0,
+                    rx: this.data.current_rx_rate || 0,
+                    latency: this.data.wan?.latency
+                };
+            }
+            const wanData = this.getWanData(this.selectedWan);
+            return {
+                tx: wanData.tx_bytes || 0,
+                rx: wanData.rx_bytes || 0,
+                latency: wanData.latency
+            };
+        },
+
+        /**
+         * Check if multi-WAN setup
+         */
+        hasExtraWans() {
+            return Object.keys(this.data.health?.extra_wans || {}).length > 0;
+        },
+
+        /**
+         * Toggle WAN IP visibility
+         */
+        toggleWanIp(wanKey) {
+            this.wanIpRevealed[wanKey] = !this.wanIpRevealed[wanKey];
+        },
+
+        /**
+         * Get displayed WAN IP text
+         */
+        getWanIpDisplay(wanKey) {
+            const wanData = this.getWanData(wanKey);
+            const ip = wanData?.wan_ip;
+            if (!ip) return '--';
+            return this.wanIpRevealed[wanKey] ? ip : '(click to show)';
         },
 
         /**

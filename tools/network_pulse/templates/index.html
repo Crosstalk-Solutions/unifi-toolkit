@@ -55,16 +55,47 @@
                 </div>
 
                 <!-- WAN Card -->
-                <div class="status-card" :class="{'status-ok': data.wan?.status === 'ok', 'status-error': data.wan?.status !== 'ok'}">
+                <div class="status-card wan-card" :class="{'status-ok': data.wan?.status === 'ok', 'status-error': data.wan?.status !== 'ok'}">
                     <div class="card-icon">🌐</div>
                     <div class="card-content">
                         <div class="card-label">WAN Status</div>
-                        <div class="card-value">
-                            <span x-text="data.wan?.status === 'ok' ? '🟢 Online' : '🔴 ' + (data.wan?.status || 'Unknown')"></span>
+                        <!-- Primary WAN -->
+                        <div class="wan-entry">
+                            <div class="card-value">
+                                <span x-text="data.wan?.status === 'ok' ? '🟢 Online' : '🔴 ' + (data.wan?.status || 'Unknown')"></span>
+                            </div>
+                            <div class="wan-detail-row">
+                                <span class="wan-ip-toggle"
+                                      :title="wanIpRevealed['wan'] ? 'Click to hide' : 'Click to reveal'"
+                                      @click="toggleWanIp('wan')"
+                                      x-text="getWanIpDisplay('wan')"></span>
+                            </div>
+                            <div class="wan-detail-row" x-show="data.wan?.availability || data.wan?.latency">
+                                <span x-show="data.wan?.availability" x-text="formatPercent(data.wan?.availability) + ' uptime'"></span>
+                                <span x-show="data.wan?.availability && data.wan?.latency" class="wan-detail-sep">·</span>
+                                <span x-show="data.wan?.latency" x-text="data.wan?.latency?.toFixed(1) + ' ms'"></span>
+                            </div>
                         </div>
-                        <div class="card-detail" x-show="data.wan?.availability">
-                            <span x-text="formatPercent(data.wan?.availability)"></span> uptime
-                        </div>
+                        <!-- Extra WANs -->
+                        <template x-for="[wanKey, wanData] in Object.entries(data.health?.extra_wans || {})" :key="wanKey">
+                            <div class="wan-entry wan-entry-extra">
+                                <div class="wan-entry-label" x-text="wanKey.toUpperCase()"></div>
+                                <div class="card-value" style="font-size: 1.1rem;">
+                                    <span x-text="wanData?.status === 'ok' ? '🟢 Online' : '🔴 ' + (wanData?.status || 'Unknown')"></span>
+                                </div>
+                                <div class="wan-detail-row">
+                                    <span class="wan-ip-toggle"
+                                          :title="wanIpRevealed[wanKey] ? 'Click to hide' : 'Click to reveal'"
+                                          @click="toggleWanIp(wanKey)"
+                                          x-text="getWanIpDisplay(wanKey)"></span>
+                                </div>
+                                <div class="wan-detail-row" x-show="wanData?.availability || wanData?.latency">
+                                    <span x-show="wanData?.availability" x-text="formatPercent(wanData?.availability) + ' uptime'"></span>
+                                    <span x-show="wanData?.availability && wanData?.latency" class="wan-detail-sep">·</span>
+                                    <span x-show="wanData?.latency" x-text="wanData?.latency?.toFixed(1) + ' ms'"></span>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
 
@@ -100,23 +131,32 @@
                 <!-- Current Throughput -->
                 <div class="chart-card throughput-card">
                     <h3>Current Throughput</h3>
+                    <!-- WAN tabs (only shown for multi-WAN) -->
+                    <div class="wan-tabs" x-show="hasExtraWans()">
+                        <template x-for="wanKey in getWanKeys()" :key="wanKey">
+                            <button class="wan-tab"
+                                    :class="{ 'active': selectedWan === wanKey }"
+                                    @click="selectedWan = wanKey"
+                                    x-text="wanKey.toUpperCase()"></button>
+                        </template>
+                    </div>
                     <div class="throughput-display">
                         <div class="throughput-item download">
                             <span class="throughput-arrow">↓</span>
                             <span class="throughput-label">Download</span>
-                            <span class="throughput-value" x-text="formatBandwidth(data.current_rx_rate)"></span>
+                            <span class="throughput-value" x-text="formatBandwidth(getSelectedThroughput().rx)"></span>
                         </div>
                         <div class="throughput-divider"></div>
                         <div class="throughput-item upload">
                             <span class="throughput-arrow">↑</span>
                             <span class="throughput-label">Upload</span>
-                            <span class="throughput-value" x-text="formatBandwidth(data.current_tx_rate)"></span>
+                            <span class="throughput-value" x-text="formatBandwidth(getSelectedThroughput().tx)"></span>
                         </div>
-                        <div class="throughput-divider" x-show="data.wan?.latency"></div>
-                        <div class="throughput-item latency" x-show="data.wan?.latency">
+                        <div class="throughput-divider" x-show="getSelectedThroughput().latency"></div>
+                        <div class="throughput-item latency" x-show="getSelectedThroughput().latency">
                             <span class="throughput-arrow">⏱</span>
                             <span class="throughput-label">Latency</span>
-                            <span class="throughput-value" x-text="data.wan?.latency?.toFixed(1) + ' ms'"></span>
+                            <span class="throughput-value" x-text="getSelectedThroughput().latency?.toFixed(1) + ' ms'"></span>
                         </div>
                     </div>
                 </div>
@@ -212,6 +252,8 @@
                                 <span x-text="getStatusEmoji(data.health?.wan?.status)"></span>
                                 <span x-text="(data.health?.wan?.status || 'unknown').toUpperCase()"></span>
                             </span>
+                            <span class="health-detail" x-show="data.health?.wan?.availability" x-text="formatPercent(data.health?.wan?.availability)"></span>
+                            <span class="health-detail" x-show="data.wan?.latency" x-text="data.wan?.latency?.toFixed(1) + ' ms'"></span>
                         </div>
                         <template x-for="[wanKey, wanData] in Object.entries(data.health?.extra_wans || {})" :key="wanKey">
                             <div class="health-row">
@@ -220,6 +262,8 @@
                                     <span x-text="getStatusEmoji(wanData?.status)"></span>
                                     <span x-text="(wanData?.status || 'unknown').toUpperCase()"></span>
                                 </span>
+                                <span class="health-detail" x-show="wanData?.availability" x-text="formatPercent(wanData?.availability)"></span>
+                                <span class="health-detail" x-show="wanData?.latency" x-text="wanData?.latency?.toFixed(1) + ' ms'"></span>
                             </div>
                         </template>
                         <div class="health-row" x-show="data.health?.lan">
