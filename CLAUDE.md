@@ -77,6 +77,14 @@ UniFi Controller → unifi_client.py (get_health, get_system_info)
 
 ## Completed Work
 
+### v1.10.0
+- Add multi-WAN support to Network Pulse (#83) — per-WAN IP (click-to-reveal), throughput tabs, latency, and uptime for dual/multi-WAN setups
+- WAN tab selector in Current Throughput section (hidden for single-WAN, zero visual change)
+- Extra WAN entries in WAN Status card and Network Health panel with availability and latency
+- Fix Threat Watch external links not opening (#79) — `@click.prevent` modifier was unconditionally blocking navigation on AbuseIPDB, VirusTotal, and Shodan links
+- Closed #71 (shipped in v1.9.21), #78 (acknowledged, closed as not planned), #83 (shipped), #80 (moved to Discussions)
+- #79 partially fixed (links); geo/category data issues pending reporter feedback on raw API response
+
 ### v1.9.21
 - Fix UniFi Express in AP-only mode not detected as AP (#71) — Express reports `type: "udm"` with `device_mode_override: "mesh"` when in AP mode
 - Skip Express with `device_mode_override: "mesh"` as gateway candidate in `get_system_info()`, `get_gateway_info()`, and `has_gateway()`
