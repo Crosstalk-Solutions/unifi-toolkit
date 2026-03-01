@@ -9,6 +9,50 @@ import os
 import sys
 from pathlib import Path
 
+
+# ---------------------------------------------------------------------------
+# Docker Swarm / orchestrator secrets support (_FILE env vars)
+# ---------------------------------------------------------------------------
+# For any supported var, setting VAR_FILE=/run/secrets/my_secret will read
+# the file contents and inject them into the environment as VAR.
+# If both VAR and VAR_FILE are set, _FILE takes precedence.
+_FILE_SUPPORTED_VARS = [
+    "ENCRYPTION_KEY",
+    "AUTH_USERNAME",
+    "AUTH_PASSWORD_HASH",
+    "DATABASE_URL",
+    "UNIFI_PASSWORD",
+    "UNIFI_API_KEY",
+]
+
+
+def _resolve_file_env_vars():
+    """Resolve VAR_FILE env vars into their corresponding VAR values."""
+    for var in _FILE_SUPPORTED_VARS:
+        file_var = f"{var}_FILE"
+        file_path = os.getenv(file_var)
+        if not file_path:
+            continue
+
+        path = Path(file_path)
+        if not path.is_file():
+            print(f"ERROR: {file_var}={file_path} but file does not exist or is not readable")
+            sys.exit(1)
+
+        try:
+            value = path.read_text().strip()
+        except Exception as e:
+            print(f"ERROR: Failed to read {file_var}={file_path}: {e}")
+            sys.exit(1)
+
+        if os.getenv(var):
+            print(f"WARNING: Both {var} and {file_var} are set — using {file_var}")
+
+        os.environ[var] = value
+
+
+_resolve_file_env_vars()
+
 # Load environment variables from .env file if it exists
 env_file = Path(__file__).parent / ".env"
 if env_file.exists():

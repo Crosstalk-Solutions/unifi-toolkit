@@ -26,6 +26,19 @@ services:
       - UNIFI_VERIFY_SSL=${UNIFI_VERIFY_SSL:-false}
       # Tool settings
       - STALKER_REFRESH_INTERVAL=${STALKER_REFRESH_INTERVAL:-60}
+    # Docker Swarm secrets support:
+    # Instead of passing sensitive values via environment variables, you can use
+    # Docker secrets with _FILE env vars. Example:
+    #
+    # secrets:
+    #   encryption_key:
+    #     external: true
+    #
+    # environment:
+    #   - ENCRYPTION_KEY_FILE=/run/secrets/encryption_key
+    #
+    # Supported _FILE vars: ENCRYPTION_KEY, AUTH_USERNAME, AUTH_PASSWORD_HASH,
+    #                        DATABASE_URL, UNIFI_PASSWORD, UNIFI_API_KEY
     volumes:
       # Persist database and data
       # IMPORTANT: Create this directory on the host first with correct permissions:
