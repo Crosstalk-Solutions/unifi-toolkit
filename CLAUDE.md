@@ -77,6 +77,13 @@ UniFi Controller → unifi_client.py (get_health, get_system_info)
 
 ## Completed Work
 
+### v1.10.1
+- Add `_FILE` env var support for Docker Swarm secrets (#86) — reads secret values from files (e.g., `ENCRYPTION_KEY_FILE=/run/secrets/key`) for orchestrators that mount secrets as files
+- Supported vars: `ENCRYPTION_KEY`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `DATABASE_URL`, `UNIFI_PASSWORD`, `UNIFI_API_KEY`
+- `_FILE` takes precedence if both `VAR` and `VAR_FILE` are set
+- Resolved at startup in `run.py` before `.env` loading, so all downstream code (pydantic-settings, `os.getenv()`) works without modification
+- Merged Dependabot PR #88 (actions/stale v9 → v10)
+
 ### v1.10.0
 - Add multi-WAN support to Network Pulse (#83) — per-WAN IP (click-to-reveal), throughput tabs, latency, and uptime for dual/multi-WAN setups
 - WAN tab selector in Current Throughput section (hidden for single-WAN, zero visual change)
