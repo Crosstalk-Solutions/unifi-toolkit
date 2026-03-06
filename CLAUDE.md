@@ -82,6 +82,11 @@ UniFi Controller → unifi_client.py (get_health, get_system_info)
 
 ## Completed Work
 
+### v1.10.3
+- Fix UAP-AC-LR model mapping (#89) — `U7LR` model code was incorrectly mapped to "U7 LR" (WiFi 7 product); corrected to "UAP AC LR" and added `G7LR` → "U7 LR" for the actual WiFi 7 U7 Long-Range AP
+- Add access point model codes to debug info — `/api/debug-info` now includes AP names, raw model codes, and display names; shown in Debug Info modal and Report Issue template for faster diagnosis
+- Closed #85 (all reporters confirmed on EA firmware — not supported)
+
 ### v1.10.2
 - Enhance Threat Watch test-fetch diagnostics (#85) — test both v2 payload formats independently, capture rejection body, total flow count, sample flow keys, and nested structure for faster remote debugging
 - Add gateway firmware version to debug info — `get_gateway_info()`, `/api/debug-info` endpoint, Debug Info modal, and Report Issue template
