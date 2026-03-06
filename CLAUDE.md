@@ -58,9 +58,14 @@ Version is maintained in THREE files — keep them in sync:
 - Frontend defaults to 7-day view via `time_range` filter; backend supports `24h`, `7d`, `30d`
 
 ### Debug Info (`/api/debug-info`)
-- Returns non-sensitive system info (versions, deployment, gateway) for issue reporting
+- Returns non-sensitive system info (versions, deployment, gateway, firmware) for issue reporting
 - Dashboard footer has "Debug Info" link → modal with copy-to-clipboard
 - "Report Issue" link also uses this endpoint to pre-populate GitHub issues
+
+### Firmware Compatibility
+- **Only stable/GA UniFi firmware is supported** — Early Access (EA) firmware frequently changes API endpoints without notice
+- Do NOT suggest users switch firmware channels or attempt to support EA builds
+- When users report API issues, firmware version is the first thing to check (now included in debug info)
 
 ### Data Flow (Dashboard)
 ```
@@ -79,7 +84,9 @@ UniFi Controller → unifi_client.py (get_health, get_system_info)
 
 ### v1.10.2
 - Enhance Threat Watch test-fetch diagnostics (#85) — test both v2 payload formats independently, capture rejection body, total flow count, sample flow keys, and nested structure for faster remote debugging
+- Add gateway firmware version to debug info — `get_gateway_info()`, `/api/debug-info` endpoint, Debug Info modal, and Report Issue template
 - Closed #90 (shipped in v1.10.1)
+- #85 root cause identified for one reporter: Early Access firmware (UniFi OS 5.0.16, Network 10.2.78) — EA not supported, v2 traffic-flows endpoint doesn't exist on EA builds
 
 ### v1.10.1
 - Add `_FILE` env var support for Docker Swarm secrets (#86) — reads secret values from files (e.g., `ENCRYPTION_KEY_FILE=/run/secrets/key`) for orchestrators that mount secrets as files
