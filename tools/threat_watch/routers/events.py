@@ -549,18 +549,112 @@ async def debug_test_fetch(
         legacy_events = []
         v2_error = None
         legacy_error = None
+        v2_filtered_test = None
+        v2_legacy_test = None
 
-        # Test v2 traffic-flows API (Network 10.x+)
+        # Test v2 traffic-flows API (Network 10.x+) — test both payload formats
         if client.is_unifi_os:
+            v2_url = f"{client.host}/proxy/network/v2/api/site/{client.site}/traffic-flows"
+
+            # Test 1: Filtered payload format (newer firmware)
             try:
-                v2_events = await client.get_traffic_flows(
-                    timestamp_from=day_ago_ms,
-                    timestamp_to=now_ms,
-                    page_size=25,
-                    max_events=25
-                )
+                filtered_payload = {
+                    "timestampFrom": day_ago_ms,
+                    "timestampTo": now_ms,
+                    "pageNumber": 0,
+                    "pageSize": 25,
+                    "skip_count": False,
+                    "policy_type": ["INTRUSION_PREVENTION"],
+                    "risk": [],
+                    "action": [],
+                    "direction": [],
+                    "protocol": [],
+                    "policy": [],
+                    "service": [],
+                    "source_host": [],
+                    "source_mac": [],
+                    "source_ip": [],
+                    "source_port": [],
+                    "source_network_id": [],
+                    "source_domain": [],
+                    "source_zone_id": [],
+                    "source_region": [],
+                    "destination_host": [],
+                    "destination_mac": [],
+                    "destination_ip": [],
+                    "destination_port": [],
+                    "destination_network_id": [],
+                    "destination_domain": [],
+                    "destination_zone_id": [],
+                    "destination_region": [],
+                    "in_network_id": [],
+                    "out_network_id": [],
+                    "next_ai_query": [],
+                    "except_for": [],
+                    "search_text": ""
+                }
+                async with client._session.post(v2_url, json=filtered_payload) as resp:
+                    v2_filtered_test = {"http_status": resp.status}
+                    if resp.status == 200:
+                        data = await resp.json()
+                        events = data.get('data', [])
+                        v2_filtered_test["events_returned"] = len(events)
+                        v2_filtered_test["response_keys"] = list(data.keys())
+                        if events:
+                            v2_filtered_test["sample_event_keys"] = list(events[0].keys())
+                            v2_events = [client._normalize_v2_event(e) for e in events]
+                    else:
+                        v2_filtered_test["events_returned"] = 0
+                        try:
+                            body = await resp.text()
+                            v2_filtered_test["rejection_body"] = body[:500] if body else None
+                        except Exception:
+                            v2_filtered_test["rejection_body"] = None
             except Exception as e:
-                v2_error = str(e)
+                v2_error = f"Filtered format: {str(e)}"
+                v2_filtered_test = {"error": str(e)}
+
+            # Test 2: Legacy pagination format (fallback)
+            try:
+                legacy_v2_payload = {
+                    "limit": 25,
+                    "offset": 0,
+                    "timeRange": "24h"
+                }
+                async with client._session.post(v2_url, json=legacy_v2_payload) as resp:
+                    v2_legacy_test = {"http_status": resp.status}
+                    if resp.status == 200:
+                        data = await resp.json()
+                        flows = data.get('data', [])
+                        ips_flows = [f for f in flows if f.get('ips')]
+                        v2_legacy_test["total_flows"] = len(flows)
+                        v2_legacy_test["ips_flows"] = len(ips_flows)
+                        v2_legacy_test["response_keys"] = list(data.keys())
+                        if flows:
+                            first = flows[0]
+                            v2_legacy_test["sample_flow_keys"] = list(first.keys())
+                            # Show nested dict keys for structure analysis
+                            nested = {}
+                            for k, v in first.items():
+                                if isinstance(v, dict):
+                                    nested[k] = list(v.keys())
+                            if nested:
+                                v2_legacy_test["sample_nested_keys"] = nested
+                        if ips_flows and not v2_events:
+                            v2_events = [client._normalize_v2_event(e) for e in ips_flows[:25]]
+                    else:
+                        v2_legacy_test["total_flows"] = 0
+                        try:
+                            body = await resp.text()
+                            v2_legacy_test["rejection_body"] = body[:500] if body else None
+                        except Exception:
+                            v2_legacy_test["rejection_body"] = None
+            except Exception as e:
+                if v2_error:
+                    v2_error += f"; Legacy format: {str(e)}"
+                else:
+                    v2_error = f"Legacy format: {str(e)}"
+                v2_legacy_test = {"error": str(e)}
 
         # Test legacy stat/ips/event API
         try:
@@ -591,6 +685,16 @@ async def debug_test_fetch(
         elif legacy_events:
             working_api = "legacy_stat_ips_event"
 
+        # Determine payload format from test results
+        if v2_filtered_test and v2_filtered_test.get("http_status") == 200:
+            payload_format = "v2_filtered"
+        elif v2_legacy_test and v2_legacy_test.get("http_status") == 200:
+            payload_format = "legacy_pagination"
+        elif v2_filtered_test or v2_legacy_test:
+            payload_format = "both_rejected"
+        else:
+            payload_format = "not_tested"
+
         # Build diagnostic response
         response = {
             "success": True,
@@ -607,7 +711,9 @@ async def debug_test_fetch(
                     "available": client.is_unifi_os,
                     "events_returned": len(v2_events),
                     "error": v2_error,
-                    "payload_format": "v2_filtered" if client._v2_uses_new_payload else "legacy_pagination" if client._v2_uses_new_payload is False else "unknown",
+                    "payload_format": payload_format,
+                    "filtered_test": v2_filtered_test,
+                    "legacy_test": v2_legacy_test,
                     "sample_event_keys": list(v2_events[0].keys()) if v2_events else None,
                     "sample_event": v2_events[0] if v2_events else None,
                     "endpoint": "/proxy/network/v2/api/site/{site}/traffic-flows"
