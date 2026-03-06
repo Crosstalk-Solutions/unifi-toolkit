@@ -77,6 +77,10 @@ UniFi Controller → unifi_client.py (get_health, get_system_info)
 
 ## Completed Work
 
+### v1.10.2
+- Enhance Threat Watch test-fetch diagnostics (#85) — test both v2 payload formats independently, capture rejection body, total flow count, sample flow keys, and nested structure for faster remote debugging
+- Closed #90 (shipped in v1.10.1)
+
 ### v1.10.1
 - Add `_FILE` env var support for Docker Swarm secrets (#86) — reads secret values from files (e.g., `ENCRYPTION_KEY_FILE=/run/secrets/key`) for orchestrators that mount secrets as files
 - Supported vars: `ENCRYPTION_KEY`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `DATABASE_URL`, `UNIFI_PASSWORD`, `UNIFI_API_KEY`
