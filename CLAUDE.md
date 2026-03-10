@@ -73,6 +73,15 @@ UniFi Controller → unifi_client.py (get_health, get_system_info)
   → dashboard.html JS (fetches every 60s)
 ```
 
+### Threat Watch Data Flow
+```
+UniFi Controller → get_traffic_flows() → _normalize_v2_event() (flattens to legacy field names)
+  → get_ips_events() returns normalized events
+  → scheduler.parse_unifi_event() → _parse_legacy_ips_event() (single parser for both v2 and legacy)
+  → ThreatEvent DB model
+```
+All v2 events are normalized before the scheduler sees them — the scheduler only has one parser.
+
 ### Network Pulse
 - Uses its own scheduler for background polling
 - Alpine.js for reactive frontend
@@ -85,6 +94,7 @@ UniFi Controller → unifi_client.py (get_health, get_system_info)
 - Fix Threat Watch missing geo/category data from v2 API (#79) — `source.region` mapped to country code (was looking for nonexistent `source.country`), `ips.category_name` mapped to category (was using `ips.ips_category` which only exists in `policies[]`)
 - Document that `unifi.ui.com` cloud access is not supported — controller URL must be a local IP/hostname (README.md and INSTALLATION.md)
 - Merged Dependabot PRs #93 (docker/metadata-action v5 → v6) and #94 (docker/build-push-action v6 → v7)
+- Remove dead `_parse_v2_traffic_flow()` from Threat Watch scheduler — was unreachable since v2 events are pre-normalized to legacy format by `_normalize_v2_event()` before reaching the scheduler
 
 ### v1.11.0
 - Drop legacy standalone controller support (#92) — removed aiounifi dependency entirely, all API calls now use direct aiohttp requests to UniFi OS endpoints
