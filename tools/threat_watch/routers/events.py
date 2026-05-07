@@ -702,7 +702,7 @@ async def debug_test_fetch(
                 "controller_url": unifi_config.controller_url,
                 "site": unifi_config.site_id,
                 "is_unifi_os": client.is_unifi_os,
-                "detected_type": client._detected_type
+                "detected_type": getattr(client, '_detected_type', None)
             },
             "gateway": gateway_info,
             "ips_settings": ips_settings,

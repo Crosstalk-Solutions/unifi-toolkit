@@ -140,9 +140,9 @@ async def login_page(request: Request):
         return RedirectResponse(url="/", status_code=303)
 
     return templates.TemplateResponse(
+        request,
         "login.html",
         {
-            "request": request,
             "error": None,
             "rate_limited": False,
             "wait_seconds": 0
@@ -169,9 +169,9 @@ async def login(
     if not is_allowed:
         logger.warning(f"Rate limited login attempt from {client_ip}")
         return templates.TemplateResponse(
+            request,
             "login.html",
             {
-                "request": request,
                 "error": None,
                 "rate_limited": True,
                 "wait_seconds": wait_seconds
@@ -192,9 +192,9 @@ async def login(
         is_allowed, wait_seconds = check_rate_limit(client_ip)
 
         return templates.TemplateResponse(
+            request,
             "login.html",
             {
-                "request": request,
                 "error": "Invalid username or password",
                 "rate_limited": not is_allowed,
                 "wait_seconds": wait_seconds
