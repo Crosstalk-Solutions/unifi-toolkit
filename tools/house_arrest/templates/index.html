@@ -50,7 +50,7 @@
                     <strong x-text="state.total_policy_count"></strong></span>
             </span>
             <span class="trust-actions">
-                <button class="btn btn-secondary btn-sm" @click="refresh()" :disabled="loading">
+                <button class="btn btn-secondary btn-sm" @click="refreshAll()" :disabled="loading">
                     <span x-text="loading ? 'Checking…' : 'Re-check'"></span>
                 </button>
             </span>
@@ -238,7 +238,7 @@
 
         <template x-for="a in state.arrests" :key="a.label">
             <div class="arrest"
-                 :class="{ 'is-broken': a.status === 'broken', 'is-rotated': a.status === 'rotated' }">
+                 :class="{ 'is-broken': a.status === 'broken', 'is-rotated': a.status === 'rotated', 'is-pending_move': a.status === 'pending_move' }">
                 <span class="arrest-id">
                     <span class="arrest-name" x-text="a.label"></span>
                     <span class="mono muted" x-text="' · ' + a.macs.join(', ')"></span>
@@ -310,6 +310,15 @@
         <div class="card-head">
             <span class="step">CONTEXT</span>
             <h2>Is your network already isolated?</h2>
+        </div>
+        <div class="actions" style="margin-bottom:1rem">
+            <button class="btn btn-secondary btn-sm" @click="loadInspection()"
+                    :disabled="inspection && inspection.loading">
+                <span x-text="(inspection && inspection.loading) ? 'Re-reading…' : 'Re-read from controller'"></span>
+            </button>
+            <span class="muted small">
+                Settings changed in the UniFi UI show up here after a re-read.
+            </span>
         </div>
         <p class="card-note">
             Read-only audit of your VLANs. A network can look isolated in the UniFi

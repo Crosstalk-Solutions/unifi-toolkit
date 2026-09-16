@@ -194,8 +194,16 @@ function houseArrest() {
 
         stateText(status) {
             if (status === 'ok') return 'Enforcing';
+            // The rules are live, but the VLAN move is waiting on a reconnect.
+            if (status === 'pending_move') return 'Rules live — VLAN move pending reconnect';
             if (status === 'rotated') return 'MAC changed — not enforcing';
             return 'Not enforcing';
+        },
+
+        async refreshAll() {
+            await this.refresh();
+            await this.loadInspection();
+            await this.loadNetworks();
         },
 
         async refresh(quiet = false) {
@@ -387,11 +395,13 @@ function houseArrest() {
                 if (data.error) {
                     this.message = { kind: 'danger', text: data.error };
                 } else {
-                    this.message = {
-                        kind: 'ok',
-                        text: this.label + ' is under house arrest — ' +
-                              data.created.length + ' policies written to your gateway.'
-                    };
+                    this.message = data.move_note
+                        ? { kind: 'warn', text: this.label + ' — ' + data.move_note }
+                        : {
+                            kind: 'ok',
+                            text: this.label + ' is under house arrest — ' +
+                                  data.created.length + ' policies written to your gateway.'
+                          };
                     this.preview = null;
                     this.selectedMac = '';
                     this.label = '';

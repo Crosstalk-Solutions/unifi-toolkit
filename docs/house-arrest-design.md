@@ -265,6 +265,43 @@ nominally isolated VLAN reachable anyway.
 
 ---
 
+## MEASURED 2026-09-16: writing the VLAN override does not move the device
+
+The Quarantine preset assumed that a successful `virtual_network_override`
+write meant the device had moved. **It does not.**
+
+Test: wired Raspberry Pi (`testclient`) on Default/192.168.200.234, port 2 of a
+USW Flex 2.5G 5 with `forward: "all"` and no port overrides — so the port
+already carries every VLAN and no tagging change was needed.
+
+| Step | Result |
+|---|---|
+| `set_client_network(pi, IDIoT)` | returned **True** — override written and read back correctly |
+| Client network after 15s … 150s | **still Default / 192.168.200.234**, unchanged |
+| SSH session throughout | never dropped |
+| Revert | clean; device unaffected |
+
+A connected wired client keeps its current VLAN and DHCP lease until it
+reconnects. The override sits pending, and applies on the next reconnect.
+
+**Consequence:** the old code would have reported a completed quarantine while
+the device sat exactly where it was — the same class of lie as showing a dead
+policy as green. Fixed:
+
+* After writing the override, the device's *actual* network is watched
+  (`_confirm_moved`, ~15s). The override is deliberately left in place, since
+  it does take effect on reconnect, but the caller is told plainly.
+* A new arrest status, `pending_move`, renders as **"Rules live — VLAN move
+  pending reconnect"**. State derives it by comparing each client's
+  `virtual_network_override_id` against the network it is actually on, so it
+  stays accurate however the override was set.
+* The apply message tells the user to unplug/replug or reboot the device.
+
+**Answers the open question about wired VLAN moves:** the blocker is not
+primarily switch-port tagging — this port already carried the VLAN — it is that
+the client does not re-DHCP until its link bounces. A port whose profile does
+*not* carry the target VLAN would be a second, separate failure.
+
 ## Overnight research session — 2026-09-15/16
 
 Two research agents plus bench verification. Every claim below is tagged by how

@@ -456,6 +456,7 @@ pre.payload {
 }
 .arrest.is-broken { border-color: var(--danger-color); }
 .arrest.is-rotated { border-color: var(--warning-color); }
+.arrest.is-pending_move { border-color: var(--warning-color); }
 
 .arrest-id { flex: 1; min-width: 200px; }
 .arrest-name { font-weight: 600; }
@@ -469,6 +470,7 @@ pre.payload {
 }
 .state.ok { color: var(--state-enforcing); }
 .state.rotated { color: var(--state-rotated); }
+.state.pending_move { color: var(--state-rotated); }
 .state.broken { color: var(--state-broken); }
 
 .blocked-panel {

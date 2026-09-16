@@ -98,6 +98,23 @@ async def get_state():
 
     health_rows = P.check_breakage(ours, known)
 
+    # A saved VLAN override that the device has not picked up yet is not a
+    # completed quarantine. Measured: a wired client keeps its VLAN and lease
+    # until it reconnects, so the override can sit pending indefinitely.
+    pending_move = set()
+    try:
+        active_now = await client.get_clients()
+    except Exception:
+        active_now = {}
+    for c in known_clients or []:
+        mac = (c.get("mac") or "").lower()
+        target = c.get("virtual_network_override_id")
+        if not mac or not c.get("virtual_network_override_enabled") or not target:
+            continue
+        live = active_now.get(mac)
+        if live and live.get("network_id") != target:
+            pending_move.add(mac)
+
     # Group policies into one entry per locked-down device.
     grouped: Dict[str, ArrestSummary] = {}
     health_by_id = {h["policy_id"]: h for h in health_rows}
@@ -114,6 +131,8 @@ async def get_state():
         if h and h["status"] != P.OK:
             summary.status = h["status"]
             summary.suggestion = h.get("suggestion")
+        elif any(m in pending_move for m in summary.macs):
+            summary.status = "pending_move"
 
     # Blocked-traffic counts: only worth a round trip when something is
     # actually locked down.
@@ -522,6 +541,7 @@ async def lockdown(req: LockdownRequest):
     # move that silently didn't take is reported as a failure rather than shown
     # as a completed quarantine.
     moved_to = None
+    move_note = None
     if P.requires_network(req.preset):
         for mac in req.macs:
             if not await client.set_client_network(mac, req.network_id):
@@ -529,14 +549,67 @@ async def lockdown(req: LockdownRequest):
                 return LockdownResponse(
                     dry_run=False, created=[],
                     error=(
-                        f"Policies were created but {mac} could not be moved to "
-                        f"the target network, so the whole lockdown was rolled "
+                        f"Policies were created but the VLAN override for {mac} "
+                        f"could not be written, so the whole lockdown was rolled "
                         f"back. Nothing was left half-applied."
                     ),
                 )
         moved_to = req.network_id
 
-    return LockdownResponse(dry_run=False, created=created, moved_to=moved_to)
+        # Writing the override is NOT the same as the device moving.
+        #
+        # Measured 2026-09-16 on a wired client: the override was written and
+        # read back correctly, and the device stayed on its original VLAN and
+        # IP for 150s with its session never dropping. A wired client keeps its
+        # current VLAN and DHCP lease until it reconnects.
+        #
+        # So the move is confirmed by watching the client's actual network, not
+        # by trusting the write. The override is left in place either way —
+        # it takes effect on the next reconnect — but the caller is told
+        # plainly that the device has not moved yet.
+        move_note = await _confirm_moved(client, req.macs, req.network_id)
+
+    return LockdownResponse(
+        dry_run=False, created=created, moved_to=moved_to, move_note=move_note,
+    )
+
+
+async def _confirm_moved(client, macs: List[str], network_id: str) -> Optional[str]:
+    """
+    Watch for the device actually landing on the target network.
+
+    Returns None once every target has moved, or a human-readable note saying
+    what still has not. Deliberately short: a wired device usually will not
+    move until it reconnects, and blocking the request for minutes to watch
+    something that needs physical action helps nobody.
+    """
+    import asyncio
+
+    waited = 0.0
+    pending = [m.lower() for m in macs]
+    while waited < 15.0:
+        try:
+            active = await client.get_clients()
+        except Exception:
+            break
+        pending = [
+            m for m in pending
+            if (active.get(m) or {}).get("network_id") != network_id
+        ]
+        if not pending:
+            return None
+        await asyncio.sleep(3.0)
+        waited += 3.0
+
+    if not pending:
+        return None
+    return (
+        "The VLAN override is saved, but "
+        + ("this device has" if len(pending) == 1 else "these devices have")
+        + " not moved yet. A connected device keeps its current VLAN and IP "
+        "address until it reconnects — unplug and replug it, or reboot it, to "
+        "complete the move. The firewall rules are already in force."
+    )
 
 
 @router.post("/release", response_model=ReleaseResponse)

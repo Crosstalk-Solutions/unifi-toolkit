@@ -66,6 +66,7 @@ class ArrestSummary(BaseModel):
     macs: List[str] = Field(default_factory=list)
     preset: Optional[str] = None
     policy_ids: List[str] = Field(default_factory=list)
+    # "ok" | "rotated" | "broken" | "pending_move"
     status: str = "ok"
     suggestion: Optional[str] = None
     # Attempts this lockdown actually stopped in the last 24h. Proof that the
@@ -190,6 +191,8 @@ class LockdownResponse(BaseModel):
     payloads: List[Dict] = Field(default_factory=list)
     # Set when the preset also moves the device into another VLAN.
     moved_to: Optional[str] = None
+    # Set when the override was saved but the device has not actually moved.
+    move_note: Optional[str] = None
     error: Optional[str] = None
 
 
