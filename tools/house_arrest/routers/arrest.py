@@ -143,11 +143,25 @@ async def get_state():
             if pid:
                 policy_to_label[pid] = P._label_from_policy(pol) or "device"
         all_macs = sorted({m for pol in ours for m in P.policy_macs(pol)})
+        our_ids = {p.get("_id") for p in ours if p.get("_id")}
         try:
             flows = await client.get_blocked_flows(all_macs, hours=24)
             totals = P.blocked_counts_by_label(flows, policy_to_label)
+            seen = P.observed_location(flows, our_ids)
             for summary in grouped.values():
                 summary.blocked_count = totals.get(summary.label, 0)
+                for mac in summary.macs:
+                    live = (active_now.get(mac) or {})
+                    if live.get("ip"):
+                        summary.ip = live.get("ip")
+                        summary.network = live.get("network")
+                        summary.location_source = "live"
+                        break
+                    if mac in seen:
+                        summary.ip = seen[mac]["ip"]
+                        summary.network = seen[mac]["network"]
+                        summary.location_source = "observed"
+                        break
         except Exception as e:
             logger.warning(f"Could not fetch blocked flows: {e}")
 

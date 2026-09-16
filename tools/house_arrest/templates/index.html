@@ -249,60 +249,77 @@
         </template>
 
         <template x-for="a in state.arrests" :key="a.label">
-            <div class="arrest"
-                 :class="{ 'is-broken': a.status === 'broken', 'is-rotated': a.status === 'rotated', 'is-pending_move': a.status === 'pending_move' }">
-                <span class="arrest-id">
-                    <span class="arrest-name" x-text="a.label"></span>
-                    <span class="mono muted" x-text="' · ' + a.macs.join(', ')"></span>
-                </span>
-                <span class="state" :class="a.status">
-                    <span class="dot"
-                          :style="'background: var(--state-' + (a.status === 'ok' ? 'enforcing' : a.status) + ')'"></span>
-                    <span x-text="stateText(a.status)"></span>
-                </span>
-                <!-- Proof, not just status: what this lockdown actually stopped. -->
-                <button class="btn btn-secondary btn-sm blocked-toggle"
-                        @click="toggleBlocked(a.label)"
-                        :disabled="!a.blocked_count">
-                    <span x-text="a.blocked_count
-                        ? a.blocked_count + (a.blocked_count === 1 ? ' attempt blocked' : ' attempts blocked')
-                        : 'Nothing blocked yet'"></span>
-                    <span x-show="a.blocked_count" x-text="openBlocked === a.label ? ' ▾' : ' ▸'"></span>
-                </button>
-                <button class="btn btn-danger btn-sm" @click="release(a.label)">Release</button>
-            </div>
-        </template>
-
-        <template x-if="openBlocked">
-            <div class="blocked-panel">
-                <div class="blocked-head">
-                    <strong x-text="'Blocked in the last 24 hours — ' + openBlocked"></strong>
-                    <button class="btn btn-secondary btn-sm" @click="openBlocked = null">Close</button>
+            <div>
+                <div class="arrest"
+                     :class="{ 'is-broken': a.status === 'broken', 'is-rotated': a.status === 'rotated', 'is-pending_move': a.status === 'pending_move' }">
+                    <span class="arrest-id">
+                        <span class="arrest-name" x-text="a.label"></span>
+                        <span class="arrest-meta">
+                            <span class="mono" x-text="a.macs.join(', ')"></span>
+                            <template x-if="a.ip">
+                                <span>
+                                    <span class="sep">·</span>
+                                    <span class="mono" x-text="a.ip"></span>
+                                    <template x-if="a.network">
+                                        <span class="vlan-chip" x-text="a.network"></span>
+                                    </template>
+                                    <template x-if="a.location_source === 'observed'">
+                                        <span class="muted" title="The controller has no current address for this device; this is where its blocked traffic came from.">(last seen)</span>
+                                    </template>
+                                </span>
+                            </template>
+                        </span>
+                    </span>
+                    <span class="state" :class="a.status">
+                        <span class="dot"
+                              :style="'background: var(--state-' + (a.status === 'ok' ? 'enforcing' : (a.status === 'broken' ? 'broken' : 'rotated')) + ')'"></span>
+                        <span x-text="stateText(a.status)"></span>
+                    </span>
+                    <button class="btn btn-secondary btn-sm blocked-toggle"
+                            @click="toggleBlocked(a.label)"
+                            :disabled="!a.blocked_count">
+                        <span x-text="a.blocked_count
+                            ? a.blocked_count + (a.blocked_count === 1 ? ' attempt' : ' attempts') + ' blocked · last ' + a.blocked_window_hours + 'h'
+                            : 'Nothing blocked in the last ' + a.blocked_window_hours + 'h'"></span>
+                        <span x-show="a.blocked_count" x-text="openBlocked === a.label ? ' ▾' : ' ▸'"></span>
+                    </button>
+                    <button class="btn btn-danger btn-sm" @click="release(a.label)">Release</button>
                 </div>
-                <p class="hint" x-show="blockedLoading">Loading…</p>
-                <table x-show="!blockedLoading && blockedFlows.length">
-                    <thead>
-                        <tr><th>When</th><th>Tried to reach</th><th>Port</th><th>Tries</th><th>Stopped by</th></tr>
-                    </thead>
-                    <tbody>
-                        <template x-for="(f, i) in blockedFlows" :key="i">
-                            <tr>
-                                <td class="muted small" x-text="when(f.time_ms)"></td>
-                                <td>
-                                    <span x-text="f.destination"></span>
-                                    <span class="hint" x-show="f.network" x-text="f.network"></span>
-                                </td>
-                                <td class="mono" x-text="(f.protocol || '') + (f.port ? ' ' + f.port : '')"></td>
-                                <td x-text="f.count"></td>
-                                <td class="muted small" x-text="f.policy"></td>
-                            </tr>
-                        </template>
-                    </tbody>
-                </table>
-                <p class="hint" x-show="!blockedLoading && !blockedFlows.length">
-                    Nothing recorded yet. The gateway logs a flow when the device
-                    actually tries to reach something blocked.
-                </p>
+
+                <!-- Rendered inside the row's own wrapper so it opens directly
+                     beneath the device it belongs to, not at the end of the list. -->
+                <template x-if="openBlocked === a.label">
+                    <div class="blocked-panel">
+                        <div class="blocked-head">
+                            <strong x-text="'What ' + a.label + ' tried to reach — last ' + a.blocked_window_hours + ' hours'"></strong>
+                            <button class="btn btn-secondary btn-sm" @click="openBlocked = null">Close</button>
+                        </div>
+                        <p class="hint" x-show="blockedLoading">Loading…</p>
+                        <table x-show="!blockedLoading && blockedFlows.length">
+                            <thead>
+                                <tr><th>When</th><th>Tried to reach</th><th>Port</th><th>Tries</th><th>Stopped by</th></tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="(f, i) in blockedFlows" :key="i">
+                                    <tr>
+                                        <td class="muted small" x-text="when(f.time_ms)"></td>
+                                        <td>
+                                            <span x-text="f.destination"></span>
+                                            <span class="hint" x-show="f.network" x-text="f.network"></span>
+                                        </td>
+                                        <td class="mono" x-text="(f.protocol || '') + (f.port ? ' ' + f.port : '')"></td>
+                                        <td x-text="f.count"></td>
+                                        <td class="muted small" x-text="f.policy"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                        <p class="hint" x-show="!blockedLoading && !blockedFlows.length">
+                            Nothing recorded yet. The gateway logs a flow when the device
+                            actually tries to reach something blocked.
+                        </p>
+                    </div>
+                </template>
             </div>
         </template>
 

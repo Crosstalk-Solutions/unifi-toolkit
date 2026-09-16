@@ -680,6 +680,37 @@ def summarize_blocked(flows: List[Dict], our_policy_ids: set) -> List[Dict]:
     return out
 
 
+def observed_location(flows: List[Dict], our_policy_ids: set) -> Dict[str, Dict]:
+    """
+    Where each locked-down device actually was, taken from blocked traffic.
+
+    The controller's own client record is not always reliable: measured
+    2026-09-16, a Roku sitting on 192.168.107.129/IDIoT was reported by both
+    `stat/sta` and the Integration API as network "Default" with a null IP.
+    Its blocked flows gave the true source IP, network and subnet.
+
+    So live client data is preferred where present, and this fills the gap.
+    Returns {mac: {ip, network, seen_ms}} from the newest flow per device.
+    """
+    out: Dict[str, Dict] = {}
+    for f in flows or []:
+        if not any(p.get("id") in our_policy_ids for p in (f.get("policies") or [])):
+            continue
+        src = f.get("source") or {}
+        mac = (src.get("mac") or "").lower()
+        if not mac or not src.get("ip"):
+            continue
+        when = f.get("time") or f.get("flow_start_time") or 0
+        prev = out.get(mac)
+        if prev is None or when > prev.get("seen_ms", 0):
+            out[mac] = {
+                "ip": src.get("ip"),
+                "network": src.get("network_name"),
+                "seen_ms": when,
+            }
+    return out
+
+
 def blocked_counts_by_label(
     flows: List[Dict], policy_id_to_label: Dict[str, str]
 ) -> Dict[str, int]:

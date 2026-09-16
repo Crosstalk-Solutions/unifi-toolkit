@@ -64,14 +64,20 @@ class ArrestSummary(BaseModel):
     """One locked-down device, assembled from the policies targeting it."""
     label: str
     macs: List[str] = Field(default_factory=list)
+    ip: Optional[str] = None
+    network: Optional[str] = None
+    # "live" (from the current client list) or "observed" (from blocked
+    # traffic, when the controller has no current IP for the device).
+    location_source: Optional[str] = None
     preset: Optional[str] = None
     policy_ids: List[str] = Field(default_factory=list)
     # "ok" | "rotated" | "broken" | "pending_move"
     status: str = "ok"
     suggestion: Optional[str] = None
-    # Attempts this lockdown actually stopped in the last 24h. Proof that the
-    # rule is doing something, rather than merely existing.
+    # Attempts this lockdown actually stopped. Proof that the rule is doing
+    # something, rather than merely existing. Window is blocked_window_hours.
     blocked_count: int = 0
+    blocked_window_hours: int = 24
 
 
 class PrecedenceWarning(BaseModel):
