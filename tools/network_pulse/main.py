@@ -51,8 +51,9 @@ def create_app() -> FastAPI:
     async def dashboard(request: Request):
         """Serve the Network Pulse dashboard"""
         return templates.TemplateResponse(
+            request,
             "index.html",
-            {"request": request, "version": __version__}
+            {"version": __version__}
         )
 
     # AP detail page route
@@ -60,8 +61,9 @@ def create_app() -> FastAPI:
     async def ap_detail_page(request: Request, ap_mac: str):
         """Serve the AP detail page"""
         return templates.TemplateResponse(
+            request,
             "ap_detail.html",
-            {"request": request, "ap_mac": ap_mac, "version": __version__}
+            {"ap_mac": ap_mac, "version": __version__}
         )
 
     # Status endpoint

@@ -45,9 +45,9 @@ def create_app() -> FastAPI:
     async def dashboard(request: Request):
         """Serve the House Arrest dashboard"""
         return templates.TemplateResponse(
+            request,
             "index.html",
             {
-                "request": request,
                 "version": __version__,
                 "presets": P.preset_catalog(),
                 "network_presets": P.network_preset_catalog(),

@@ -226,9 +226,9 @@ async def root(request: Request):
     from tools.house_arrest import __version__ as arrest_version
 
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "auth_enabled": is_auth_enabled(),
             "app_version": app_version,
             "stalker_version": stalker_version,

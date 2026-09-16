@@ -1,4 +1,4 @@
-fastapi>=0.115.6
+fastapi>=0.116.1
 uvicorn[standard]>=0.32.0
 sqlalchemy>=2.0.36
 greenlet>=3.0.0
@@ -11,6 +11,13 @@ pydantic-settings>=2.6.1
 jinja2>=3.1.6
 cryptography>=44.0.1
 aiohttp>=3.10.0
+# Floor is a security fix, not a compatibility bound. fastapi<0.116 caps
+# starlette below this, so the old fastapi>=0.115.6 pin made this file
+# unsatisfiable-as-intended: pip had to jump to a much newer fastapi and
+# pulled starlette 1.x, which removed the TemplateResponse(name, context)
+# signature and 500'd every template route. The app now uses the
+# request-first signature, which works on 0.29+ and on 1.x, so no upper
+# bound is needed.
 starlette>=0.47.2
 bcrypt>=4.0.0
 python-multipart>=0.0.6

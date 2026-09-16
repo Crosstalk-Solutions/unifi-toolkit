@@ -214,12 +214,13 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 
 ## Known Environment Issues
 
-- **`requirements.txt` produces a broken app on a fresh install.** `starlette>=0.47.2`
-  is unbounded and pip now resolves 1.6.0, which removed the old
-  `TemplateResponse(name, context)` signature — every template route 500s, the main
-  dashboard included. Local dev pins `fastapi==0.115.6` (which pulls starlette 0.41.3).
-  The repo itself is still unfixed; the real fix is an upper bound or migrating the
-  `TemplateResponse` calls to the request-first signature.
+- **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
+  "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.
+  The old form was removed in starlette 1.0 and 500s every template route with
+  `TypeError: unhashable type: 'dict'`. The new form works on 0.29+ and on 1.x.
+  (Fixed in v1.12.0 — `requirements.txt` previously paired `fastapi>=0.115.6` with
+  `starlette>=0.47.2`, which fastapi caps below, so pip jumped to a much newer
+  fastapi and pulled starlette 1.x. A fresh install produced a dead app.)
 
 ## Troubleshooting UniFi API
 

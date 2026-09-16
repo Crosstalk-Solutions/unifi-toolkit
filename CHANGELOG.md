@@ -13,6 +13,9 @@ All notable changes to UI Toolkit will be documented in this file.
   - **DNS Lockdown** - Force chosen networks onto approved resolvers and block DNS to anywhere else, optionally including DNS-over-TLS. Rule order decides whether this works at all, so the stored order is verified after applying and the whole set rolled back if the allow rule did not land ahead of the blocks.
   - Known limits are shown next to the claims they qualify rather than left to be discovered: same-VLAN traffic cannot be filtered by any firewall policy, DNS survives a lockdown when the resolver is on the device's own subnet, established connections continue, and DNS-over-HTTPS is not covered.
 
+### Fixed
+- **A fresh `pip install -r requirements.txt` produced a broken app.** `fastapi>=0.115.6` caps starlette below the `starlette>=0.47.2` on the next line, so pip resolved to a much newer fastapi and pulled starlette 1.x — which removed the `TemplateResponse(name, context)` signature and returned 500 on every template route, the main dashboard included. All 9 call sites now use the request-first signature, which works on starlette 0.29+ and on 1.x, so no upper bound is needed. Verified by installing from `requirements.txt` into a clean environment and loading every template route on both starlette 1.6.0 and 0.41.3.
+
 ### Documentation
 - `docs/house-arrest-design.md` records the design and every measured API behaviour, including corrections to earlier wrong assumptions so they are not rediscovered.
 - CLAUDE.md gains the UniFi API quirks found while building this, and a note that `requirements.txt` currently produces a broken app on a fresh install.
