@@ -38,6 +38,7 @@ function houseArrest() {
         selectedMac: '',
         label: '',
         networkId: '',
+        allowInbound: true,
         preview: null,
 
         async init() {
@@ -287,12 +288,21 @@ function houseArrest() {
         pathRows() {
             const p = this.currentPreset();
             const effects = p ? p.effects : { internet: 'block', networks: 'block', peers: 'allow' };
-            return ['internet', 'networks', 'peers'].map(key => ({
+            const rows = ['internet', 'networks', 'peers'].map(key => ({
                 key,
                 label: this.pathLabels[key] || key,
                 verdict: effects[key],
                 fixed: key === 'peers'
             }));
+            // The inbound direction is a choice, not a preset property, so it
+            // is appended rather than living in PRESET_EFFECTS.
+            rows.push({
+                key: 'inbound',
+                label: this.pathLabels['inbound'] || 'You reaching in to it',
+                verdict: this.allowInbound ? 'allow' : 'block',
+                fixed: false
+            });
+            return rows;
         },
 
         pathStroke(verdict) {
@@ -389,6 +399,7 @@ function houseArrest() {
                         macs: [this.selectedMac],
                         label: this.label,
                         network_id: this.networkId || null,
+                        allow_inbound: this.allowInbound,
                         dry_run: true
                     })
                 });
@@ -416,6 +427,7 @@ function houseArrest() {
                         macs: [this.selectedMac],
                         label: this.label,
                         network_id: this.networkId || null,
+                        allow_inbound: this.allowInbound,
                         dry_run: false
                     })
                 });

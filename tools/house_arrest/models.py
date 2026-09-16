@@ -188,6 +188,9 @@ class LockdownRequest(BaseModel):
     # Required for presets that move the device (Quarantine). The target is an
     # existing network's `_id`; House Arrest never creates a VLAN.
     network_id: Optional[str] = None
+    # Keep the device reachable from your other networks. Blocks the device
+    # from initiating outward, but lets it answer when you contact it.
+    allow_inbound: bool = True
     dry_run: bool = True
 
 

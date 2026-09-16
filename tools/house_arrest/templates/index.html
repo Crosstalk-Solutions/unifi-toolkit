@@ -183,6 +183,18 @@
             </div>
         </template>
 
+        <label class="inline-check">
+            <input type="checkbox" x-model="allowInbound" @change="preview = null">
+            <span>
+                <strong>Let me still reach this device</strong>
+                <span class="hint" style="margin-top:0.15rem">
+                    It can't start connections out, but it can answer when you
+                    contact it — so a camera or smart bulb on another VLAN stays
+                    usable. Uncheck for absolute isolation in both directions.
+                </span>
+            </span>
+        </label>
+
         <div class="actions">
             <button class="btn btn-secondary" @click="dryRun()" :disabled="!canReview() || previewing">
                 <span x-text="previewing ? 'Checking…' : 'Review changes'"></span>

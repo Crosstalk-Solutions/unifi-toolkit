@@ -561,6 +561,7 @@ async def lockdown(req: LockdownRequest):
             client_zone_id=internal_id,
             external_zone_id=external_id,
             indexes=indexes,
+            allow_inbound=req.allow_inbound,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

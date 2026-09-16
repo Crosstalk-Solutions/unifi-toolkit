@@ -124,6 +124,7 @@ PATH_LABELS = {
     "internet": "The internet",
     "networks": "Your other networks",
     "peers": "Devices on its own VLAN",
+    "inbound": "You reaching in to it",
 }
 
 
@@ -485,6 +486,7 @@ def build_lockdown(
     client_zone_id: str,
     external_zone_id: str,
     indexes: List[int],
+    allow_inbound: bool = True,
 ) -> List[Dict]:
     """
     Build the policy set for a lockdown preset.
@@ -496,6 +498,24 @@ def build_lockdown(
         client_zone_id: zone the device sits in (usually Internal)
         external_zone_id: the WAN/External zone
         indexes: pre-allocated free indexes, from next_free_index()
+        allow_inbound: keep the device reachable FROM your other networks.
+
+    On `allow_inbound` (default True):
+
+    A BLOCK policy stops traffic in the direction it matches. Because the
+    locked-down device is the SOURCE, a block with no reply handling also kills
+    the replies to connections someone else started — so you would lose the
+    ability to reach the device yourself, from another VLAN, without any
+    warning that it had happened.
+
+    `create_allow_respond` is how UniFi expresses "block this direction but let
+    replies through", and UniFi's own Isolate Network setting sets it (measured
+    2026-09-16: its generated rules carry create_allow_respond=true). Matching
+    that is both the safer default and the one that fits the name: a device
+    under house arrest cannot go out, but you can still visit it.
+
+    Set it False for absolute isolation, where nothing may cross in either
+    direction.
 
     Returns:
         List of policy payloads, ready to POST.
@@ -518,6 +538,7 @@ def build_lockdown(
         source=src,
         destination=zone_destination(external_zone_id),
         description=describe(f"{PRESET_LABELS[preset]} for {label}"),
+        allow_respond=allow_inbound,
     )
     block_lan = _base_policy(
         name=f"House Arrest: {label} — no LAN",
@@ -526,6 +547,7 @@ def build_lockdown(
         source=src,
         destination=zone_destination(client_zone_id),
         description=describe(f"{PRESET_LABELS[preset]} for {label}"),
+        allow_respond=allow_inbound,
     )
 
     if preset in (FULL_LOCKDOWN, QUARANTINE):

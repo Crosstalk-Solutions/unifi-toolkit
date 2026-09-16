@@ -370,6 +370,21 @@ select:focus, input[type="text"]:focus {
 .caveats li { margin-bottom: 0.35rem; }
 .caveats li::marker { color: var(--warning-color); }
 
+.inline-check {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 1.25rem;
+    cursor: pointer;
+    font-weight: 400;
+}
+.inline-check input { margin-top: 0.2rem; flex: none; }
+.inline-check strong { display: block; font-size: 0.95rem; }
+.inline-check .hint { margin-top: 0; }
+
 /* ---------- Buttons ---------- */
 
 .btn {

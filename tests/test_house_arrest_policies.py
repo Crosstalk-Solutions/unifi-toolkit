@@ -469,3 +469,53 @@ class TestIsolationMatrix:
         assert P._ip_in_subnet("192.168.107.5", "192.168.200.1/24") is False
         assert P._ip_in_subnet("garbage", "192.168.200.1/24") is False
         assert P._ip_in_subnet("192.168.200.50", None) is False
+
+
+class TestInboundAccess:
+    """
+    A BLOCK policy sourced from the device also kills the replies to
+    connections someone else started, unless create_allow_respond is set.
+    Without it, locking down a camera on another VLAN silently costs you the
+    ability to view it. UniFi's own Isolate Network sets the flag; we match it.
+    """
+
+    def _build(self, allow_inbound):
+        return P.build_lockdown(
+            P.FULL_LOCKDOWN, [MAC], "Cam", CLIENT_ZONE, EXTERNAL_ZONE,
+            P.next_free_index([], 2), allow_inbound=allow_inbound,
+        )
+
+    def test_default_keeps_the_device_reachable(self):
+        for pol in P.build_lockdown(
+            P.FULL_LOCKDOWN, [MAC], "Cam", CLIENT_ZONE, EXTERNAL_ZONE,
+            P.next_free_index([], 2),
+        ):
+            assert pol["create_allow_respond"] is True
+
+    @pytest.mark.parametrize("preset", P.PRESETS)
+    def test_every_preset_honours_the_choice(self, preset):
+        idx = P.next_free_index([], P.policy_count(preset))
+        on = P.build_lockdown(preset, [MAC], "Cam", CLIENT_ZONE,
+                              EXTERNAL_ZONE, idx, allow_inbound=True)
+        off = P.build_lockdown(preset, [MAC], "Cam", CLIENT_ZONE,
+                               EXTERNAL_ZONE, idx, allow_inbound=False)
+        assert all(p["create_allow_respond"] is True for p in on)
+        assert all(p["create_allow_respond"] is False for p in off)
+
+    def test_absolute_isolation_still_blocks_outbound(self):
+        """Turning inbound off must not change what the device can initiate."""
+        on, off = self._build(True), self._build(False)
+        assert [p["action"] for p in on] == [p["action"] for p in off]
+        assert ([p["destination"]["zone_id"] for p in on]
+                == [p["destination"]["zone_id"] for p in off])
+
+    def test_inbound_is_not_a_preset_property(self):
+        """
+        It is a per-application choice, so it must not be baked into
+        PRESET_EFFECTS where it would masquerade as a fixed preset trait.
+        """
+        for preset in P.PRESETS:
+            assert "inbound" not in P.PRESET_EFFECTS[preset]
+
+    def test_path_labels_cover_the_inbound_row(self):
+        assert "inbound" in P.PATH_LABELS
