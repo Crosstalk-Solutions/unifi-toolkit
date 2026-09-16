@@ -2,6 +2,21 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.12.0] - 2026-09-16
+
+### Added
+- **House Arrest** - New tool for locking a device or a whole network down using UniFi's zone-based firewall. Three tabs: Networks (isolation and a status matrix), DNS Lockdown, and Devices.
+  - **Device lockdown** - Per-device by MAC, so wired and wireless are covered identically. Four presets, always previewed before applying, and release removes exactly the policies it created and refuses anything else. Verified end to end against a real device.
+  - **Blocked traffic view** - Shows what each lockdown actually stopped, attributed to our own policy by id, so another rule's blocks are never counted as ours.
+  - **Network isolation** - Uses UniFi's own `network_isolation_enabled` / `internet_access_enabled` settings rather than parallel rules, so this tool and the UniFi UI can never disagree.
+  - **Isolation matrix** - Networks against security settings, each intersection explaining itself on hover. The DNS column compares each advertised resolver against the network's own subnet, because a resolver inside the network cannot be filtered by the gateway.
+  - **DNS Lockdown** - Force chosen networks onto approved resolvers and block DNS to anywhere else, optionally including DNS-over-TLS. Rule order decides whether this works at all, so the stored order is verified after applying and the whole set rolled back if the allow rule did not land ahead of the blocks.
+  - Known limits are shown next to the claims they qualify rather than left to be discovered: same-VLAN traffic cannot be filtered by any firewall policy, DNS survives a lockdown when the resolver is on the device's own subnet, established connections continue, and DNS-over-HTTPS is not covered.
+
+### Documentation
+- `docs/house-arrest-design.md` records the design and every measured API behaviour, including corrections to earlier wrong assumptions so they are not rediscovered.
+- CLAUDE.md gains the UniFi API quirks found while building this, and a note that `requirements.txt` currently produces a broken app on a fresh install.
+
 ## [1.11.2] - 2026-03-18
 
 ### Fixed

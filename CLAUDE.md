@@ -27,6 +27,7 @@ tools/
 ├── wifi_stalker/        # Client tracking tool
 ├── threat_watch/        # IDS/IPS monitoring
 ├── network_pulse/       # Network health dashboard (Alpine.js frontend)
+├── house_arrest/        # Per-device + per-network lockdown via zone-based firewall
 ```
 
 ## Key Patterns
@@ -44,6 +45,21 @@ Version is maintained in THREE files — keep them in sync:
 - WAN detection is dynamic via `startswith('wan')` — supports N WANs
 - **Signal strength:** UniFi API returns separate `rssi` and `signal` fields — use `signal` (matches console display) with `rssi` fallback
 - **v2 traffic-flows payload:** The v2 endpoint supports a filtered payload format with `pageNumber`/`pageSize`/`timestampFrom`/`timestampTo` and a `policy_type` array for server-side filtering (e.g., `["INTRUSION_PREVENTION"]` for IPS-only events). The old `limit`/`offset`/`timeRange` format returns ALL flows unfiltered. Auto-detection via `_v2_uses_new_payload` flag handles both formats.
+
+### House Arrest (`tools/house_arrest/`)
+- Locks a device or a whole network down using zone-based firewall policies
+- **`docs/house-arrest-design.md` is the source of truth** — it records every
+  measured API behaviour and the corrections to earlier wrong assumptions. Read
+  it before changing lockdown behaviour rather than re-deriving from the API.
+- Core rule: the tool must never claim protection it is not delivering. Health
+  checks, precedence warnings, blocked-traffic attribution and the measured
+  caveat list all exist to enforce that.
+- Every policy carries `[HouseArrest]` in its `description`; release deletes
+  exactly those and refuses anything else. Sub-markers `[Network]` and `[DNS]`
+  distinguish the policy kinds.
+- Network isolation uses UniFi's native `network_isolation_enabled` /
+  `internet_access_enabled` flags, NOT parallel policies, so the tool and the
+  UniFi UI can never disagree.
 
 ### Schema Repair (`run.py → _repair_schema()`)
 - Runs on every startup after Alembic migrations
@@ -196,6 +212,15 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 - Dynamic multi-WAN support for 3+ WAN interfaces (#59)
 - Version sync across all three version files
 
+## Known Environment Issues
+
+- **`requirements.txt` produces a broken app on a fresh install.** `starlette>=0.47.2`
+  is unbounded and pip now resolves 1.6.0, which removed the old
+  `TemplateResponse(name, context)` signature — every template route 500s, the main
+  dashboard included. Local dev pins `fastapi==0.115.6` (which pulls starlette 0.41.3).
+  The repo itself is still unfixed; the real fix is an upper bound or migrating the
+  `TemplateResponse` calls to the request-first signature.
+
 ## Troubleshooting UniFi API
 
 ### Reverse-Engineering Undocumented Endpoints
@@ -213,3 +238,26 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
 - The legacy `stat/ips/event` endpoint returns 0 on Network 10.x+ — effectively deprecated
 - Express in AP-only mode reports `type: "udm"` (not `uap` or `ux`) with `device_mode_override: "mesh"` and `model: "UX"` — detect via `device_mode_override` field
 - The `rssi` and `signal` fields are separate values; the console displays `signal`
+- **The stored firewall policy `index` is not the one you send.** Indexes sent as
+  10004/10005 came back as 10000/10003, colliding with an existing rule. Relative
+  creation order was preserved in a later test. Verify stored indexes; never assume placement.
+- **`create_allow_respond` cannot be set on a policy you create when source and
+  destination share a zone** — `FirewallPolicyCreateRespondTrafficPolicyNotAllowed`.
+  UniFi's own isolation rules use it; custom ones cannot. Use connection-state
+  scoping instead: `connection_state_type: ALL | RESPOND_ONLY | CUSTOM`,
+  `connection_states: NEW | RELATED | INVALID | ESTABLISHED`.
+- **A saved per-client VLAN override is not a completed move.** A wired client keeps
+  its VLAN and DHCP lease until it reconnects — measured unchanged for 150s+.
+  Verify the client's actual network, not the write.
+- **`stat/sta` and the Integration API can both report the wrong network for a client.**
+  A device on 192.168.107.129/IDIoT was reported as "Default" with a null IP by both.
+  Traffic-flow data carried the correct source IP, network and subnet.
+- **Controller changes provision asynchronously.** Verify writes by polling with a
+  retry; a single immediate re-read reports false failures.
+- **UniFi DNS policies (`integration/v1/.../dns/policies`) are site-wide.** No scoping
+  field exists in the schema, so they cannot express per-device or per-VLAN behaviour.
+- Integration API base is `/proxy/network/integration/v1`, the site id there is a
+  **UUID** (not `default`), and the existing toolkit API key authenticates against it.
+- Blocked traffic is queryable via v2 `traffic-flows` with `action: ["blocked"]`
+  (lowercase enum; `BLOCK`/`BLOCKED` are rejected) and `source_mac`. Each flow's
+  `policies[]` names the exact policy that blocked it, so blocks can be attributed by id.
