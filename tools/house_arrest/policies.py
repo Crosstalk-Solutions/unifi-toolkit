@@ -147,14 +147,58 @@ def preset_catalog() -> List[Dict]:
 # ----------------------------------------------------------------------
 # Network-scoped isolation
 #
-# Same machinery as device lockdown, but the policy source is a NETWORK
-# instead of a client. Deliberately implemented as marked firewall policies
-# rather than by flipping UniFi's own `network_isolation_enabled` toggle:
-# that toggle is a property of the network, so undoing it would mean
-# remembering its previous value, and a failed revert would silently leave a
-# user's own setting changed. Policies keep the existing guarantee — release
-# deletes exactly what we created and nothing else.
+# CORRECTED 2026-09-16. This was first built as marked firewall policies with
+# a NETWORK source, to preserve the "release deletes exactly what we created"
+# guarantee. That was the wrong call, for two measured reasons:
+#
+#   1. UniFi's own "Isolate Network" checkbox generates three predefined BLOCK
+#      policies — one per destination zone (Internal, Hotspot, DMZ), matching
+#      the network by subnet. Our version only covered Internal, so it was
+#      strictly less complete.
+#   2. The checkbox sets `network_isolation_enabled` on the network. Our
+#      policies did not, so the tool's own matrix read "isolation: Off" for a
+#      network it had just isolated. The tool contradicted itself.
+#
+# So network isolation now uses the native flags. The revert story turns out
+# to be clean without any stored state, because we only ever act in one
+# direction: if a flag is already at the target value we do nothing and say
+# so, otherwise we flip it and release flips it back. There is no case where
+# release guesses at a previous value.
 # ----------------------------------------------------------------------
+
+# Native per-network flags, and the value each preset needs them at.
+NET_FLAG_ISOLATION = "network_isolation_enabled"
+NET_FLAG_INTERNET = "internet_access_enabled"
+
+
+def network_flags_for(preset: str) -> Dict[str, bool]:
+    """The native network flags a preset needs, as {field: desired value}."""
+    if preset == NET_ISOLATE_NETWORKS:
+        return {NET_FLAG_ISOLATION: True}
+    if preset == NET_NO_INTERNET:
+        return {NET_FLAG_INTERNET: False}
+    if preset == NET_FULL:
+        return {NET_FLAG_ISOLATION: True, NET_FLAG_INTERNET: False}
+    raise ValueError(f"Unknown network preset: {preset!r}")
+
+
+def network_flags_to_release() -> Dict[str, bool]:
+    """Undoing isolation: back to reachable, with internet."""
+    return {NET_FLAG_ISOLATION: False, NET_FLAG_INTERNET: True}
+
+
+def network_changes_needed(network: Dict, preset: str) -> Dict[str, bool]:
+    """
+    Only the flags that actually need changing.
+
+    A flag already at the target value is left alone and reported as such, so
+    releasing never switches off something the user had set themselves.
+    """
+    wanted = network_flags_for(preset)
+    return {
+        k: v for k, v in wanted.items()
+        if bool((network or {}).get(k)) != bool(v)
+    }
 
 NETWORK_MARKER = "[Network]"
 
@@ -225,7 +269,13 @@ def network_policy_count(preset: str) -> int:
 
 
 def describe_network(note: str) -> str:
-    """Tagged description for a network-scoped policy."""
+    """
+    Tagged description for a network-scoped policy.
+
+    Retained only so leftover policies from the previous implementation can
+    still be recognised and removed. Network isolation no longer writes
+    policies — it uses UniFi's native per-network flags.
+    """
     return f"{MARKER}{NETWORK_MARKER} {note}".strip()
 
 
@@ -234,74 +284,6 @@ def is_network_policy(policy: Dict) -> bool:
     if not is_house_arrest(policy):
         return False
     return NETWORK_MARKER in (policy.get("description") or "")
-
-
-def network_source(network_ids: List[str], zone_id: str) -> Dict:
-    """
-    Source block matching whole networks.
-
-    Shape measured from a predefined policy on a live console (2026-09-16).
-    """
-    if not network_ids:
-        raise ValueError("At least one network id is required")
-    if not zone_id:
-        raise ValueError("zone_id is required")
-    return {
-        "matching_target": "NETWORK",
-        "network_ids": list(network_ids),
-        "match_mac": False,
-        "match_opposite_networks": False,
-        "match_opposite_ports": False,
-        "port_matching_type": "ANY",
-        "zone_id": zone_id,
-    }
-
-
-def build_network_isolation(
-    preset: str,
-    network_id: str,
-    network_name: str,
-    client_zone_id: str,
-    external_zone_id: str,
-    indexes: List[int],
-) -> List[Dict]:
-    """
-    Build the policy set that isolates a whole network.
-
-    Mirrors build_lockdown(), but sourced from a network. Policy names use a
-    distinct prefix so the UI never lists an isolated network as though it
-    were a locked-down device.
-    """
-    if preset not in NETWORK_PRESETS:
-        raise ValueError(f"Unknown network preset: {preset!r}")
-    needed = network_policy_count(preset)
-    if len(indexes) < needed:
-        raise ValueError(
-            f"Preset {preset!r} needs {needed} indexes, got {len(indexes)}"
-        )
-
-    src = network_source([network_id], client_zone_id)
-    label = network_name or "network"
-    desc = describe_network(f"{NETWORK_PRESET_LABELS[preset]} for {label}")
-
-    block_internet = _base_policy(
-        name=f"House Arrest: {label} network - no internet",
-        action="BLOCK", index=indexes[0], source=src,
-        destination=zone_destination(external_zone_id), description=desc,
-    )
-    block_networks = _base_policy(
-        name=f"House Arrest: {label} network - isolated",
-        action="BLOCK", index=indexes[-1], source=src,
-        destination=zone_destination(client_zone_id), description=desc,
-    )
-
-    if preset == NET_FULL:
-        return [block_internet, block_networks]
-    if preset == NET_NO_INTERNET:
-        return [block_internet]
-    if preset == NET_ISOLATE_NETWORKS:
-        return [block_networks]
-    raise ValueError(f"Unhandled network preset: {preset!r}")  # pragma: no cover
 
 
 def network_label_from_policy(policy: Dict) -> str:

@@ -335,37 +335,76 @@ class TestPresetFromPolicy:
 
 class TestNetworkIsolation:
     """
-    Network-scoped isolation reuses the device machinery but must stay
-    distinguishable from it — an isolated network must never be listed as a
-    locked-down device, and release must be able to tell them apart.
+    Network isolation uses UniFi's own per-network flags rather than parallel
+    firewall policies. Two properties matter:
+
+      * it must never guess at a previous value — it only ever flips a flag
+        that is not already where the preset wants it;
+      * leftover policies from the previous implementation must still be
+        recognisable, so they can be cleaned up.
     """
 
-    NET_ID = "6633bca6d2716f22019bb117"
+    OPEN = {"network_isolation_enabled": False, "internet_access_enabled": True}
+    ISOLATED = {"network_isolation_enabled": True, "internet_access_enabled": True}
+    LOCKED = {"network_isolation_enabled": True, "internet_access_enabled": False}
 
-    def _build(self, preset):
-        return P.build_network_isolation(
-            preset, self.NET_ID, "IDIoT", CLIENT_ZONE, EXTERNAL_ZONE,
-            P.next_free_index([], P.network_policy_count(preset)),
-        )
+    def test_isolate_sets_only_the_isolation_flag(self):
+        assert P.network_flags_for(P.NET_ISOLATE_NETWORKS) == {
+            "network_isolation_enabled": True
+        }
 
-    @pytest.mark.parametrize("preset", P.NETWORK_PRESETS)
-    def test_every_preset_builds_and_is_marked(self, preset):
-        pols = self._build(preset)
-        assert len(pols) == P.network_policy_count(preset)
-        for p in pols:
-            assert P.is_house_arrest(p), "release would not find this"
-            assert P.is_network_policy(p), "must be distinguishable from a device"
-            assert p["predefined"] is False
+    def test_no_internet_sets_only_the_internet_flag(self):
+        assert P.network_flags_for(P.NET_NO_INTERNET) == {
+            "internet_access_enabled": False
+        }
 
-    def test_network_source_shape(self):
-        src = P.network_source([self.NET_ID], CLIENT_ZONE)
-        assert src["matching_target"] == "NETWORK"
-        assert src["network_ids"] == [self.NET_ID]
-        assert src["match_opposite_networks"] is False
+    def test_full_isolation_sets_both(self):
+        assert P.network_flags_for(P.NET_FULL) == {
+            "network_isolation_enabled": True,
+            "internet_access_enabled": False,
+        }
 
-    def test_network_source_requires_a_network(self):
+    def test_open_network_needs_every_flag_changed(self):
+        assert P.network_changes_needed(self.OPEN, P.NET_FULL) == {
+            "network_isolation_enabled": True,
+            "internet_access_enabled": False,
+        }
+
+    def test_already_isolated_needs_nothing(self):
+        """Re-isolating must be a no-op, not a redundant write."""
+        assert P.network_changes_needed(self.ISOLATED, P.NET_ISOLATE_NETWORKS) == {}
+
+    def test_partially_set_network_changes_only_the_gap(self):
+        assert P.network_changes_needed(self.ISOLATED, P.NET_FULL) == {
+            "internet_access_enabled": False
+        }
+
+    def test_missing_field_is_treated_as_off(self):
+        """An absent flag means not isolated, not unknown."""
+        assert P.network_changes_needed({}, P.NET_ISOLATE_NETWORKS) == {
+            "network_isolation_enabled": True
+        }
+
+    def test_release_restores_reachability_and_internet(self):
+        assert P.network_flags_to_release() == {
+            "network_isolation_enabled": False,
+            "internet_access_enabled": True,
+        }
+
+    def test_unknown_preset_rejected(self):
         with pytest.raises(ValueError):
-            P.network_source([], CLIENT_ZONE)
+            P.network_flags_for("nuke")
+
+    def test_legacy_policies_are_still_recognisable(self):
+        """Leftovers from the old implementation must remain cleanable."""
+        legacy = {
+            "predefined": False,
+            "description": P.describe_network("Full isolation for IDIoT"),
+            "name": "House Arrest: IDIoT network - isolated",
+        }
+        assert P.is_house_arrest(legacy)
+        assert P.is_network_policy(legacy)
+        assert P.network_label_from_policy(legacy) == "IDIoT"
 
     def test_device_policies_are_not_network_policies(self):
         pols = P.build_lockdown(
@@ -374,30 +413,10 @@ class TestNetworkIsolation:
         )
         assert all(not P.is_network_policy(p) for p in pols)
 
-    def test_label_round_trips(self):
-        pols = self._build(P.NET_FULL)
-        assert P.network_label_from_policy(pols[0]) == "IDIoT"
-
-    def test_full_isolation_blocks_both_directions(self):
-        pols = self._build(P.NET_FULL)
-        zones = {p["destination"]["zone_id"] for p in pols}
-        assert zones == {CLIENT_ZONE, EXTERNAL_ZONE}
-        assert all(p["action"] == "BLOCK" for p in pols)
-
-    def test_isolate_networks_leaves_internet_alone(self):
-        pols = self._build(P.NET_ISOLATE_NETWORKS)
-        assert len(pols) == 1
-        assert pols[0]["destination"]["zone_id"] == CLIENT_ZONE
-
     def test_every_network_preset_discloses_the_peer_caveat(self):
         for preset in P.NETWORK_PRESETS:
             joined = " ".join(P.caveats_for_network(preset)).lower()
             assert "talk to each other" in joined
-
-    def test_unknown_preset_rejected(self):
-        with pytest.raises(ValueError):
-            P.build_network_isolation("nuke", self.NET_ID, "X",
-                                      CLIENT_ZONE, EXTERNAL_ZONE, [10000])
 
 
 class TestIsolationMatrix:

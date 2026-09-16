@@ -2161,6 +2161,85 @@ class UniFiClient:
             logger.error(f"Error setting client network for {mac_address}: {e}")
             return False
 
+    async def set_network_flags(self, network_id: str, **flags) -> bool:
+        """
+        Change boolean settings on a network (isolation, internet access).
+
+        These are the same switches the UniFi UI exposes on
+        Settings -> Networks -> <network>. Setting `network_isolation_enabled`
+        makes the controller generate its own predefined "Isolated Networks"
+        BLOCK policies — measured on a live console, one per destination zone
+        (Internal, Hotspot, DMZ), matching the network by subnet.
+
+        Using the native flag rather than writing parallel policies means the
+        UniFi UI and this tool always agree about whether a network is
+        isolated.
+
+        The whole object is read, modified and PUT back, because the endpoint
+        expects a complete network document. The result is verified by
+        re-reading, with a retry: provisioning is asynchronous.
+
+        Args:
+            network_id: the network `_id`
+            **flags: field name -> bool, e.g. network_isolation_enabled=True
+
+        Returns:
+            True only if every flag reads back as requested
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+        if not flags:
+            return True
+
+        base = f"{self.host}/proxy/network/api/s/{self.site}/rest/networkconf"
+
+        try:
+            async with self._session.get(f"{base}/{network_id}") as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to read network {network_id}: {resp.status}")
+                    return False
+                data = (await resp.json()).get('data', [])
+            if not data:
+                logger.error(f"Network {network_id} not found")
+                return False
+
+            doc = dict(data[0])
+            doc.update(flags)
+
+            async with self._session.put(f"{base}/{network_id}", json=doc) as put_resp:
+                if put_resp.status != 200:
+                    body = await put_resp.text()
+                    logger.error(
+                        f"Failed to update network {network_id}: "
+                        f"{put_resp.status} {body[:300]}"
+                    )
+                    return False
+
+            deadline, waited, delay = 20.0, 0.0, 1.0
+            while waited <= deadline:
+                async with self._session.get(f"{base}/{network_id}") as vr:
+                    if vr.status != 200:
+                        return False
+                    fresh = (await vr.json()).get('data', [])
+                if fresh and all(
+                    bool(fresh[0].get(k)) == bool(v) for k, v in flags.items()
+                ):
+                    logger.info(
+                        f"Network {network_id} updated: {flags} "
+                        f"(confirmed after {waited:.0f}s)"
+                    )
+                    return True
+                await asyncio.sleep(delay)
+                waited += delay
+                delay = min(delay * 1.6, 5.0)
+
+            logger.error(f"Network {network_id} flags did not take: {flags}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error updating network {network_id}: {e}")
+            return False
+
     async def get_networks(self) -> List[Dict]:
         """
         Get configured networks (VLANs).

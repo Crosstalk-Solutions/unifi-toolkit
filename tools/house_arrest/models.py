@@ -86,12 +86,15 @@ class PrecedenceWarning(BaseModel):
 
 
 class IsolatedNetwork(BaseModel):
-    """A whole network placed under isolation."""
+    """
+    A network isolated via UniFi's own settings.
+
+    Read from the native flags rather than from policies we wrote, so this
+    always matches what the UniFi UI shows.
+    """
     label: str
     network_id: Optional[str] = None
     preset: Optional[str] = None
-    policy_ids: List[str] = Field(default_factory=list)
-    blocked_count: int = 0
 
 
 class IsolateRequest(BaseModel):
@@ -103,8 +106,9 @@ class IsolateRequest(BaseModel):
 
 class IsolateResponse(BaseModel):
     dry_run: bool
-    created: List[Dict] = Field(default_factory=list)
-    payloads: List[Dict] = Field(default_factory=list)
+    # {field: desired value} — only the settings that actually need changing.
+    changes: Dict[str, bool] = Field(default_factory=dict)
+    note: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -117,6 +121,8 @@ class StateResponse(BaseModel):
     external_zone_id: Optional[str] = None
     arrests: List[ArrestSummary] = Field(default_factory=list)
     isolated_networks: List[IsolatedNetwork] = Field(default_factory=list)
+    # Policies from the earlier implementation, surfaced for cleanup.
+    legacy_network_policies: List[Dict] = Field(default_factory=list)
     health: List[PolicyHealth] = Field(default_factory=list)
     custom_policy_count: int = 0
     total_policy_count: int = 0

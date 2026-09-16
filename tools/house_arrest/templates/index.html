@@ -377,9 +377,10 @@
         <div class="isolate-block">
             <h3>Isolate a network</h3>
             <p class="card-note">
-                Applies to every device on the network, now and in future. Written
-                as tagged firewall policies, so releasing removes exactly what was
-                added and leaves your own settings alone.
+                Uses UniFi's own per-network settings, the same switches as
+                Settings -> Networks -> the network. The controller generates the
+                firewall rules, so this page and the UniFi UI always agree.
+                Applies to every device on the network, now and in future.
             </p>
 
             <template x-if="state.isolated_networks && state.isolated_networks.length">
@@ -388,15 +389,14 @@
                         <div class="arrest">
                             <span class="arrest-id">
                                 <span class="arrest-name" x-text="n.label"></span>
-                                <span class="muted small"> · network isolation</span>
+                                <span class="muted small" x-text="' · ' + n.preset"></span>
                             </span>
                             <span class="state ok">
                                 <span class="dot" style="background: var(--state-enforcing)"></span>
                                 <span>Enforcing</span>
                             </span>
-                            <span class="muted small" x-text="n.policy_ids.length + ' policies'"></span>
                             <button class="btn btn-danger btn-sm"
-                                    @click="releaseNetwork(n.label)">Release</button>
+                                    @click="releaseNetwork(n.network_id, n.label)">Release</button>
                         </div>
                     </template>
                 </div>
@@ -445,11 +445,26 @@
 
             <template x-if="isoPreview">
                 <div class="review">
-                    <h3 x-text="isoPreview.length + (isoPreview.length === 1 ? ' policy' : ' policies') + ' will be added'"></h3>
-                    <details class="raw">
-                        <summary>Show the exact firewall policies</summary>
-                        <pre class="payload" x-text="JSON.stringify(isoPreview, null, 2)"></pre>
-                    </details>
+                    <h3 x-text="isoNote || 'These settings will change'"></h3>
+                    <ul x-show="!isoNote">
+                        <template x-for="(line, i) in isoChangeLines()" :key="i">
+                            <li x-text="line"></li>
+                        </template>
+                    </ul>
+                </div>
+            </template>
+
+            <template x-if="state.legacy_network_policies && state.legacy_network_policies.length">
+                <div class="notice warn">
+                    <strong>Leftover rules from an earlier version.</strong>
+                    House Arrest used to isolate networks with its own firewall
+                    policies, which do not show up in UniFi's own isolation setting.
+                    These can be removed:
+                    <span class="mono" x-text="state.legacy_network_policies.map(l => l.name).join(', ')"></span>
+                    <div class="actions" style="margin-top:0.75rem">
+                        <button class="btn btn-secondary btn-sm"
+                                @click="releaseLegacy()">Remove leftover rules</button>
+                    </div>
                 </div>
             </template>
         </div>

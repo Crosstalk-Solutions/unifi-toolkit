@@ -151,20 +151,44 @@ async def get_state():
         except Exception as e:
             logger.warning(f"Could not fetch blocked flows: {e}")
 
-    isolated: Dict[str, IsolatedNetwork] = {}
+    # Isolated networks are read from UniFi's own flags, so this list matches
+    # what the UniFi UI shows. Legacy House Arrest network policies from the
+    # earlier implementation are still surfaced so they can be cleaned up.
+    isolated: List[IsolatedNetwork] = []
+    try:
+        all_networks = await client.get_networks()
+    except Exception:
+        all_networks = []
+    for n in all_networks:
+        if n.get("purpose") == "wan":
+            continue
+        iso = bool(n.get(P.NET_FLAG_ISOLATION))
+        no_net = n.get(P.NET_FLAG_INTERNET) is False
+        if not (iso or no_net):
+            continue
+        bits = []
+        if iso:
+            bits.append("isolated from other networks")
+        if no_net:
+            bits.append("no internet")
+        isolated.append(IsolatedNetwork(
+            label=n.get("name") or "network",
+            network_id=n.get("_id"),
+            preset=" + ".join(bits),
+        ))
+
+    legacy = []
     for pol in net_policies:
-        label = P.network_label_from_policy(pol) or "network"
-        entry = isolated.get(label)
-        if entry is None:
-            entry = IsolatedNetwork(label=label)
-            isolated[label] = entry
-        pid = pol.get("_id")
-        if pid:
-            entry.policy_ids.append(pid)
+        legacy.append({
+            "policy_id": pol.get("_id"),
+            "name": pol.get("name"),
+            "label": P.network_label_from_policy(pol) or "network",
+        })
 
     return StateResponse(
         connected=True,
-        isolated_networks=list(isolated.values()),
+        isolated_networks=isolated,
+        legacy_network_policies=legacy,
         zones=[ZoneInfo(id=z.get("_id", ""), name=z.get("name", "")) for z in zones],
         internal_zone_id=internal_id,
         external_zone_id=external_id,
@@ -255,10 +279,15 @@ async def blocked(label: Optional[str] = None, hours: int = 24):
 @router.post("/isolate", response_model=IsolateResponse)
 async def isolate(req: IsolateRequest):
     """
-    Isolate a whole network. Defaults to a dry run, like every write here.
+    Isolate a whole network using UniFi's own per-network settings.
 
-    Writes marked firewall policies rather than flipping the network's own
-    isolation setting, so release stays "delete exactly what we created".
+    Uses the native `network_isolation_enabled` / `internet_access_enabled`
+    flags rather than writing parallel firewall policies, so the UniFi UI and
+    this tool always agree. The controller generates the backing BLOCK rules
+    itself, covering every destination zone rather than just Internal.
+
+    Only flags that need changing are touched, so releasing later never
+    switches off something that was already set.
     """
     client, err = await _client_or_error()
     if err:
@@ -268,8 +297,6 @@ async def isolate(req: IsolateRequest):
         raise HTTPException(status_code=400, detail=f"Unknown preset: {req.preset}")
 
     try:
-        zones = await client.get_firewall_zones()
-        existing = await client.get_firewall_policies()
         networks = await client.get_networks()
     except Exception as e:
         return IsolateResponse(dry_run=req.dry_run, error=str(e))
@@ -280,44 +307,68 @@ async def isolate(req: IsolateRequest):
     if target.get("purpose") == "wan":
         raise HTTPException(status_code=400, detail="Cannot isolate a WAN")
 
-    internal_id, external_id = _zone_ids(zones)
-    if not internal_id or not external_id:
-        return IsolateResponse(
-            dry_run=req.dry_run,
-            error="Could not find Internal and External zones on this console",
-        )
+    changes = P.network_changes_needed(target, req.preset)
+    name = target.get("name") or "network"
 
-    try:
-        indexes = P.next_free_index(existing, P.network_policy_count(req.preset))
-        payloads = P.build_network_isolation(
-            preset=req.preset,
-            network_id=req.network_id,
-            network_name=target.get("name") or "network",
-            client_zone_id=internal_id,
-            external_zone_id=external_id,
-            indexes=indexes,
+    if not changes:
+        return IsolateResponse(
+            dry_run=req.dry_run, changes={},
+            note=f"{name} is already set that way — nothing to change.",
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
     if req.dry_run:
-        return IsolateResponse(dry_run=True, payloads=payloads)
+        return IsolateResponse(dry_run=True, changes=changes)
 
-    created = []
-    for payload in payloads:
-        result = await client.create_firewall_policy(payload)
-        if result is None:
-            for done in created:
-                pid = done.get("_id")
-                if pid:
-                    await client.delete_firewall_policy(pid)
-            return IsolateResponse(
-                dry_run=False, created=[],
-                error=f"Failed to create {payload.get('name')!r}; rolled back",
-            )
-        created.append(result)
+    if not await client.set_network_flags(req.network_id, **changes):
+        return IsolateResponse(
+            dry_run=False, changes={},
+            error=f"Could not update {name}; no settings were changed.",
+        )
 
-    return IsolateResponse(dry_run=False, created=created)
+    return IsolateResponse(dry_run=False, changes=changes)
+
+
+@router.post("/release-network", response_model=IsolateResponse)
+async def release_network(req: IsolateRequest):
+    """
+    Undo network isolation: reachable again, with internet.
+
+    Only flips flags that are currently set the isolating way, so a network
+    the user had already configured themselves is left alone.
+    """
+    client, err = await _client_or_error()
+    if err:
+        return IsolateResponse(dry_run=req.dry_run, error=err)
+
+    try:
+        networks = await client.get_networks()
+    except Exception as e:
+        return IsolateResponse(dry_run=req.dry_run, error=str(e))
+
+    target = next((n for n in networks if n.get("_id") == req.network_id), None)
+    if target is None:
+        raise HTTPException(status_code=400, detail="Unknown network")
+
+    wanted = P.network_flags_to_release()
+    changes = {
+        k: v for k, v in wanted.items() if bool(target.get(k)) != bool(v)
+    }
+    name = target.get("name") or "network"
+
+    if not changes:
+        return IsolateResponse(
+            dry_run=req.dry_run, changes={},
+            note=f"{name} is not isolated.",
+        )
+    if req.dry_run:
+        return IsolateResponse(dry_run=True, changes=changes)
+
+    if not await client.set_network_flags(req.network_id, **changes):
+        return IsolateResponse(
+            dry_run=False, changes={},
+            error=f"Could not update {name}.",
+        )
+    return IsolateResponse(dry_run=False, changes=changes)
 
 
 @router.get("/networks", response_model=List[NetworkInfo])

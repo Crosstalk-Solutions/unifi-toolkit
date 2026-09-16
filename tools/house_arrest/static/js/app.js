@@ -27,6 +27,7 @@ function houseArrest() {
         isoNetworkId: '',
         isoPreset: '',
         isoPreview: null,
+        isoNote: null,
         isoPreviewing: false,
         isoApplying: false,
         error: null,
@@ -109,7 +110,8 @@ function houseArrest() {
                     this.message = { kind: 'danger', text: data.detail || data.error || 'Review failed' };
                     return;
                 }
-                this.isoPreview = data.payloads;
+                this.isoNote = data.note || null;
+                this.isoPreview = data.changes || {};
             } finally {
                 this.isoPreviewing = false;
             }
@@ -134,11 +136,13 @@ function houseArrest() {
                     this.message = { kind: 'danger', text: data.error };
                 } else {
                     const net = this.networks.find(n => n.id === this.isoNetworkId);
-                    this.message = {
-                        kind: 'ok',
-                        text: (net ? net.name : 'Network') + ' isolated — ' +
-                              data.created.length + ' policies written.'
-                    };
+                    this.message = data.note
+                        ? { kind: 'ok', text: data.note }
+                        : {
+                            kind: 'ok',
+                            text: (net ? net.name : 'Network') + ' isolated - ' +
+                                  Object.keys(data.changes || {}).length + ' setting(s) changed.'
+                          };
                     this.isoPreview = null;
                     this.isoNetworkId = '';
                     await this.refresh(true);
@@ -149,24 +153,48 @@ function houseArrest() {
             }
         },
 
-        async releaseNetwork(label) {
+        isoChangeLines() {
+            const friendly = {
+                network_isolation_enabled: v => v
+                    ? 'Isolate Network: on - blocked from reaching your other networks'
+                    : 'Isolate Network: off - can reach your other networks again',
+                internet_access_enabled: v => v
+                    ? 'Allow Internet Access: on - internet restored'
+                    : 'Allow Internet Access: off - no internet for this network'
+            };
+            return Object.entries(this.isoPreview || {}).map(
+                ([k, v]) => (friendly[k] ? friendly[k](v) : k + ' = ' + v)
+            );
+        },
+
+        async releaseNetwork(networkId, label) {
+            this.message = null;
+            const res = await fetch('api/release-network', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    preset: 'full_isolation', network_id: networkId, dry_run: false
+                })
+            });
+            const data = await res.json();
+            this.message = data.error
+                ? { kind: 'danger', text: data.error }
+                : { kind: 'ok', text: data.note || (label + ' released.') };
+            await this.refreshAll();
+        },
+
+        async releaseLegacy() {
             this.message = null;
             const res = await fetch('api/release', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ label: label, kind: 'network', dry_run: false })
+                body: JSON.stringify({ kind: 'network', dry_run: false })
             });
             const data = await res.json();
-            if (data.error) {
-                this.message = { kind: 'danger', text: data.error };
-            } else {
-                this.message = {
-                    kind: 'ok',
-                    text: 'Released ' + label + ' — ' + data.deleted.length + ' policies removed.'
-                };
-                await this.refresh(true);
-                this.loadInspection();
-            }
+            this.message = data.error
+                ? { kind: 'danger', text: data.error }
+                : { kind: 'ok', text: (data.deleted || []).length + ' leftover rules removed.' };
+            await this.refreshAll();
         },
 
         async toggleBlocked(label) {
