@@ -473,10 +473,12 @@ class TestIsolationMatrix:
 
 class TestInboundAccess:
     """
-    A BLOCK policy sourced from the device also kills the replies to
-    connections someone else started, unless create_allow_respond is set.
-    Without it, locking down a camera on another VLAN silently costs you the
-    ability to view it. UniFi's own Isolate Network sets the flag; we match it.
+    A BLOCK sourced from the device also drops the replies to connections you
+    started, which silently costs you access to it. UniFi's own isolation uses
+    create_allow_respond for this, but the API rejects that on a policy we
+    create when both sides are in the same zone
+    (FirewallPolicyCreateRespondTrafficPolicyNotAllowed), which is exactly the
+    "no LAN" case. Connection-state scoping is the mechanism that works.
     """
 
     def _build(self, allow_inbound):
@@ -485,12 +487,32 @@ class TestInboundAccess:
             P.next_free_index([], 2), allow_inbound=allow_inbound,
         )
 
-    def test_default_keeps_the_device_reachable(self):
+    def test_default_blocks_only_what_the_device_initiates(self):
         for pol in P.build_lockdown(
             P.FULL_LOCKDOWN, [MAC], "Cam", CLIENT_ZONE, EXTERNAL_ZONE,
             P.next_free_index([], 2),
         ):
-            assert pol["create_allow_respond"] is True
+            assert pol["connection_state_type"] == "CUSTOM"
+            assert pol["connection_states"] == ["NEW", "INVALID"]
+
+    def test_absolute_isolation_blocks_every_state(self):
+        for pol in self._build(False):
+            assert pol["connection_state_type"] == "ALL"
+            assert pol["connection_states"] == []
+
+    def test_never_sets_respond_traffic_on_a_block(self):
+        """The API rejects it intra-zone, so we must not emit it."""
+        for allow in (True, False):
+            for pol in self._build(allow):
+                assert pol["create_allow_respond"] is False
+
+    def test_invalid_is_paired_with_new(self):
+        """Without INVALID, unmatched packets would escape the block."""
+        assert "INVALID" in P.connection_state(True)["connection_states"]
+
+    def test_established_is_never_blocked_when_inbound_allowed(self):
+        states = P.connection_state(True)["connection_states"]
+        assert "ESTABLISHED" not in states and "RELATED" not in states
 
     @pytest.mark.parametrize("preset", P.PRESETS)
     def test_every_preset_honours_the_choice(self, preset):
@@ -499,21 +521,16 @@ class TestInboundAccess:
                               EXTERNAL_ZONE, idx, allow_inbound=True)
         off = P.build_lockdown(preset, [MAC], "Cam", CLIENT_ZONE,
                                EXTERNAL_ZONE, idx, allow_inbound=False)
-        assert all(p["create_allow_respond"] is True for p in on)
-        assert all(p["create_allow_respond"] is False for p in off)
+        assert all(p["connection_state_type"] == "CUSTOM" for p in on)
+        assert all(p["connection_state_type"] == "ALL" for p in off)
 
     def test_absolute_isolation_still_blocks_outbound(self):
-        """Turning inbound off must not change what the device can initiate."""
         on, off = self._build(True), self._build(False)
         assert [p["action"] for p in on] == [p["action"] for p in off]
         assert ([p["destination"]["zone_id"] for p in on]
                 == [p["destination"]["zone_id"] for p in off])
 
     def test_inbound_is_not_a_preset_property(self):
-        """
-        It is a per-application choice, so it must not be baked into
-        PRESET_EFFECTS where it would masquerade as a fixed preset trait.
-        """
         for preset in P.PRESETS:
             assert "inbound" not in P.PRESET_EFFECTS[preset]
 

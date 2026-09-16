@@ -415,6 +415,34 @@ def _base_policy(
     }
 
 
+# Connection-state vocabulary, read off the API's own enum validation errors
+# (2026-09-16). Blocking only what the device INITIATES is what keeps it
+# reachable from your side; blocking every state isolates it absolutely.
+CONNECTION_STATE_ALL = "ALL"
+CONNECTION_STATE_CUSTOM = "CUSTOM"
+STATES_INITIATED_ONLY = ["NEW", "INVALID"]
+
+
+def connection_state(allow_inbound: bool) -> Dict:
+    """
+    The connection-state fields for a BLOCK policy.
+
+    allow_inbound=True  -> block only NEW and INVALID, so replies to
+                           connections you started still get through.
+    allow_inbound=False -> block every state, including replies.
+
+    INVALID is paired with NEW deliberately: without it, packets conntrack
+    cannot place (asymmetric routing, stale entries) would not be matched by
+    the block and could leak out.
+    """
+    if allow_inbound:
+        return {
+            "connection_state_type": CONNECTION_STATE_CUSTOM,
+            "connection_states": list(STATES_INITIATED_ONLY),
+        }
+    return {"connection_state_type": CONNECTION_STATE_ALL, "connection_states": []}
+
+
 def client_source(macs: List[str], zone_id: str) -> Dict:
     """
     Source block matching specific clients by MAC.
@@ -508,14 +536,24 @@ def build_lockdown(
     ability to reach the device yourself, from another VLAN, without any
     warning that it had happened.
 
-    `create_allow_respond` is how UniFi expresses "block this direction but let
-    replies through", and UniFi's own Isolate Network setting sets it (measured
-    2026-09-16: its generated rules carry create_allow_respond=true). Matching
-    that is both the safer default and the one that fits the name: a device
-    under house arrest cannot go out, but you can still visit it.
+    UniFi's own Isolate Network rules express this with
+    `create_allow_respond`, but the API refuses that on a policy we create
+    when source and destination are in the SAME zone — which is exactly the
+    "no LAN" case:
 
-    Set it False for absolute isolation, where nothing may cross in either
-    direction.
+        api.err.FirewallPolicyCreateRespondTrafficPolicyNotAllowed
+
+    Connection-state scoping does the same job and is accepted intra-zone
+    (verified by creating and deleting a real policy, 2026-09-16). Blocking
+    only NEW and INVALID stops anything the device starts, while ESTABLISHED
+    and RELATED replies still flow — so it can answer when you contact it.
+
+    Valid values, read off the API's own enum errors:
+        connection_state_type: ALL | RESPOND_ONLY | CUSTOM
+        connection_states:     NEW | RELATED | INVALID | ESTABLISHED
+
+    Set allow_inbound False for absolute isolation: state type ALL, which
+    matches every packet including replies.
 
     Returns:
         List of policy payloads, ready to POST.
@@ -538,7 +576,6 @@ def build_lockdown(
         source=src,
         destination=zone_destination(external_zone_id),
         description=describe(f"{PRESET_LABELS[preset]} for {label}"),
-        allow_respond=allow_inbound,
     )
     block_lan = _base_policy(
         name=f"House Arrest: {label} — no LAN",
@@ -547,8 +584,9 @@ def build_lockdown(
         source=src,
         destination=zone_destination(client_zone_id),
         description=describe(f"{PRESET_LABELS[preset]} for {label}"),
-        allow_respond=allow_inbound,
     )
+    for pol in (block_internet, block_lan):
+        pol.update(connection_state(allow_inbound))
 
     if preset in (FULL_LOCKDOWN, QUARANTINE):
         return [block_internet, block_lan]
@@ -680,7 +718,7 @@ def summarize_blocked(flows: List[Dict], our_policy_ids: set) -> List[Dict]:
     return out
 
 
-def observed_location(flows: List[Dict], our_policy_ids: set) -> Dict[str, Dict]:
+def observed_location(flows: List[Dict], our_policy_ids: set = None) -> Dict[str, Dict]:
     """
     Where each locked-down device actually was, taken from blocked traffic.
 
@@ -692,10 +730,13 @@ def observed_location(flows: List[Dict], our_policy_ids: set) -> Dict[str, Dict]
     So live client data is preferred where present, and this fills the gap.
     Returns {mac: {ip, network, seen_ms}} from the newest flow per device.
     """
+    # Deliberately NOT filtered to our own policies. Attribution matters for
+    # counting what we blocked, but any recent flow from the device tells us
+    # where it is — and right after applying a lockdown there are no flows
+    # attributed to the new policy ids yet, which would leave the location
+    # blank exactly when the user is looking at it.
     out: Dict[str, Dict] = {}
     for f in flows or []:
-        if not any(p.get("id") in our_policy_ids for p in (f.get("policies") or [])):
-            continue
         src = f.get("source") or {}
         mac = (src.get("mac") or "").lower()
         if not mac or not src.get("ip"):
