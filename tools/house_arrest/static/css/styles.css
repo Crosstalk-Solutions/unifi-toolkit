@@ -489,6 +489,113 @@ pre.payload {
 .blocked-panel th, .blocked-panel td { padding: 0.5rem 0.75rem; }
 .blocked-toggle:disabled { opacity: 0.45; }
 
+/* ---------- Isolation matrix ----------
+   Networks down the side, settings across the top. Colour carries the state,
+   but never alone — every cell has a readable label too. */
+
+.matrix-wrap { overflow-x: auto; }
+
+table.matrix {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 3px;
+    min-width: 720px;
+}
+
+table.matrix th {
+    text-align: left;
+    font-size: 0.8125rem;
+    vertical-align: bottom;
+    padding: 0 0.5rem 0.5rem;
+    color: var(--text-secondary);
+}
+table.matrix th .col-label {
+    display: block;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+table.matrix th .col-help {
+    display: block;
+    font-weight: 400;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    margin-top: 0.15rem;
+    max-width: 17ch;
+}
+
+th.net-col {
+    white-space: nowrap;
+    vertical-align: middle;
+    padding-right: 1rem;
+}
+th.net-col span:first-child { color: var(--text-primary); font-weight: 600; }
+.vlan-tag {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+
+td.cell {
+    position: relative;
+    padding: 0.6rem 0.75rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: help;
+    background: var(--surface-sunken);
+    border: 1px solid transparent;
+    transition: border-color 0.15s;
+}
+td.cell:focus { outline: 2px solid var(--primary-color); outline-offset: 1px; }
+
+td.cell.is-good {
+    background: color-mix(in srgb, var(--success-color) 13%, var(--surface));
+    color: var(--success-color);
+    font-weight: 600;
+}
+td.cell.is-warn {
+    background: color-mix(in srgb, var(--warning-color) 16%, var(--surface));
+    color: #8a5a00;
+    font-weight: 600;
+}
+:root[data-theme="dark"] td.cell.is-warn { color: var(--warning-color); }
+td.cell.is-neutral { color: var(--text-secondary); }
+
+.cell-label {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 16ch;
+}
+
+/* Hover/focus explanation. Positioned fixed-width and above the cell so it
+   escapes the table's horizontal scroll container. */
+.tip {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 20;
+    width: 280px;
+    padding: 0.7rem 0.85rem;
+    border-radius: 8px;
+    background: var(--text-primary);
+    color: var(--surface);
+    font-size: 0.8125rem;
+    font-weight: 400;
+    line-height: 1.45;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s;
+    pointer-events: none;
+    white-space: normal;
+}
+.tip strong { display: block; margin-bottom: 0.25rem; }
+td.cell:hover .tip, td.cell:focus .tip { opacity: 1; visibility: visible; }
+table.matrix tr:first-child .tip { bottom: auto; top: calc(100% + 6px); }
+table.matrix tr td:last-child .tip { left: auto; right: 0; }
+
 /* ---------- Inspection ---------- */
 
 .findings { display: grid; gap: 0.5rem; }
@@ -510,6 +617,13 @@ pre.payload {
 }
 .finding-text { flex: 1; font-size: 0.9rem; }
 .finding-detail { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.15rem; }
+
+.isolate-block {
+    margin-top: 1.75rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+.isolate-block h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
 
 /* ---------- Notices ---------- */
 

@@ -84,6 +84,29 @@ class PrecedenceWarning(BaseModel):
     blocks_at: Optional[int] = None
 
 
+class IsolatedNetwork(BaseModel):
+    """A whole network placed under isolation."""
+    label: str
+    network_id: Optional[str] = None
+    preset: Optional[str] = None
+    policy_ids: List[str] = Field(default_factory=list)
+    blocked_count: int = 0
+
+
+class IsolateRequest(BaseModel):
+    """Isolate a whole network. Same dry-run-first discipline as a lockdown."""
+    preset: str
+    network_id: str
+    dry_run: bool = True
+
+
+class IsolateResponse(BaseModel):
+    dry_run: bool
+    created: List[Dict] = Field(default_factory=list)
+    payloads: List[Dict] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
 class StateResponse(BaseModel):
     """Everything the dashboard needs in one call."""
     connected: bool
@@ -92,6 +115,7 @@ class StateResponse(BaseModel):
     internal_zone_id: Optional[str] = None
     external_zone_id: Optional[str] = None
     arrests: List[ArrestSummary] = Field(default_factory=list)
+    isolated_networks: List[IsolatedNetwork] = Field(default_factory=list)
     health: List[PolicyHealth] = Field(default_factory=list)
     custom_policy_count: int = 0
     total_policy_count: int = 0
@@ -106,11 +130,46 @@ class InspectionFinding(BaseModel):
     detail: Optional[str] = None
 
 
+class MatrixColumn(BaseModel):
+    """One attribute column in the isolation matrix."""
+    key: str
+    label: str
+    help: str = ""
+
+
+class MatrixCell(BaseModel):
+    """
+    One network/attribute intersection.
+
+    `state` drives the colour: "good" (isolating), "warn" (open), "neutral"
+    (informational), "na" (not applicable to this network).
+    `detail` is the explanation shown on hover, and is the only place the raw
+    API field name appears — the cell itself stays readable.
+    """
+    state: str = "neutral"
+    label: str = "—"
+    detail: str = ""
+
+
+class MatrixRow(BaseModel):
+    id: Optional[str] = None
+    name: str
+    vlan: Optional[int] = None
+    purpose: Optional[str] = None
+    cells: Dict[str, MatrixCell] = Field(default_factory=dict)
+
+
+class IsolationMatrix(BaseModel):
+    columns: List[MatrixColumn] = Field(default_factory=list)
+    rows: List[MatrixRow] = Field(default_factory=list)
+
+
 class InspectionResponse(BaseModel):
     connected: bool
     error: Optional[str] = None
     networks: List[NetworkInfo] = Field(default_factory=list)
     findings: List[InspectionFinding] = Field(default_factory=list)
+    matrix: Optional[IsolationMatrix] = None
     allow_all_index: Optional[int] = None
 
 
@@ -138,6 +197,9 @@ class ReleaseRequest(BaseModel):
     """Remove House Arrest policies. Only ever touches marked policies."""
     policy_ids: List[str] = Field(default_factory=list)
     label: Optional[str] = None
+    # "device" or "network". A device and a network could share a label, and
+    # releasing the wrong one would be a silent surprise.
+    kind: Optional[str] = None
     dry_run: bool = True
 
 

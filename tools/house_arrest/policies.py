@@ -144,6 +144,175 @@ def preset_catalog() -> List[Dict]:
     ]
 
 
+# ----------------------------------------------------------------------
+# Network-scoped isolation
+#
+# Same machinery as device lockdown, but the policy source is a NETWORK
+# instead of a client. Deliberately implemented as marked firewall policies
+# rather than by flipping UniFi's own `network_isolation_enabled` toggle:
+# that toggle is a property of the network, so undoing it would mean
+# remembering its previous value, and a failed revert would silently leave a
+# user's own setting changed. Policies keep the existing guarantee — release
+# deletes exactly what we created and nothing else.
+# ----------------------------------------------------------------------
+
+NETWORK_MARKER = "[Network]"
+
+NET_ISOLATE_NETWORKS = "isolate_networks"
+NET_NO_INTERNET = "no_internet"
+NET_FULL = "full_isolation"
+
+NETWORK_PRESETS = (NET_ISOLATE_NETWORKS, NET_NO_INTERNET, NET_FULL)
+
+NETWORK_PRESET_LABELS = {
+    NET_ISOLATE_NETWORKS: "Isolate from other networks",
+    NET_NO_INTERNET: "No internet",
+    NET_FULL: "Full isolation",
+}
+
+NETWORK_PRESET_EFFECTS = {
+    NET_ISOLATE_NETWORKS: {
+        "internet": "allow", "networks": "block", "peers": "allow",
+        "summary": "Devices here keep internet access but can't reach your "
+                   "other networks.",
+    },
+    NET_NO_INTERNET: {
+        "internet": "block", "networks": "allow", "peers": "allow",
+        "summary": "Local-only. Nothing here can phone home.",
+    },
+    NET_FULL: {
+        "internet": "block", "networks": "block", "peers": "allow",
+        "summary": "Cut off from the internet and every other network.",
+    },
+}
+
+
+def network_preset_catalog() -> List[Dict]:
+    return [
+        {
+            "value": v,
+            "label": NETWORK_PRESET_LABELS[v],
+            "effects": NETWORK_PRESET_EFFECTS[v],
+            "policy_count": network_policy_count(v),
+            "caveats": caveats_for_network(v),
+        }
+        for v in NETWORK_PRESETS
+    ]
+
+
+def caveats_for_network(preset: str) -> List[str]:
+    """
+    Network isolation carries the same measured caveats as a device lockdown,
+    plus the one that only applies at network scope.
+    """
+    base = []
+    if NETWORK_PRESET_EFFECTS.get(preset, {}).get("internet") == "block":
+        base = list(LOCKDOWN_CAVEATS)
+    base.append(
+        "Devices on this network can still talk to each other. That traffic "
+        "never passes the gateway, so no firewall policy reaches it — use the "
+        "network's own Device Isolation setting in UniFi if you need that too."
+    )
+    return base
+
+
+def network_policy_count(preset: str) -> int:
+    if preset == NET_FULL:
+        return 2
+    if preset in (NET_ISOLATE_NETWORKS, NET_NO_INTERNET):
+        return 1
+    raise ValueError(f"Unknown network preset: {preset!r}")
+
+
+def describe_network(note: str) -> str:
+    """Tagged description for a network-scoped policy."""
+    return f"{MARKER}{NETWORK_MARKER} {note}".strip()
+
+
+def is_network_policy(policy: Dict) -> bool:
+    """True for a House Arrest policy that isolates a network, not a device."""
+    if not is_house_arrest(policy):
+        return False
+    return NETWORK_MARKER in (policy.get("description") or "")
+
+
+def network_source(network_ids: List[str], zone_id: str) -> Dict:
+    """
+    Source block matching whole networks.
+
+    Shape measured from a predefined policy on a live console (2026-09-16).
+    """
+    if not network_ids:
+        raise ValueError("At least one network id is required")
+    if not zone_id:
+        raise ValueError("zone_id is required")
+    return {
+        "matching_target": "NETWORK",
+        "network_ids": list(network_ids),
+        "match_mac": False,
+        "match_opposite_networks": False,
+        "match_opposite_ports": False,
+        "port_matching_type": "ANY",
+        "zone_id": zone_id,
+    }
+
+
+def build_network_isolation(
+    preset: str,
+    network_id: str,
+    network_name: str,
+    client_zone_id: str,
+    external_zone_id: str,
+    indexes: List[int],
+) -> List[Dict]:
+    """
+    Build the policy set that isolates a whole network.
+
+    Mirrors build_lockdown(), but sourced from a network. Policy names use a
+    distinct prefix so the UI never lists an isolated network as though it
+    were a locked-down device.
+    """
+    if preset not in NETWORK_PRESETS:
+        raise ValueError(f"Unknown network preset: {preset!r}")
+    needed = network_policy_count(preset)
+    if len(indexes) < needed:
+        raise ValueError(
+            f"Preset {preset!r} needs {needed} indexes, got {len(indexes)}"
+        )
+
+    src = network_source([network_id], client_zone_id)
+    label = network_name or "network"
+    desc = describe_network(f"{NETWORK_PRESET_LABELS[preset]} for {label}")
+
+    block_internet = _base_policy(
+        name=f"House Arrest: {label} network - no internet",
+        action="BLOCK", index=indexes[0], source=src,
+        destination=zone_destination(external_zone_id), description=desc,
+    )
+    block_networks = _base_policy(
+        name=f"House Arrest: {label} network - isolated",
+        action="BLOCK", index=indexes[-1], source=src,
+        destination=zone_destination(client_zone_id), description=desc,
+    )
+
+    if preset == NET_FULL:
+        return [block_internet, block_networks]
+    if preset == NET_NO_INTERNET:
+        return [block_internet]
+    if preset == NET_ISOLATE_NETWORKS:
+        return [block_networks]
+    raise ValueError(f"Unhandled network preset: {preset!r}")  # pragma: no cover
+
+
+def network_label_from_policy(policy: Dict) -> str:
+    """Recover the network name from a network-scoped policy's description."""
+    desc = (policy.get("description") or "")
+    desc = desc.replace(MARKER, "").replace(NETWORK_MARKER, "").strip()
+    if " for " in desc:
+        return desc.rsplit(" for ", 1)[1].strip()
+    return ""
+
+
 def normalize_mac(mac: str) -> str:
     """Lowercase, colon-separated. Raises ValueError on anything else."""
     if not mac:
@@ -524,6 +693,192 @@ def blocked_counts_by_label(
                 totals[label] = totals.get(label, 0) + (f.get("count") or 1)
                 break
     return totals
+
+
+MATRIX_COLUMNS = [
+    {"key": "zone", "label": "Zone",
+     "help": "Networks in the same zone reach each other by default."},
+    {"key": "isolation", "label": "Network isolation",
+     "help": "Blocks this network from reaching your other networks."},
+    {"key": "internet", "label": "Internet access",
+     "help": "Whether devices here can reach the internet at all."},
+    {"key": "mdns", "label": "mDNS forwarding",
+     "help": "Lets service discovery (casting, AirPlay) cross this boundary."},
+    {"key": "dns", "label": "DNS handed out",
+     "help": "Which resolver DHCP gives devices here. A resolver on this same "
+             "network cannot be filtered by the gateway."},
+    {"key": "upnp", "label": "UPnP",
+     "help": "Lets devices here open ports on the gateway by themselves."},
+]
+
+
+def _cell(state: str, label: str, detail: str) -> Dict:
+    return {"state": state, "label": label, "detail": detail}
+
+
+def _ip_in_subnet(ip: Optional[str], subnet: Optional[str]) -> bool:
+    """
+    Is this IP inside this network's own subnet?
+
+    UniFi reports `ip_subnet` as the gateway address with a prefix
+    ("192.168.200.1/24"), not the network address, so it is parsed with
+    strict=False. Returns False on anything unparseable rather than raising —
+    an unknown answer must not be reported as a hole.
+    """
+    if not ip or not subnet:
+        return False
+    try:
+        import ipaddress
+        return ipaddress.ip_address(ip) in ipaddress.ip_network(subnet, strict=False)
+    except ValueError:
+        return False
+
+
+def build_isolation_matrix(
+    networks: List[Dict], zones: List[Dict]
+) -> Dict:
+    """
+    Build the network-by-attribute isolation matrix.
+
+    One row per LAN, one column per security-relevant setting. Each cell
+    carries its own explanation, so the raw API field name lives in the hover
+    detail rather than in the table body.
+
+    Deliberately reports what is actually set rather than what is implied: a
+    VLAN existing is not isolation, and an unset flag is reported as off, not
+    as unknown-therefore-fine.
+    """
+    zone_of = {}
+    zone_members: Dict[str, List[str]] = {}
+    for z in zones or []:
+        zname = z.get("name") or "(zone)"
+        for nid in z.get("network_ids") or []:
+            zone_of[nid] = zname
+            zone_members.setdefault(zname, []).append(nid)
+
+    rows = []
+    for n in networks or []:
+        if n.get("purpose") == "wan":
+            continue
+        nid = n.get("_id")
+        name = n.get("name") or "(unnamed)"
+        vlan = n.get("vlan")
+        zname = zone_of.get(nid)
+
+        cells = {}
+
+        # Zone
+        siblings = [
+            m for m in zone_members.get(zname, [])
+            if m != nid and m in {x.get("_id") for x in networks
+                                  if x.get("purpose") != "wan"}
+        ]
+        if zname:
+            cells["zone"] = _cell(
+                "warn" if siblings else "good",
+                zname,
+                f"{name} is in the {zname} zone with {len(siblings)} other "
+                f"network(s). Traffic inside a zone is allowed unless a policy "
+                f"blocks it, so these can reach each other by default."
+                if siblings else
+                f"{name} is alone in the {zname} zone, so nothing else shares "
+                f"its default-allow boundary."
+            )
+        else:
+            cells["zone"] = _cell("neutral", "—", "No zone membership reported.")
+
+        # Network isolation
+        iso = n.get("network_isolation_enabled")
+        cells["isolation"] = _cell(
+            "good" if iso else "warn",
+            "On" if iso else "Off",
+            f"VLAN {vlan} has network_isolation_enabled={iso!r}. "
+            + ("Devices here are blocked from reaching your other networks."
+               if iso else
+               "Devices here can reach other networks unless a firewall policy "
+               "stops them.")
+        )
+
+        # Internet access
+        inet = n.get("internet_access_enabled")
+        cells["internet"] = _cell(
+            "warn" if inet is not False else "good",
+            "Allowed" if inet is not False else "Blocked",
+            f"internet_access_enabled={inet!r}. "
+            + ("Devices here can reach the internet."
+               if inet is not False else
+               "Devices here have no internet access at the network level.")
+        )
+
+        # mDNS
+        mdns = n.get("mdns_enabled")
+        cells["mdns"] = _cell(
+            "warn" if mdns else "good",
+            "On" if mdns else "Off",
+            f"mdns_enabled={mdns!r}. "
+            + ("Service discovery crosses this boundary. Often wanted for "
+               "casting, but it does advertise what lives here."
+               if mdns else
+               "Service discovery does not cross this boundary.")
+        )
+
+        # DNS handed out by DHCP.
+        #
+        # The distinction that matters is not "custom vs default" but whether
+        # the resolver sits INSIDE this network. A resolver on the same subnet
+        # is reached without passing the gateway, so no firewall policy can
+        # filter it — that is the measured hole (a locked-down device still
+        # resolved names through a same-subnet resolver). A resolver on another
+        # VLAN crosses the gateway and therefore can be filtered.
+        servers = [n.get(f"dhcpd_dns_{i}") for i in (1, 2, 3, 4)]
+        servers = [x for x in servers if x]
+        local = [x for x in servers if _ip_in_subnet(x, n.get("ip_subnet"))]
+
+        if local:
+            cells["dns"] = _cell(
+                "warn", ", ".join(servers),
+                f"{', '.join(local)} "
+                + ("is" if len(local) == 1 else "are")
+                + f" on this network's own subnet. Queries to "
+                + ("it" if len(local) == 1 else "them")
+                + " never pass the gateway, so no firewall policy can filter "
+                  "them — a device locked down here can still resolve names, "
+                  "and the resolver forwards upstream. Measured on a real "
+                  "locked-down device."
+            )
+        elif servers:
+            cells["dns"] = _cell(
+                "neutral", ", ".join(servers),
+                f"DHCP hands out {', '.join(servers)}, which "
+                + ("is" if len(servers) == 1 else "are")
+                + " outside this network. Those queries cross the gateway, so "
+                  "a lockdown here can filter them."
+            )
+        else:
+            cells["dns"] = _cell(
+                "good", "Gateway",
+                "Devices here use the gateway as resolver, so DNS can be "
+                "controlled at the gateway."
+            )
+
+        # UPnP
+        upnp = n.get("upnp_lan_enabled")
+        cells["upnp"] = _cell(
+            "warn" if upnp else "good",
+            "On" if upnp else "Off",
+            f"upnp_lan_enabled={upnp!r}. "
+            + ("Devices here can open inbound ports on the gateway without "
+               "asking you." if upnp else
+               "Devices here cannot open their own inbound ports.")
+        )
+
+        rows.append({
+            "id": nid, "name": name, "vlan": vlan,
+            "purpose": n.get("purpose"), "cells": cells,
+        })
+
+    rows.sort(key=lambda r: (r["vlan"] is None, r["vlan"] or 0))
+    return {"columns": list(MATRIX_COLUMNS), "rows": rows}
 
 
 def check_precedence(ours: List[Dict], all_policies: List[Dict]) -> List[Dict]:

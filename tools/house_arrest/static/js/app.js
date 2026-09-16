@@ -16,12 +16,19 @@ function houseArrest() {
         state: { connected: false, arrests: [], health: [], custom_policy_count: 0, total_policy_count: 0 },
         clients: [],
         networks: [],
+        networkPresets: [],
         presets: [],
         pathLabels: {},
         inspection: null,
         openBlocked: null,
         blockedFlows: [],
         blockedLoading: false,
+        // network isolation
+        isoNetworkId: '',
+        isoPreset: '',
+        isoPreview: null,
+        isoPreviewing: false,
+        isoApplying: false,
         error: null,
         message: null,
 
@@ -35,6 +42,8 @@ function houseArrest() {
         async init() {
             this.presets = this.readJson('ha-presets', []);
             this.pathLabels = this.readJson('ha-path-labels', {});
+            this.networkPresets = this.readJson('ha-network-presets', []);
+            if (this.networkPresets.length) this.isoPreset = this.networkPresets[0].value;
             if (this.presets.length) this.preset = this.presets[0].value;
 
             await this.refresh();
@@ -66,6 +75,98 @@ function houseArrest() {
             if (this.brokenCount > 1) return this.brokenCount + ' lockdowns are not enforcing';
             if (this.state.arrests.length === 0) return 'Connected — nothing locked down';
             return 'All lockdowns enforcing';
+        },
+
+        currentNetworkPreset() {
+            return this.networkPresets.find(p => p.value === this.isoPreset) || null;
+        },
+
+        isoSummary() {
+            const p = this.currentNetworkPreset();
+            return p ? p.effects.summary : '';
+        },
+
+        isoCaveats() {
+            const p = this.currentNetworkPreset();
+            return p ? p.caveats : [];
+        },
+
+        async isoDryRun() {
+            this.message = null;
+            this.isoPreviewing = true;
+            try {
+                const res = await fetch('api/isolate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        preset: this.isoPreset,
+                        network_id: this.isoNetworkId,
+                        dry_run: true
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    this.message = { kind: 'danger', text: data.detail || data.error || 'Review failed' };
+                    return;
+                }
+                this.isoPreview = data.payloads;
+            } finally {
+                this.isoPreviewing = false;
+            }
+        },
+
+        async isoApply() {
+            if (!this.isoPreview) return;
+            this.isoApplying = true;
+            this.message = null;
+            try {
+                const res = await fetch('api/isolate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        preset: this.isoPreset,
+                        network_id: this.isoNetworkId,
+                        dry_run: false
+                    })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    this.message = { kind: 'danger', text: data.error };
+                } else {
+                    const net = this.networks.find(n => n.id === this.isoNetworkId);
+                    this.message = {
+                        kind: 'ok',
+                        text: (net ? net.name : 'Network') + ' isolated — ' +
+                              data.created.length + ' policies written.'
+                    };
+                    this.isoPreview = null;
+                    this.isoNetworkId = '';
+                    await this.refresh(true);
+                    this.loadInspection();
+                }
+            } finally {
+                this.isoApplying = false;
+            }
+        },
+
+        async releaseNetwork(label) {
+            this.message = null;
+            const res = await fetch('api/release', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label: label, kind: 'network', dry_run: false })
+            });
+            const data = await res.json();
+            if (data.error) {
+                this.message = { kind: 'danger', text: data.error };
+            } else {
+                this.message = {
+                    kind: 'ok',
+                    text: 'Released ' + label + ' — ' + data.deleted.length + ' policies removed.'
+                };
+                await this.refresh(true);
+                this.loadInspection();
+            }
         },
 
         async toggleBlocked(label) {
@@ -307,7 +408,7 @@ function houseArrest() {
             const res = await fetch('api/release', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ label: labelToRelease, dry_run: false })
+                body: JSON.stringify({ label: labelToRelease, kind: 'device', dry_run: false })
             });
             const data = await res.json();
             if (data.error) {

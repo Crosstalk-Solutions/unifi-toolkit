@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>House Arrest - Device Lockdown</title>
     <link rel="icon" type="image/jpeg" href="/static/images/favicon16x16.jpg">
-    <link rel="stylesheet" href="/arrest/static/css/styles.css">
+    <link rel="stylesheet" href="/arrest/static/css/styles.css?v={{ version }}">
     <script>
         // Apply saved theme immediately to prevent flash
         (function() {
@@ -22,6 +22,7 @@
      the attribute and silently break the whole component. -->
 <script id="ha-presets" type="application/json">{{ presets|tojson }}</script>
 <script id="ha-path-labels" type="application/json">{{ path_labels|tojson }}</script>
+<script id="ha-network-presets" type="application/json">{{ network_presets|tojson }}</script>
 
 <div x-data="houseArrest()" x-init="init()" class="container">
 
@@ -321,19 +322,129 @@
             <div class="skeleton w-40"></div>
         </div>
 
-        <template x-if="inspection && inspection.findings && inspection.findings.length">
-            <div class="findings">
-                <template x-for="(f, i) in inspection.findings" :key="i">
-                    <div class="finding" :class="f.severity">
-                        <span class="finding-network" x-text="f.network"></span>
-                        <span class="finding-text">
-                            <span x-text="f.finding"></span>
-                            <span class="finding-detail" x-text="f.detail"></span>
-                        </span>
-                    </div>
-                </template>
+        <!-- Matrix: networks down the side, settings across the top. Each
+             intersection explains itself on hover rather than pushing the
+             detail into a separate list. -->
+        <div class="matrix-wrap" x-show="inspection && inspection.matrix">
+            <table class="matrix">
+                <thead>
+                    <tr>
+                        <th class="net-col">Network</th>
+                        <template x-for="c in (inspection && inspection.matrix ? inspection.matrix.columns : [])" :key="c.key">
+                            <th>
+                                <span class="col-label" x-text="c.label"></span>
+                                <span class="col-help" x-text="c.help"></span>
+                            </th>
+                        </template>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="r in (inspection && inspection.matrix ? inspection.matrix.rows : [])" :key="r.name">
+                        <tr>
+                            <th class="net-col" scope="row">
+                                <span x-text="r.name"></span>
+                                <span class="vlan-tag" x-show="r.vlan !== null" x-text="'VLAN ' + r.vlan"></span>
+                            </th>
+                            <template x-for="c in inspection.matrix.columns" :key="c.key">
+                                <td class="cell" :class="'is-' + (r.cells[c.key] ? r.cells[c.key].state : 'neutral')"
+                                    tabindex="0"
+                                    :aria-label="r.name + ' — ' + c.label + ': ' + (r.cells[c.key] ? r.cells[c.key].label + '. ' + r.cells[c.key].detail : '')">
+                                    <span class="cell-label" x-text="r.cells[c.key] ? r.cells[c.key].label : '—'"></span>
+                                    <span class="tip" role="tooltip">
+                                        <strong x-text="r.name + ' · ' + c.label"></strong>
+                                        <span x-text="r.cells[c.key] ? r.cells[c.key].detail : ''"></span>
+                                    </span>
+                                </td>
+                            </template>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p class="hint">Hover or focus any cell for what it means on that network.</p>
+        </div>
+
+        <!-- Acting on what the matrix shows: isolate a whole network, using the
+             same preview-then-apply discipline as a device lockdown. -->
+        <div class="isolate-block">
+            <h3>Isolate a network</h3>
+            <p class="card-note">
+                Applies to every device on the network, now and in future. Written
+                as tagged firewall policies, so releasing removes exactly what was
+                added and leaves your own settings alone.
+            </p>
+
+            <template x-if="state.isolated_networks && state.isolated_networks.length">
+                <div>
+                    <template x-for="n in state.isolated_networks" :key="n.label">
+                        <div class="arrest">
+                            <span class="arrest-id">
+                                <span class="arrest-name" x-text="n.label"></span>
+                                <span class="muted small"> · network isolation</span>
+                            </span>
+                            <span class="state ok">
+                                <span class="dot" style="background: var(--state-enforcing)"></span>
+                                <span>Enforcing</span>
+                            </span>
+                            <span class="muted small" x-text="n.policy_ids.length + ' policies'"></span>
+                            <button class="btn btn-danger btn-sm"
+                                    @click="releaseNetwork(n.label)">Release</button>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <div class="field-row">
+                <div>
+                    <label for="iso-net">Network</label>
+                    <select id="iso-net" x-model="isoNetworkId" @change="isoPreview = null">
+                        <option value="">Select a network…</option>
+                        <template x-for="n in networks" :key="n.id">
+                            <option :value="n.id" x-text="n.name + ' — VLAN ' + n.vlan"></option>
+                        </template>
+                    </select>
+                </div>
+                <div>
+                    <label for="iso-preset">Level</label>
+                    <select id="iso-preset" x-model="isoPreset" @change="isoPreview = null">
+                        <template x-for="p in networkPresets" :key="p.value">
+                            <option :value="p.value" x-text="p.label"></option>
+                        </template>
+                    </select>
+                    <div class="hint" x-text="isoSummary()"></div>
+                </div>
             </div>
-        </template>
+
+            <ul class="caveats" x-show="isoCaveats().length">
+                <template x-for="(c, i) in isoCaveats()" :key="i">
+                    <li x-text="c"></li>
+                </template>
+            </ul>
+
+            <div class="actions">
+                <button class="btn btn-secondary" @click="isoDryRun()"
+                        :disabled="!isoNetworkId || isoPreviewing">
+                    <span x-text="isoPreviewing ? 'Checking…' : 'Review changes'"></span>
+                </button>
+                <button class="btn btn-primary" @click="isoApply()"
+                        :disabled="!isoPreview || isoApplying">
+                    <span x-text="isoApplying ? 'Applying…' : 'Isolate network'"></span>
+                </button>
+                <span class="muted small" x-show="!isoPreview && isoNetworkId">
+                    Review first — this affects every device on that network.
+                </span>
+            </div>
+
+            <template x-if="isoPreview">
+                <div class="review">
+                    <h3 x-text="isoPreview.length + (isoPreview.length === 1 ? ' policy' : ' policies') + ' will be added'"></h3>
+                    <details class="raw">
+                        <summary>Show the exact firewall policies</summary>
+                        <pre class="payload" x-text="JSON.stringify(isoPreview, null, 2)"></pre>
+                    </details>
+                </div>
+            </template>
+        </div>
+
     </section>
 
     <p class="muted small">House Arrest v{{ version }}</p>
@@ -342,6 +453,6 @@
 <!-- Loaded at the end of body WITHOUT defer, matching Threat Watch and
      Network Pulse: this must define houseArrest() before the deferred
      Alpine bundle starts, or x-data fails with "houseArrest is not defined". -->
-<script src="/arrest/static/js/app.js"></script>
+<script src="/arrest/static/js/app.js?v={{ version }}"></script>
 </body>
 </html>

@@ -331,3 +331,122 @@ class TestPresetFromPolicy:
 
     def test_foreign_policy_yields_nothing(self):
         assert P.preset_from_policy({"description": "hand-made"}) is None
+
+
+class TestNetworkIsolation:
+    """
+    Network-scoped isolation reuses the device machinery but must stay
+    distinguishable from it — an isolated network must never be listed as a
+    locked-down device, and release must be able to tell them apart.
+    """
+
+    NET_ID = "6633bca6d2716f22019bb117"
+
+    def _build(self, preset):
+        return P.build_network_isolation(
+            preset, self.NET_ID, "IDIoT", CLIENT_ZONE, EXTERNAL_ZONE,
+            P.next_free_index([], P.network_policy_count(preset)),
+        )
+
+    @pytest.mark.parametrize("preset", P.NETWORK_PRESETS)
+    def test_every_preset_builds_and_is_marked(self, preset):
+        pols = self._build(preset)
+        assert len(pols) == P.network_policy_count(preset)
+        for p in pols:
+            assert P.is_house_arrest(p), "release would not find this"
+            assert P.is_network_policy(p), "must be distinguishable from a device"
+            assert p["predefined"] is False
+
+    def test_network_source_shape(self):
+        src = P.network_source([self.NET_ID], CLIENT_ZONE)
+        assert src["matching_target"] == "NETWORK"
+        assert src["network_ids"] == [self.NET_ID]
+        assert src["match_opposite_networks"] is False
+
+    def test_network_source_requires_a_network(self):
+        with pytest.raises(ValueError):
+            P.network_source([], CLIENT_ZONE)
+
+    def test_device_policies_are_not_network_policies(self):
+        pols = P.build_lockdown(
+            P.FULL_LOCKDOWN, [MAC], "Cam", CLIENT_ZONE, EXTERNAL_ZONE,
+            P.next_free_index([], 2),
+        )
+        assert all(not P.is_network_policy(p) for p in pols)
+
+    def test_label_round_trips(self):
+        pols = self._build(P.NET_FULL)
+        assert P.network_label_from_policy(pols[0]) == "IDIoT"
+
+    def test_full_isolation_blocks_both_directions(self):
+        pols = self._build(P.NET_FULL)
+        zones = {p["destination"]["zone_id"] for p in pols}
+        assert zones == {CLIENT_ZONE, EXTERNAL_ZONE}
+        assert all(p["action"] == "BLOCK" for p in pols)
+
+    def test_isolate_networks_leaves_internet_alone(self):
+        pols = self._build(P.NET_ISOLATE_NETWORKS)
+        assert len(pols) == 1
+        assert pols[0]["destination"]["zone_id"] == CLIENT_ZONE
+
+    def test_every_network_preset_discloses_the_peer_caveat(self):
+        for preset in P.NETWORK_PRESETS:
+            joined = " ".join(P.caveats_for_network(preset)).lower()
+            assert "talk to each other" in joined
+
+    def test_unknown_preset_rejected(self):
+        with pytest.raises(ValueError):
+            P.build_network_isolation("nuke", self.NET_ID, "X",
+                                      CLIENT_ZONE, EXTERNAL_ZONE, [10000])
+
+
+class TestIsolationMatrix:
+    def _nets(self):
+        return [
+            {"_id": "n1", "name": "Default", "vlan": None, "purpose": "corporate",
+             "ip_subnet": "192.168.200.1/24", "dhcpd_dns_1": "192.168.200.50",
+             "network_isolation_enabled": None, "mdns_enabled": True},
+            {"_id": "n2", "name": "IoT", "vlan": 107, "purpose": "corporate",
+             "ip_subnet": "192.168.107.1/24", "dhcpd_dns_1": "192.168.200.50",
+             "network_isolation_enabled": True, "mdns_enabled": False},
+            {"_id": "w1", "name": "WAN", "purpose": "wan"},
+        ]
+
+    def _zones(self):
+        return [{"_id": "z1", "name": "Internal", "network_ids": ["n1", "n2"]}]
+
+    def test_wans_are_excluded(self):
+        m = P.build_isolation_matrix(self._nets(), self._zones())
+        assert [r["name"] for r in m["rows"]] == ["IoT", "Default"]
+
+    def test_resolver_on_own_subnet_is_flagged(self):
+        """The measured hole: a same-subnet resolver cannot be filtered."""
+        m = P.build_isolation_matrix(self._nets(), self._zones())
+        default = next(r for r in m["rows"] if r["name"] == "Default")
+        assert default["cells"]["dns"]["state"] == "warn"
+
+    def test_resolver_on_another_network_is_not_flagged(self):
+        m = P.build_isolation_matrix(self._nets(), self._zones())
+        iot = next(r for r in m["rows"] if r["name"] == "IoT")
+        assert iot["cells"]["dns"]["state"] == "neutral"
+
+    def test_shared_zone_is_flagged(self):
+        m = P.build_isolation_matrix(self._nets(), self._zones())
+        assert all(r["cells"]["zone"]["state"] == "warn" for r in m["rows"])
+
+    def test_unset_isolation_reads_as_off_not_unknown(self):
+        m = P.build_isolation_matrix(self._nets(), self._zones())
+        default = next(r for r in m["rows"] if r["name"] == "Default")
+        assert default["cells"]["isolation"]["label"] == "Off"
+
+    def test_every_cell_has_an_explanation(self):
+        m = P.build_isolation_matrix(self._nets(), self._zones())
+        for r in m["rows"]:
+            for col in m["columns"]:
+                assert r["cells"][col["key"]]["detail"], f"{r['name']}/{col['key']}"
+
+    def test_subnet_membership(self):
+        assert P._ip_in_subnet("192.168.200.50", "192.168.200.1/24") is True
+        assert P._ip_in_subnet("192.168.107.5", "192.168.200.1/24") is False
+        assert P._ip_in_subnet("garbage", "192.168.200.1/24") is False
+        assert P._ip_in_subnet("192.168.200.50", None) is False

@@ -21,6 +21,10 @@ from tools.house_arrest.models import (
     ClientInfo,
     InspectionFinding,
     InspectionResponse,
+    IsolateRequest,
+    IsolateResponse,
+    IsolatedNetwork,
+    IsolationMatrix,
     LockdownRequest,
     LockdownResponse,
     NetworkInfo,
@@ -79,7 +83,10 @@ async def get_state():
         return StateResponse(connected=False, error=str(e))
 
     internal_id, external_id = _zone_ids(zones)
-    ours = P.find_ours(all_policies)
+    ours_all = P.find_ours(all_policies)
+    # Network-scoped policies must never be listed as locked-down devices.
+    net_policies = [p for p in ours_all if P.is_network_policy(p)]
+    ours = [p for p in ours_all if not P.is_network_policy(p)]
 
     # Known clients, not active ones: a device that is merely switched off
     # has not broken its policy.
@@ -125,8 +132,20 @@ async def get_state():
         except Exception as e:
             logger.warning(f"Could not fetch blocked flows: {e}")
 
+    isolated: Dict[str, IsolatedNetwork] = {}
+    for pol in net_policies:
+        label = P.network_label_from_policy(pol) or "network"
+        entry = isolated.get(label)
+        if entry is None:
+            entry = IsolatedNetwork(label=label)
+            isolated[label] = entry
+        pid = pol.get("_id")
+        if pid:
+            entry.policy_ids.append(pid)
+
     return StateResponse(
         connected=True,
+        isolated_networks=list(isolated.values()),
         zones=[ZoneInfo(id=z.get("_id", ""), name=z.get("name", "")) for z in zones],
         internal_zone_id=internal_id,
         external_zone_id=external_id,
@@ -137,7 +156,8 @@ async def get_state():
         # The controller assigns the stored index itself, so our rules can land
         # after a user's own ALLOW. Surface that rather than assume ordering.
         precedence_warnings=[
-            PrecedenceWarning(**w) for w in P.check_precedence(ours, all_policies)
+            PrecedenceWarning(**w)
+            for w in P.check_precedence(ours_all, all_policies)
         ],
     )
 
@@ -211,6 +231,74 @@ async def blocked(label: Optional[str] = None, hours: int = 24):
         raise HTTPException(status_code=502, detail=str(e))
 
     return [BlockedFlow(**row) for row in P.summarize_blocked(flows, our_ids)]
+
+
+@router.post("/isolate", response_model=IsolateResponse)
+async def isolate(req: IsolateRequest):
+    """
+    Isolate a whole network. Defaults to a dry run, like every write here.
+
+    Writes marked firewall policies rather than flipping the network's own
+    isolation setting, so release stays "delete exactly what we created".
+    """
+    client, err = await _client_or_error()
+    if err:
+        return IsolateResponse(dry_run=req.dry_run, error=err)
+
+    if req.preset not in P.NETWORK_PRESETS:
+        raise HTTPException(status_code=400, detail=f"Unknown preset: {req.preset}")
+
+    try:
+        zones = await client.get_firewall_zones()
+        existing = await client.get_firewall_policies()
+        networks = await client.get_networks()
+    except Exception as e:
+        return IsolateResponse(dry_run=req.dry_run, error=str(e))
+
+    target = next((n for n in networks if n.get("_id") == req.network_id), None)
+    if target is None:
+        raise HTTPException(status_code=400, detail="Unknown network")
+    if target.get("purpose") == "wan":
+        raise HTTPException(status_code=400, detail="Cannot isolate a WAN")
+
+    internal_id, external_id = _zone_ids(zones)
+    if not internal_id or not external_id:
+        return IsolateResponse(
+            dry_run=req.dry_run,
+            error="Could not find Internal and External zones on this console",
+        )
+
+    try:
+        indexes = P.next_free_index(existing, P.network_policy_count(req.preset))
+        payloads = P.build_network_isolation(
+            preset=req.preset,
+            network_id=req.network_id,
+            network_name=target.get("name") or "network",
+            client_zone_id=internal_id,
+            external_zone_id=external_id,
+            indexes=indexes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if req.dry_run:
+        return IsolateResponse(dry_run=True, payloads=payloads)
+
+    created = []
+    for payload in payloads:
+        result = await client.create_firewall_policy(payload)
+        if result is None:
+            for done in created:
+                pid = done.get("_id")
+                if pid:
+                    await client.delete_firewall_policy(pid)
+            return IsolateResponse(
+                dry_run=False, created=[],
+                error=f"Failed to create {payload.get('name')!r}; rolled back",
+            )
+        created.append(result)
+
+    return IsolateResponse(dry_run=False, created=created)
 
 
 @router.get("/networks", response_model=List[NetworkInfo])
@@ -351,9 +439,13 @@ async def inspect():
             ),
         ))
 
+    matrix = IsolationMatrix(**P.build_isolation_matrix(networks, zones))
+
     return InspectionResponse(
         connected=True, networks=net_models,
-        findings=zone_findings + findings, allow_all_index=allow_all_index,
+        findings=zone_findings + findings,
+        matrix=matrix,
+        allow_all_index=allow_all_index,
     )
 
 
@@ -482,12 +574,20 @@ async def release(req: ReleaseRequest):
                 targets.append(pol)
     else:
         targets = P.find_ours(all_policies)
+        if req.kind == "network":
+            targets = [p for p in targets if P.is_network_policy(p)]
+        elif req.kind == "device":
+            targets = [p for p in targets if not P.is_network_policy(p)]
         if req.label:
             wanted = req.label.strip().lower()
-            targets = [
-                p for p in targets
-                if P._label_from_policy(p).strip().lower() == wanted
-            ]
+
+            def _label(p):
+                return (
+                    P.network_label_from_policy(p) if P.is_network_policy(p)
+                    else P._label_from_policy(p)
+                )
+
+            targets = [p for p in targets if _label(p).strip().lower() == wanted]
 
     if req.dry_run:
         return ReleaseResponse(

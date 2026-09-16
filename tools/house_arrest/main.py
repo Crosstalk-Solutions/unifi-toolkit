@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
                 "request": request,
                 "version": __version__,
                 "presets": P.preset_catalog(),
+                "network_presets": P.network_preset_catalog(),
                 "path_labels": P.PATH_LABELS,
             }
         )
