@@ -1,0 +1,565 @@
+/* House Arrest — styles
+ *
+ * Built on the same tokens as Threat Watch and Network Pulse (Crosstalk brand
+ * blue/orange, 12px card radius, 8px control radius, rem spacing). Each tool
+ * carries its own copy of the token block, matching the existing convention.
+ *
+ * The one thing this tool owns that its siblings don't: the path diagram,
+ * which shows what a preset actually blocks. Everything else is deliberately
+ * the house vocabulary.
+ */
+
+:root {
+    /* Crosstalk Solutions Brand Colors */
+    --ct-blue: #2B3990;
+    --ct-orange: #F15A29;
+    --ct-grey: #939598;
+
+    /* Light Mode (default) */
+    --primary-color: #2B3990;
+    --accent-color: #F15A29;
+    --secondary-color: #939598;
+    --success-color: #10b981;
+    --danger-color: #ef4444;
+    --warning-color: #f59e0b;
+    --background: #f9fafb;
+    --surface: #ffffff;
+    --surface-sunken: #f3f4f6;
+    --text-primary: #111827;
+    --text-secondary: #6b7280;
+    --border-color: #e5e7eb;
+    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+
+    /* Lockdown state */
+    --state-enforcing: #10b981;
+    --state-broken: #ef4444;
+    --state-rotated: #f59e0b;
+}
+
+:root[data-theme="dark"] {
+    --primary-color: #4B5FBB;
+    --accent-color: #F15A29;
+    --secondary-color: #939598;
+    --success-color: #10b981;
+    --danger-color: #ef4444;
+    --warning-color: #f59e0b;
+    --background: #0f172a;
+    --surface: #1e293b;
+    --surface-sunken: #172032;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --border-color: #334155;
+    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+                 Helvetica, Arial, sans-serif;
+    background: var(--background);
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+/* ---------- Header ---------- */
+
+header {
+    background: var(--surface);
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    margin-bottom: 2rem;
+}
+
+.header-top { margin-bottom: 1rem; }
+
+.back-to-dashboard {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.9rem;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    margin-left: -1rem;
+    transition: background 0.2s;
+}
+.back-to-dashboard:hover { background: var(--surface-sunken); }
+
+h1 {
+    font-size: 2rem;
+    margin: 0 0 0.25rem;
+    letter-spacing: -0.02em;
+}
+
+h2 {
+    font-size: 1.25rem;
+    margin: 0;
+    letter-spacing: -0.01em;
+}
+
+.subtitle {
+    color: var(--text-secondary);
+    margin: 0 0 1.5rem;
+    max-width: 68ch;
+}
+
+/* ---------- Trust strip ----------
+   The design rule this tool exists to honour: the state shown here must never
+   claim more protection than is actually being enforced. It gets top billing
+   and turns red the moment a policy stops matching. */
+
+.trust-strip {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    padding: 1rem 1.25rem;
+    border-radius: 10px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-color);
+}
+
+.trust-strip.is-alert {
+    background: color-mix(in srgb, var(--danger-color) 10%, var(--surface));
+    border-color: var(--danger-color);
+}
+
+.trust-headline {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 600;
+}
+
+.dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--secondary-color);
+    flex: none;
+}
+.dot.connected { background: var(--state-enforcing); }
+.dot.disconnected { background: var(--state-broken); }
+
+.trust-meta {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+.trust-meta strong { color: var(--text-primary); font-weight: 600; }
+
+.trust-actions { margin-left: auto; }
+
+/* ---------- Cards ---------- */
+
+.card {
+    background: var(--surface);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.card-head .step {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+    letter-spacing: 0.02em;
+}
+
+.card-note {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin: 0 0 1.25rem;
+    max-width: 70ch;
+}
+
+.muted { color: var(--text-secondary); }
+.small { font-size: 0.875rem; }
+
+.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+}
+
+/* ---------- Forms ---------- */
+
+.field-row {
+    display: grid;
+    grid-template-columns: minmax(260px, 2fr) minmax(200px, 1fr);
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+}
+
+select, input[type="text"] {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-family: inherit;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+select:focus, input[type="text"]:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 20%, transparent);
+}
+
+.hint {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin-top: 0.4rem;
+}
+
+/* ---------- Preset options ----------
+   Four choices, each with a consequence. A <select> hides both the options and
+   what they do; laid out as radios the whole decision is visible at once. */
+
+.preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.preset-option {
+    position: relative;
+    display: block;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--surface);
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+}
+.preset-option:hover { border-color: var(--primary-color); }
+
+.preset-option input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.preset-option.is-selected {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 7%, var(--surface));
+}
+
+.preset-option:focus-within {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.preset-name {
+    display: block;
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 0.15rem;
+}
+
+.preset-summary {
+    display: block;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+/* ---------- VLAN picker ----------
+   Only appears for presets that relocate the device. */
+
+.vlan-picker {
+    max-width: 420px;
+    margin-bottom: 1.5rem;
+}
+
+/* ---------- Path diagram ----------
+   Shows the mechanism: which of a device's three traffic paths the selected
+   preset cuts. The third row is always "allowed" and always will be — that
+   caveat is the easiest thing for this tool to accidentally hide. */
+
+.paths {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--surface-sunken);
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.paths-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.875rem;
+}
+
+.path {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    padding: 0.5rem 0;
+}
+.path + .path { border-top: 1px solid var(--border-color); }
+
+.path-line {
+    flex: none;
+    width: 74px;
+    height: 20px;
+}
+
+.path-label { font-size: 0.9rem; flex: 1; }
+
+.path-verdict {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.path.is-block .path-verdict { color: var(--state-broken); }
+.path.is-allow .path-verdict { color: var(--state-enforcing); }
+/* "moved" is its own state: not blocked, not unchanged. */
+.path.is-moved .path-verdict { color: var(--state-rotated); }
+
+.path-note {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin: 0.75rem 0 0;
+}
+
+.caveats {
+    margin: 0.875rem 0 0;
+    padding-left: 1.1rem;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+.caveats li { margin-bottom: 0.35rem; }
+.caveats li::marker { color: var(--warning-color); }
+
+/* ---------- Buttons ---------- */
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+}
+.btn-primary { background: var(--primary-color); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #3b4bb5; }
+:root[data-theme="dark"] .btn-primary:hover:not(:disabled) { background: #5b6fc9; }
+
+.btn-secondary {
+    background: var(--surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+.btn-secondary:hover:not(:disabled) { border-color: var(--primary-color); }
+
+.btn-danger { background: var(--surface); color: var(--danger-color); border-color: var(--danger-color); }
+.btn-danger:hover:not(:disabled) { background: var(--danger-color); color: #fff; }
+
+.btn-sm { padding: 0.45rem 0.9rem; font-size: 0.875rem; }
+
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+
+.actions {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* ---------- Review (what will happen) ---------- */
+
+.review {
+    border: 1px solid var(--primary-color);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--primary-color) 5%, var(--surface));
+    padding: 1.25rem;
+    margin-top: 1.5rem;
+}
+
+.review h3 { margin: 0 0 0.75rem; font-size: 1rem; }
+
+.review ul { margin: 0 0 0.75rem; padding-left: 1.25rem; }
+.review li { margin-bottom: 0.3rem; }
+
+details.raw { margin-top: 0.5rem; }
+details.raw summary {
+    cursor: pointer;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+details.raw summary:hover { color: var(--primary-color); }
+
+pre.payload {
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: 0.75rem;
+    max-height: 320px;
+    margin-top: 0.75rem;
+}
+
+/* ---------- Locked-down device list ---------- */
+
+.arrest {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 0.75rem;
+}
+.arrest.is-broken { border-color: var(--danger-color); }
+.arrest.is-rotated { border-color: var(--warning-color); }
+
+.arrest-id { flex: 1; min-width: 200px; }
+.arrest-name { font-weight: 600; }
+
+.state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+.state.ok { color: var(--state-enforcing); }
+.state.rotated { color: var(--state-rotated); }
+.state.broken { color: var(--state-broken); }
+
+.blocked-panel {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--surface-sunken);
+    padding: 1.25rem;
+    margin: 0.5rem 0 1rem;
+}
+.blocked-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+.blocked-panel table { background: var(--surface); border-radius: 8px; }
+.blocked-panel th, .blocked-panel td { padding: 0.5rem 0.75rem; }
+.blocked-toggle:disabled { opacity: 0.45; }
+
+/* ---------- Inspection ---------- */
+
+.findings { display: grid; gap: 0.5rem; }
+
+.finding {
+    display: flex;
+    gap: 0.875rem;
+    align-items: flex-start;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background: var(--surface-sunken);
+}
+.finding.warn { background: color-mix(in srgb, var(--warning-color) 12%, var(--surface)); }
+
+.finding-network {
+    font-weight: 600;
+    font-size: 0.875rem;
+    min-width: 120px;
+}
+.finding-text { flex: 1; font-size: 0.9rem; }
+.finding-detail { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.15rem; }
+
+/* ---------- Notices ---------- */
+
+.notice {
+    padding: 0.875rem 1.125rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+    border: 1px solid transparent;
+}
+.notice.ok {
+    background: color-mix(in srgb, var(--success-color) 12%, var(--surface));
+    border-color: var(--success-color);
+}
+.notice.warn {
+    background: color-mix(in srgb, var(--warning-color) 14%, var(--surface));
+    border-color: var(--warning-color);
+}
+.notice.danger {
+    background: color-mix(in srgb, var(--danger-color) 10%, var(--surface));
+    border-color: var(--danger-color);
+}
+
+/* ---------- Skeleton (loading) ---------- */
+
+.skeleton {
+    height: 1rem;
+    border-radius: 6px;
+    background: var(--surface-sunken);
+    animation: pulse 1.4s ease-in-out infinite;
+}
+.skeleton + .skeleton { margin-top: 0.6rem; }
+.skeleton.w-60 { width: 60%; }
+.skeleton.w-40 { width: 40%; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 820px) {
+    .container { padding: 1.25rem; }
+    header { padding: 1.5rem; }
+    h1 { font-size: 1.625rem; }
+    .field-row { grid-template-columns: 1fr; }
+    .trust-actions { margin-left: 0; width: 100%; }
+}

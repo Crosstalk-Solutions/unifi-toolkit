@@ -3,6 +3,8 @@ UniFi API client — supports UniFi OS controllers (Dream Machine, Cloud Key, et
 """
 from typing import Optional, Dict, List
 import aiohttp
+import asyncio
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1812,6 +1814,380 @@ class UniFiClient:
 
         except Exception as e:
             logger.error(f"Failed to get top clients: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # Zone-based firewall (House Arrest)
+    #
+    # These live on the v2 API. See docs/house-arrest-design.md for the
+    # confirmed payload shapes and why destination matching is IP-only.
+    # ------------------------------------------------------------------
+
+    async def get_firewall_zones(self) -> List[Dict]:
+        """
+        Get zone-based firewall zones.
+
+        Zone IDs are per-console — always look them up, never hardcode.
+
+        Returns:
+            List of zone dicts, or [] on failure
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/firewall/zone"
+
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to get firewall zones: {resp.status}")
+                    return []
+                data = await resp.json()
+                # v2 returns a bare list, not the v1 {"data": [...]} envelope
+                zones = data if isinstance(data, list) else data.get('data', [])
+                logger.debug(f"Retrieved {len(zones)} firewall zones")
+                return zones
+
+        except Exception as e:
+            logger.error(f"Error getting firewall zones: {e}")
+            return []
+
+    async def get_firewall_policies(self, custom_only: bool = False) -> List[Dict]:
+        """
+        Get zone-based firewall policies.
+
+        Args:
+            custom_only: If True, return only user-created policies
+                         (predefined is False). The predefined allow-all at
+                         index 2147483647 is never a policy we may touch.
+
+        Returns:
+            List of policy dicts, or [] on failure
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/firewall-policies"
+
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to get firewall policies: {resp.status}")
+                    return []
+                data = await resp.json()
+                policies = data if isinstance(data, list) else data.get('data', [])
+                if custom_only:
+                    policies = [p for p in policies if not p.get('predefined')]
+                logger.debug(f"Retrieved {len(policies)} firewall policies")
+                return policies
+
+        except Exception as e:
+            logger.error(f"Error getting firewall policies: {e}")
+            return []
+
+    async def create_firewall_policy(self, policy: Dict) -> Optional[Dict]:
+        """
+        Create a zone-based firewall policy.
+
+        Args:
+            policy: Full policy payload (see tools/house_arrest/policies.py)
+
+        Returns:
+            The created policy dict (including its _id), or None on failure
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/firewall-policies"
+
+        try:
+            async with self._session.post(url, json=policy) as resp:
+                body = await resp.text()
+                if resp.status not in (200, 201):
+                    logger.error(
+                        f"Failed to create firewall policy "
+                        f"'{policy.get('name')}': {resp.status} {body[:300]}"
+                    )
+                    return None
+                try:
+                    created = json.loads(body) if body else {}
+                except ValueError:
+                    created = {}
+                if isinstance(created, dict) and 'data' in created:
+                    data = created['data']
+                    created = data[0] if isinstance(data, list) and data else data
+                logger.info(f"Created firewall policy '{policy.get('name')}'")
+                return created
+
+        except Exception as e:
+            logger.error(f"Error creating firewall policy: {e}")
+            return None
+
+    async def delete_firewall_policy(self, policy_id: str) -> bool:
+        """
+        Delete a zone-based firewall policy by ID.
+
+        Callers must confirm the policy is one we created (predefined False
+        and carrying the House Arrest marker) before calling this.
+
+        Args:
+            policy_id: The policy's _id
+
+        Returns:
+            True if deleted, False otherwise
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        base = f"{self.host}/proxy/network/v2/api/site/{self.site}/firewall-policies"
+
+        try:
+            # Batch delete is what the console itself uses; the per-ID DELETE
+            # is not consistently available across firmware versions.
+            async with self._session.post(
+                f"{base}/batch-delete", json=[policy_id]
+            ) as resp:
+                if resp.status in (200, 204):
+                    logger.info(f"Deleted firewall policy {policy_id}")
+                    return True
+                body = await resp.text()
+                logger.error(
+                    f"Failed to delete firewall policy {policy_id}: "
+                    f"{resp.status} {body[:300]}"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"Error deleting firewall policy {policy_id}: {e}")
+            return False
+
+    async def get_known_clients(self) -> List[Dict]:
+        """
+        Get every client the controller knows about, online or not.
+
+        This is the client *database* (`rest/user`), not the active list
+        (`stat/sta`). House Arrest needs it because a policy targeting a
+        device that is merely switched off is still valid — only a MAC that
+        has left the known-client list means the rule has stopped matching.
+
+        Note: `last_seen` on these records is unreliable (devices currently
+        online can report values weeks old), so do not build timing logic on
+        it. See docs/house-arrest-design.md, design decision 2.
+
+        Returns:
+            List of known-client dicts, or [] on failure
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        url = f"{self.host}/proxy/network/api/s/{self.site}/rest/user"
+
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to get known clients: {resp.status}")
+                    return []
+                data = await resp.json()
+                users = data.get('data', [])
+                logger.debug(f"Retrieved {len(users)} known clients")
+                return users
+
+        except Exception as e:
+            logger.error(f"Error getting known clients: {e}")
+            return []
+
+    async def get_blocked_flows(
+        self,
+        macs: List[str],
+        hours: int = 24,
+        page_size: int = 200,
+    ) -> List[Dict]:
+        """
+        Get traffic the gateway BLOCKED from the given clients.
+
+        This is what turns "a policy exists" into "here is the traffic it
+        stopped". Measured 2026-09-15: the v2 traffic-flows endpoint records
+        blocked flows even with `logging: false` on the policy, and each flow
+        carries a `policies[]` array naming the exact policy that blocked it —
+        so a flow can be attributed to a specific House Arrest rule rather
+        than guessed at.
+
+        The `action` filter is an enum accepting only 'allowed' or 'blocked'
+        (lowercase); 'BLOCK'/'BLOCKED' are rejected with HTTP 400.
+
+        Args:
+            macs: source MACs to report on
+            hours: how far back to look
+            page_size: max flows to request
+
+        Returns:
+            List of raw flow dicts, newest first, or [] on failure
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+        if not macs:
+            return []
+
+        import time as _time
+        now_ms = int(_time.time() * 1000)
+        payload = {
+            "timestampFrom": now_ms - hours * 3600 * 1000,
+            "timestampTo": now_ms,
+            "pageNumber": 0,
+            "pageSize": page_size,
+            "source_mac": [m.lower() for m in macs],
+            "action": ["blocked"],
+        }
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/traffic-flows"
+
+        try:
+            async with self._session.post(url, json=payload) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error(
+                        f"Failed to get blocked flows: {resp.status} {body[:300]}"
+                    )
+                    return []
+                data = await resp.json()
+                flows = data.get("data", data) if isinstance(data, dict) else data
+                if not isinstance(flows, list):
+                    return []
+                logger.debug(f"Retrieved {len(flows)} blocked flows for {len(macs)} client(s)")
+                return flows
+
+        except Exception as e:
+            logger.error(f"Error getting blocked flows: {e}")
+            return []
+
+    async def set_client_network(
+        self, mac_address: str, network_id: Optional[str]
+    ) -> bool:
+        """
+        Move a client into a different VLAN, or clear an existing override.
+
+        Uses the per-client override fields `virtual_network_override_enabled`
+        and `virtual_network_override_id`, which are confirmed present on
+        client records (2026-09-15). Pass network_id=None to clear.
+
+        The write is verified by re-reading the client afterwards: a PUT that
+        returns 200 but doesn't take would otherwise let House Arrest report a
+        quarantine it never performed.
+
+        Args:
+            mac_address: MAC of the client to move
+            network_id: target network `_id`, or None to remove the override
+
+        Returns:
+            True only if the override reads back as requested
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        mac = mac_address.lower()
+        base = f"{self.host}/proxy/network/api/s/{self.site}/rest/user"
+
+        try:
+            async with self._session.get(base) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to list clients: {resp.status}")
+                    return False
+                users = (await resp.json()).get('data', [])
+
+            user = next((u for u in users if (u.get('mac') or '').lower() == mac), None)
+            if not user:
+                logger.error(f"Client {mac} is not a known client; cannot move it")
+                return False
+
+            payload = {
+                "virtual_network_override_enabled": bool(network_id),
+                "virtual_network_override_id": network_id or "",
+            }
+
+            async with self._session.put(
+                f"{base}/{user.get('_id')}", json=payload
+            ) as put_resp:
+                if put_resp.status != 200:
+                    body = await put_resp.text()
+                    logger.error(
+                        f"Failed to move {mac} to network {network_id}: "
+                        f"{put_resp.status} {body[:300]}"
+                    )
+                    return False
+
+            # Verify rather than trust the status code — but poll, don't read
+            # once. Controller changes are provisioned asynchronously (DNS
+            # records reportedly take ~45s to reach dnsmasq), so an immediate
+            # read can return the pre-write state. A single read here would
+            # report a false failure and roll back a lockdown that actually
+            # succeeded, which is worse than waiting.
+            deadline = 20.0
+            waited = 0.0
+            delay = 1.0
+            enabled, current = None, None
+
+            while waited <= deadline:
+                async with self._session.get(base) as verify_resp:
+                    if verify_resp.status != 200:
+                        logger.error("Could not verify client network override")
+                        return False
+                    fresh = (await verify_resp.json()).get('data', [])
+
+                moved = next(
+                    (u for u in fresh if (u.get('mac') or '').lower() == mac), None
+                )
+                if moved:
+                    enabled = bool(moved.get('virtual_network_override_enabled'))
+                    current = moved.get('virtual_network_override_id') or None
+                    ok = (enabled and current == network_id) if network_id else (not enabled)
+                    if ok:
+                        logger.info(
+                            f"Client {mac} network override "
+                            f"{'set to ' + network_id if network_id else 'cleared'}"
+                            f" (confirmed after {waited:.0f}s)"
+                        )
+                        return True
+
+                await asyncio.sleep(delay)
+                waited += delay
+                delay = min(delay * 1.6, 5.0)
+
+            logger.error(
+                f"Network override for {mac} did not take within {deadline:.0f}s: "
+                f"enabled={enabled} id={current!r}"
+            )
+            return False
+
+        except Exception as e:
+            logger.error(f"Error setting client network for {mac_address}: {e}")
+            return False
+
+    async def get_networks(self) -> List[Dict]:
+        """
+        Get configured networks (VLANs).
+
+        Used for the Inspection report (network_isolation_enabled,
+        mdns_enabled) and for the optional VLAN-move preset.
+
+        Returns:
+            List of network dicts, or [] on failure
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        url = f"{self.host}/proxy/network/api/s/{self.site}/rest/networkconf"
+
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to get networks: {resp.status}")
+                    return []
+                data = await resp.json()
+                networks = data.get('data', [])
+                logger.debug(f"Retrieved {len(networks)} networks")
+                return networks
+
+        except Exception as e:
+            logger.error(f"Error getting networks: {e}")
             return []
 
     def __del__(self):

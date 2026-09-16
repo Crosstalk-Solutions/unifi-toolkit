@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>House Arrest - Device Lockdown</title>
+    <link rel="icon" type="image/jpeg" href="/static/images/favicon16x16.jpg">
+    <link rel="stylesheet" href="/arrest/static/css/styles.css">
+    <script>
+        // Apply saved theme immediately to prevent flash
+        (function() {
+            const savedTheme = localStorage.getItem('unifi-toolkit-theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+        })();
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+
+<!-- Server-supplied preset truth. Passed as a JSON block rather than an
+     x-init attribute: the JSON contains double quotes, which would terminate
+     the attribute and silently break the whole component. -->
+<script id="ha-presets" type="application/json">{{ presets|tojson }}</script>
+<script id="ha-path-labels" type="application/json">{{ path_labels|tojson }}</script>
+
+<div x-data="houseArrest()" x-init="init()" class="container">
+
+    <header>
+        <div class="header-top">
+            <a href="/" class="back-to-dashboard">← Back to Dashboard</a>
+        </div>
+        <h1>🔒 House Arrest</h1>
+        <p class="subtitle">
+            Put a device under House Arrest: choose how to lock down your device's
+            LAN and WAN access. Wired or wireless, built from UniFi firewall
+            policies, reversible in one click.
+        </p>
+
+        <!-- Trust strip. This is the tool's central promise, so it leads.
+             It turns red the instant a lockdown stops actually enforcing. -->
+        <div class="trust-strip" :class="{ 'is-alert': brokenCount > 0 }">
+            <span class="trust-headline">
+                <span class="dot" :class="state.connected ? 'connected' : 'disconnected'"></span>
+                <span x-text="headline()"></span>
+            </span>
+            <span class="trust-meta" x-show="state.connected">
+                <span><strong x-text="state.arrests.length"></strong> under arrest</span>
+                <span><strong x-text="state.custom_policy_count"></strong> custom policies of
+                    <strong x-text="state.total_policy_count"></strong></span>
+            </span>
+            <span class="trust-actions">
+                <button class="btn btn-secondary btn-sm" @click="refresh()" :disabled="loading">
+                    <span x-text="loading ? 'Checking…' : 'Re-check'"></span>
+                </button>
+            </span>
+        </div>
+    </header>
+
+    <template x-if="error">
+        <div class="notice danger" x-text="error"></div>
+    </template>
+
+    <template x-if="message">
+        <div class="notice" :class="message.kind" x-text="message.text"></div>
+    </template>
+
+    <template x-if="state.precedence_warnings && state.precedence_warnings.length">
+        <div class="notice warn">
+            <strong>Rule order may override a lockdown.</strong>
+            Your gateway assigns firewall rule positions itself, and
+            <span x-text="state.precedence_warnings.length"></span>
+            of your own ALLOW <span x-text="state.precedence_warnings.length === 1 ? 'rule sits' : 'rules sit'"></span>
+            ahead of a House Arrest block:
+            <span class="mono" x-text="state.precedence_warnings.map(w => w.name + ' (#' + w.index + ')').join(', ')"></span>.
+            If one of those matches this device, it wins. Worth checking in the UniFi UI.
+        </div>
+    </template>
+
+    <!-- ============ 1. Lock down a device ============
+         The primary task leads the page. Previously an empty table sat above
+         it, so the first thing a new user saw was a list of nothing. -->
+    <section class="card">
+        <div class="card-head">
+            <span class="step">STEP 1</span>
+            <h2>Choose a device and what to cut</h2>
+        </div>
+
+        <div class="field-row">
+            <div>
+                <label for="device">Device</label>
+                <select id="device" x-model="selectedMac" @change="onDeviceChange()">
+                    <option value="">Select a device…</option>
+                    <template x-for="c in clients" :key="c.mac">
+                        <option :value="c.mac"
+                                x-text="(c.name || c.mac) + (c.online ? '' : ' — offline')"></option>
+                    </template>
+                </select>
+                <div class="hint">Everything your controller knows about, online first.</div>
+            </div>
+            <div>
+                <label for="label">Name this lockdown</label>
+                <input id="label" type="text" x-model="label">
+                <div class="hint">Appears in the UniFi policy name.</div>
+            </div>
+        </div>
+
+        <!-- Presets as visible radios rather than a dropdown: four options, each
+             with a consequence the user needs to weigh before choosing. -->
+        <label>What should it still be allowed to reach?</label>
+        <div class="preset-grid">
+            <template x-for="p in presets" :key="p.value">
+                <label class="preset-option" :class="{ 'is-selected': preset === p.value }">
+                    <input type="radio" name="preset" :value="p.value" x-model="preset"
+                           @change="preview = null">
+                    <span class="preset-name" x-text="p.label"></span>
+                    <span class="preset-summary" x-text="p.effects.summary"></span>
+                </label>
+            </template>
+        </div>
+
+        <div class="vlan-picker" x-show="currentPreset() && currentPreset().requires_network">
+            <label for="network">Move it to which VLAN?</label>
+            <select id="network" x-model="networkId" @change="preview = null">
+                <option value="">Select a network…</option>
+                <template x-for="n in networks" :key="n.id">
+                    <option :value="n.id"
+                            x-text="n.name + ' — VLAN ' + n.vlan + (n.isolation_enabled ? ' (isolated)' : '')"></option>
+                </template>
+            </select>
+            <div class="hint">
+                Existing networks only — House Arrest never creates a VLAN. A network
+                marked <em>isolated</em> also keeps the device away from whatever else
+                lives there.
+            </div>
+        </div>
+
+        <!-- The mechanism, drawn. A preset name alone doesn't tell you what
+             happens to traffic; this does, and it keeps the same-VLAN caveat
+             in plain sight instead of in fine print. -->
+        <div class="paths">
+            <div class="paths-title">What this does to the device's traffic</div>
+
+            <template x-for="path in pathRows()" :key="path.key">
+                <div class="path" :class="'is-' + path.verdict">
+                    <svg class="path-line" viewBox="0 0 74 20" aria-hidden="true">
+                        <line x1="2" y1="10" x2="72" y2="10"
+                              :stroke="pathStroke(path.verdict)"
+                              stroke-width="2"
+                              :stroke-dasharray="path.verdict === 'allow' ? '0' : '4 4'" />
+                        <!-- x-show, not <template x-if>: a <template> inside
+                             <svg> is lifted out by the HTML parser and the
+                             group never renders. The cross also carries the
+                             blocked state without relying on red vs green. -->
+                        <g x-show="path.verdict === 'block'"
+                           stroke="var(--state-broken)" stroke-width="2.5" stroke-linecap="round">
+                            <line x1="32" y1="3" x2="42" y2="17" />
+                            <line x1="42" y1="3" x2="32" y2="17" />
+                        </g>
+                    </svg>
+                    <span class="path-label" x-text="path.label"></span>
+                    <span class="path-verdict" x-text="verdictText(path)"></span>
+                </div>
+            </template>
+
+            <p class="path-note" x-text="pathNote()"></p>
+
+            <!-- Measured caveats: paths that survive a lockdown. Shown next to
+                 the claim they qualify, not hidden in docs. -->
+            <ul class="caveats" x-show="currentPreset() && currentPreset().caveats.length">
+                <template x-for="(c, i) in (currentPreset() ? currentPreset().caveats : [])" :key="i">
+                    <li x-text="c"></li>
+                </template>
+            </ul>
+        </div>
+
+        <template x-if="selectedClient() && selectedClient().locally_administered">
+            <div class="notice warn">
+                <strong x-text="selectedClient().name || selectedClient().mac"></strong>
+                uses a private (randomized) MAC address. If it changes, the rule
+                stops matching — House Arrest will flag that here rather than keep
+                telling you the device is locked down.
+            </div>
+        </template>
+
+        <div class="actions">
+            <button class="btn btn-secondary" @click="dryRun()" :disabled="!canReview() || previewing">
+                <span x-text="previewing ? 'Checking…' : 'Review changes'"></span>
+            </button>
+            <button class="btn btn-primary" @click="apply()" :disabled="!preview || applying">
+                <span x-text="applying ? 'Applying…' : 'Apply lockdown'"></span>
+            </button>
+            <span class="muted small" x-show="!preview && selectedMac" x-text="reviewHint()"></span>
+        </div>
+
+        <!-- Review reads as a summary, with the raw payload available for the
+             people who want to see exactly what gets POSTed. -->
+        <template x-if="preview">
+            <div class="review">
+                <h3 x-text="reviewTitle()"></h3>
+                <ul>
+                    <template x-for="(line, i) in reviewLines()" :key="i">
+                        <li x-text="line"></li>
+                    </template>
+                </ul>
+                <p class="small muted" style="margin:0">
+                    Removable at any time from the list below — House Arrest only
+                    ever deletes policies it created.
+                </p>
+                <details class="raw">
+                    <summary>Show the exact firewall policies</summary>
+                    <pre class="payload" x-text="JSON.stringify(preview, null, 2)"></pre>
+                </details>
+            </div>
+        </template>
+    </section>
+
+    <!-- ============ 2. Currently under arrest ============ -->
+    <section class="card">
+        <div class="card-head">
+            <span class="step">STEP 2</span>
+            <h2>Currently under arrest</h2>
+        </div>
+
+        <div x-show="loading && state.arrests.length === 0">
+            <div class="skeleton w-60"></div>
+            <div class="skeleton w-40"></div>
+        </div>
+
+        <template x-if="!loading && state.arrests.length === 0">
+            <p class="card-note" style="margin:0">
+                No devices are locked down yet. When you apply one it appears here,
+                and House Arrest re-checks on every refresh that the rule is still
+                matching a real device — a lockdown that has quietly stopped working
+                gets called out rather than shown as fine.
+            </p>
+        </template>
+
+        <template x-for="a in state.arrests" :key="a.label">
+            <div class="arrest"
+                 :class="{ 'is-broken': a.status === 'broken', 'is-rotated': a.status === 'rotated' }">
+                <span class="arrest-id">
+                    <span class="arrest-name" x-text="a.label"></span>
+                    <span class="mono muted" x-text="' · ' + a.macs.join(', ')"></span>
+                </span>
+                <span class="state" :class="a.status">
+                    <span class="dot"
+                          :style="'background: var(--state-' + (a.status === 'ok' ? 'enforcing' : a.status) + ')'"></span>
+                    <span x-text="stateText(a.status)"></span>
+                </span>
+                <!-- Proof, not just status: what this lockdown actually stopped. -->
+                <button class="btn btn-secondary btn-sm blocked-toggle"
+                        @click="toggleBlocked(a.label)"
+                        :disabled="!a.blocked_count">
+                    <span x-text="a.blocked_count
+                        ? a.blocked_count + (a.blocked_count === 1 ? ' attempt blocked' : ' attempts blocked')
+                        : 'Nothing blocked yet'"></span>
+                    <span x-show="a.blocked_count" x-text="openBlocked === a.label ? ' ▾' : ' ▸'"></span>
+                </button>
+                <button class="btn btn-danger btn-sm" @click="release(a.label)">Release</button>
+            </div>
+        </template>
+
+        <template x-if="openBlocked">
+            <div class="blocked-panel">
+                <div class="blocked-head">
+                    <strong x-text="'Blocked in the last 24 hours — ' + openBlocked"></strong>
+                    <button class="btn btn-secondary btn-sm" @click="openBlocked = null">Close</button>
+                </div>
+                <p class="hint" x-show="blockedLoading">Loading…</p>
+                <table x-show="!blockedLoading && blockedFlows.length">
+                    <thead>
+                        <tr><th>When</th><th>Tried to reach</th><th>Port</th><th>Tries</th><th>Stopped by</th></tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(f, i) in blockedFlows" :key="i">
+                            <tr>
+                                <td class="muted small" x-text="when(f.time_ms)"></td>
+                                <td>
+                                    <span x-text="f.destination"></span>
+                                    <span class="hint" x-show="f.network" x-text="f.network"></span>
+                                </td>
+                                <td class="mono" x-text="(f.protocol || '') + (f.port ? ' ' + f.port : '')"></td>
+                                <td x-text="f.count"></td>
+                                <td class="muted small" x-text="f.policy"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p class="hint" x-show="!blockedLoading && !blockedFlows.length">
+                    Nothing recorded yet. The gateway logs a flow when the device
+                    actually tries to reach something blocked.
+                </p>
+            </div>
+        </template>
+
+        <template x-if="state.arrests.some(a => a.suggestion)">
+            <p class="hint">
+                Where a device reappeared on a new MAC address, the replacement is
+                shown so you can re-apply against it.
+            </p>
+        </template>
+    </section>
+
+    <!-- ============ 3. Inspection ============
+         Runs automatically. It used to sit behind a button that did nothing
+         until clicked, which buried the one thing that tells you whether a
+         lockdown is even necessary. -->
+    <section class="card">
+        <div class="card-head">
+            <span class="step">CONTEXT</span>
+            <h2>Is your network already isolated?</h2>
+        </div>
+        <p class="card-note">
+            Read-only audit of your VLANs. A network can look isolated in the UniFi
+            UI and still be wide open, because the predefined allow-all rule sits
+            beneath everything and lets traffic through.
+        </p>
+
+        <div x-show="inspection && inspection.loading">
+            <div class="skeleton w-60"></div>
+            <div class="skeleton w-40"></div>
+        </div>
+
+        <template x-if="inspection && inspection.findings && inspection.findings.length">
+            <div class="findings">
+                <template x-for="(f, i) in inspection.findings" :key="i">
+                    <div class="finding" :class="f.severity">
+                        <span class="finding-network" x-text="f.network"></span>
+                        <span class="finding-text">
+                            <span x-text="f.finding"></span>
+                            <span class="finding-detail" x-text="f.detail"></span>
+                        </span>
+                    </div>
+                </template>
+            </div>
+        </template>
+    </section>
+
+    <p class="muted small">House Arrest v{{ version }}</p>
+</div>
+
+<!-- Loaded at the end of body WITHOUT defer, matching Threat Watch and
+     Network Pulse: this must define houseArrest() before the deferred
+     Alpine bundle starts, or x-data fails with "houseArrest is not defined". -->
+<script src="/arrest/static/js/app.js"></script>
+</body>
+</html>

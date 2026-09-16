@@ -23,6 +23,7 @@ from tools.threat_watch.main import create_app as create_threat_watch_app
 from tools.threat_watch.scheduler import start_scheduler as start_threat_scheduler, stop_scheduler as stop_threat_scheduler
 from tools.network_pulse.main import create_app as create_pulse_app
 from tools.network_pulse.scheduler import start_scheduler as start_pulse_scheduler, stop_scheduler as stop_pulse_scheduler
+from tools.house_arrest.main import create_app as create_arrest_app
 
 # Import authentication router and middleware
 from app.routers.auth import router as auth_router, AuthMiddleware, is_auth_enabled, verify_session
@@ -205,6 +206,10 @@ app.mount("/threats", threat_watch_app)
 pulse_app = create_pulse_app()
 app.mount("/pulse", pulse_app)
 
+# Mount House Arrest sub-application
+arrest_app = create_arrest_app()
+app.mount("/arrest", arrest_app)
+
 # Mount main app static files (for dashboard)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
@@ -218,6 +223,7 @@ async def root(request: Request):
     from tools.wifi_stalker import __version__ as stalker_version
     from tools.threat_watch import __version__ as threat_watch_version
     from tools.network_pulse import __version__ as pulse_version
+    from tools.house_arrest import __version__ as arrest_version
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -227,7 +233,8 @@ async def root(request: Request):
             "app_version": app_version,
             "stalker_version": stalker_version,
             "threat_watch_version": threat_watch_version,
-            "pulse_version": pulse_version
+            "pulse_version": pulse_version,
+            "arrest_version": arrest_version
         }
     )
 
@@ -241,6 +248,7 @@ async def health_check():
     from tools.wifi_stalker import __version__ as stalker_version
     from tools.threat_watch import __version__ as threat_watch_version
     from tools.network_pulse import __version__ as pulse_version
+    from tools.house_arrest import __version__ as arrest_version
 
     return {
         "status": "healthy",
@@ -248,7 +256,8 @@ async def health_check():
         "tools": {
             "wifi_stalker": stalker_version,
             "threat_watch": threat_watch_version,
-            "network_pulse": pulse_version
+            "network_pulse": pulse_version,
+            "house_arrest": arrest_version
         }
     }
 
@@ -267,6 +276,7 @@ async def get_debug_info():
     from tools.wifi_stalker import __version__ as stalker_version
     from tools.threat_watch import __version__ as threat_watch_version
     from tools.network_pulse import __version__ as pulse_version
+    from tools.house_arrest import __version__ as arrest_version
     from shared import cache
 
     settings = get_settings()
@@ -285,7 +295,8 @@ async def get_debug_info():
         "tool_versions": {
             "wifi_stalker": stalker_version,
             "threat_watch": threat_watch_version,
-            "network_pulse": pulse_version
+            "network_pulse": pulse_version,
+            "house_arrest": arrest_version
         },
         "deployment": {
             "type": settings.deployment_type,
