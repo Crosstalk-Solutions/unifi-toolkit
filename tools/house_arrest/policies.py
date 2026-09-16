@@ -296,6 +296,196 @@ def network_label_from_policy(policy: Dict) -> str:
     return ""
 
 
+# ----------------------------------------------------------------------
+# DNS Lockdown
+#
+# Force chosen networks to use only approved resolvers, and block DNS to
+# anywhere else. Three policies per run, and their ORDER is the whole feature:
+# the allow must evaluate before the blocks or the network loses DNS entirely.
+#
+# Measured 2026-09-16: the controller does not always store the index we send
+# (10004/10005 once came back as 10000/10003), but policies created in
+# sequence kept their relative order. So we create allow-first and then VERIFY
+# the stored indexes, rather than trusting either behaviour.
+# ----------------------------------------------------------------------
+
+DNS_MARKER = "[DNS]"
+DNS_PORT = "53"
+DOT_PORT = "853"
+
+
+def network_source(network_ids: List[str], zone_id: str) -> Dict:
+    """
+    Source block matching whole networks.
+
+    Shape measured from a predefined policy on a live console (2026-09-16).
+    """
+    if not network_ids:
+        raise ValueError("At least one network id is required")
+    if not zone_id:
+        raise ValueError("zone_id is required")
+    return {
+        "matching_target": "NETWORK",
+        "network_ids": list(network_ids),
+        "match_mac": False,
+        "match_opposite_networks": False,
+        "match_opposite_ports": False,
+        "port_matching_type": "ANY",
+        "zone_id": zone_id,
+    }
+
+
+def describe_dns(note: str) -> str:
+    return f"{MARKER}{DNS_MARKER} {note}".strip()
+
+
+def is_dns_policy(policy: Dict) -> bool:
+    """True for a DNS Lockdown policy we created."""
+    if not is_house_arrest(policy):
+        return False
+    return DNS_MARKER in (policy.get("description") or "")
+
+
+def dns_policy_count(block_dot: bool = False) -> int:
+    """Allow-to-resolvers, plus a block per destination zone, plus DoT."""
+    return 3 + (2 if block_dot else 0)
+
+
+def _dns_dest(zone_id: str, port: str, ips: Optional[List[str]] = None) -> Dict:
+    dest = {
+        "matching_target": "IP" if ips else "ANY",
+        "match_opposite_ports": False,
+        "port": port,
+        "port_matching_type": "SPECIFIC",
+        "zone_id": zone_id,
+    }
+    if ips:
+        dest["matching_target_type"] = "SPECIFIC"
+        dest["ips"] = list(ips)
+        dest["match_opposite_ips"] = False
+    return dest
+
+
+def build_dns_lockdown(
+    network_ids: List[str],
+    network_label: str,
+    resolver_ips: List[str],
+    resolver_zone_id: str,
+    client_zone_id: str,
+    external_zone_id: str,
+    indexes: List[int],
+    block_dot: bool = False,
+) -> List[Dict]:
+    """
+    Build the DNS Lockdown policy set.
+
+    Returned in the order they must be CREATED, allow first:
+
+      1. ALLOW  chosen networks -> approved resolvers on 53
+      2. BLOCK  chosen networks -> anything on 53, inside the LAN
+      3. BLOCK  chosen networks -> anything on 53, out to the internet
+      4/5. the same two blocks on 853 (DoT) when block_dot is set
+
+    DoT is worth blocking because a device that cannot reach port 853 falls
+    back to plain 53, which rules 2 and 3 then capture. DoH (443) cannot be
+    handled this way at all and is deliberately out of scope.
+
+    Args:
+        network_ids: the VLANs to lock down
+        network_label: for policy names
+        resolver_ips: the approved resolvers
+        resolver_zone_id: zone the resolvers live in
+        client_zone_id: zone the networks live in
+        external_zone_id: the WAN zone
+        indexes: pre-allocated, from next_free_index()
+        block_dot: also block DNS-over-TLS on 853
+    """
+    if not network_ids:
+        raise ValueError("At least one network is required")
+    if not resolver_ips:
+        raise ValueError("At least one approved resolver is required")
+    needed = dns_policy_count(block_dot)
+    if len(indexes) < needed:
+        raise ValueError(f"DNS lockdown needs {needed} indexes, got {len(indexes)}")
+
+    src = network_source(network_ids, client_zone_id)
+    desc = describe_dns(f"DNS lockdown for {network_label}")
+    resolvers = ", ".join(resolver_ips)
+
+    out = [
+        _base_policy(
+            name=f"House Arrest DNS: {network_label} - allow approved resolvers",
+            action="ALLOW", index=indexes[0], source=src,
+            destination=_dns_dest(resolver_zone_id, DNS_PORT, resolver_ips),
+            description=describe_dns(f"Allow {resolvers} for {network_label}"),
+        ),
+        _base_policy(
+            name=f"House Arrest DNS: {network_label} - block other DNS (LAN)",
+            action="BLOCK", index=indexes[1], source=src,
+            destination=_dns_dest(client_zone_id, DNS_PORT),
+            description=desc,
+        ),
+        _base_policy(
+            name=f"House Arrest DNS: {network_label} - block other DNS (internet)",
+            action="BLOCK", index=indexes[2], source=src,
+            destination=_dns_dest(external_zone_id, DNS_PORT),
+            description=desc,
+        ),
+    ]
+
+    if block_dot:
+        out.append(_base_policy(
+            name=f"House Arrest DNS: {network_label} - block DoT (LAN)",
+            action="BLOCK", index=indexes[3], source=src,
+            destination=_dns_dest(client_zone_id, DOT_PORT),
+            description=desc,
+        ))
+        out.append(_base_policy(
+            name=f"House Arrest DNS: {network_label} - block DoT (internet)",
+            action="BLOCK", index=indexes[4], source=src,
+            destination=_dns_dest(external_zone_id, DOT_PORT),
+            description=desc,
+        ))
+    return out
+
+
+def dns_order_is_safe(created: List[Dict]) -> bool:
+    """
+    Confirm the allow really did land ahead of every block.
+
+    If it did not, the networks would have no working DNS at all, so the
+    caller must roll back rather than leave that in place. Lower index
+    evaluates first.
+    """
+    allows = [p.get("index") for p in created
+              if p.get("action") == "ALLOW" and isinstance(p.get("index"), int)]
+    blocks = [p.get("index") for p in created
+              if p.get("action") == "BLOCK" and isinstance(p.get("index"), int)]
+    if not allows or not blocks:
+        return False
+    return max(allows) < min(blocks)
+
+
+def dns_label_from_policy(policy: Dict) -> str:
+    """Recover the label from a DNS Lockdown policy description."""
+    desc = (policy.get("description") or "")
+    desc = desc.replace(MARKER, "").replace(DNS_MARKER, "").strip()
+    if " for " in desc:
+        return desc.rsplit(" for ", 1)[1].strip()
+    return ""
+
+
+DNS_CAVEATS = [
+    "DNS-over-HTTPS is not covered. A device that resolves over HTTPS on port "
+    "443 bypasses this entirely, and blocking that needs a maintained list of "
+    "DoH server addresses — out of scope here.",
+    "A device using a resolver on its OWN network is unaffected: that traffic "
+    "never reaches the gateway, so no firewall policy can see it.",
+    "Existing connections keep running. A device already talking to another "
+    "resolver continues until that conversation ends.",
+]
+
+
 def normalize_mac(mac: str) -> str:
     """Lowercase, colon-separated. Raises ValueError on anything else."""
     if not mac:

@@ -165,6 +165,60 @@ h2 {
 
 .trust-actions { margin-left: auto; }
 
+.tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+.tab {
+    flex: 1 1 180px;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+.tab:hover { border-color: var(--primary-color); }
+.tab.is-active {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface));
+    color: var(--text-primary);
+}
+.tab:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.tab-sub {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+    margin-top: 0.1rem;
+}
+
+.net-picker {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+.net-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 400;
+    font-size: 0.9rem;
+    margin: 0;
+    cursor: pointer;
+}
+
 /* ---------- Cards ---------- */
 
 .card {

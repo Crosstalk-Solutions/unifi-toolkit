@@ -118,6 +118,30 @@ class IsolateResponse(BaseModel):
     error: Optional[str] = None
 
 
+class DnsLockdownRequest(BaseModel):
+    """Force chosen networks onto approved resolvers only."""
+    network_ids: List[str] = Field(default_factory=list)
+    resolver_ips: List[str] = Field(default_factory=list)
+    block_dot: bool = False
+    dry_run: bool = True
+
+
+class DnsLockdownResponse(BaseModel):
+    dry_run: bool
+    created: List[Dict] = Field(default_factory=list)
+    payloads: List[Dict] = Field(default_factory=list)
+    caveats: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class DnsLockdownEntry(BaseModel):
+    """A network currently under DNS lockdown."""
+    label: str
+    resolvers: List[str] = Field(default_factory=list)
+    policy_ids: List[str] = Field(default_factory=list)
+    blocks_dot: bool = False
+
+
 class StateResponse(BaseModel):
     """Everything the dashboard needs in one call."""
     connected: bool
@@ -129,6 +153,7 @@ class StateResponse(BaseModel):
     isolated_networks: List[IsolatedNetwork] = Field(default_factory=list)
     # Policies from the earlier implementation, surfaced for cleanup.
     legacy_network_policies: List[Dict] = Field(default_factory=list)
+    dns_lockdowns: List[DnsLockdownEntry] = Field(default_factory=list)
     health: List[PolicyHealth] = Field(default_factory=list)
     custom_policy_count: int = 0
     total_policy_count: int = 0

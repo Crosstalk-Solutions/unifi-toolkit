@@ -10,6 +10,16 @@
  */
 function houseArrest() {
     return {
+        // Tab is remembered so a refresh does not bounce you back to the
+        // first section mid-task.
+        tab: 'networks',
+        dnsResolvers: '',
+        dnsNetworks: [],
+        dnsBlockDot: false,
+        dnsPreview: null,
+        dnsCaveats: [],
+        dnsPreviewing: false,
+        dnsApplying: false,
         loading: true,
         previewing: false,
         applying: false,
@@ -41,7 +51,17 @@ function houseArrest() {
         allowInbound: true,
         preview: null,
 
+        setTab(name) {
+            this.tab = name;
+            try { localStorage.setItem('house-arrest-tab', name); } catch (e) { /* private mode */ }
+        },
+
         async init() {
+            try {
+                const saved = localStorage.getItem('house-arrest-tab');
+                if (saved) this.tab = saved;
+            } catch (e) { /* private mode */ }
+
             this.presets = this.readJson('ha-presets', []);
             this.pathLabels = this.readJson('ha-path-labels', {});
             this.networkPresets = this.readJson('ha-network-presets', []);
@@ -195,6 +215,82 @@ function houseArrest() {
             this.message = data.error
                 ? { kind: 'danger', text: data.error }
                 : { kind: 'ok', text: (data.deleted || []).length + ' leftover rules removed.' };
+            await this.refreshAll();
+        },
+
+        dnsReady() {
+            return this.dnsNetworks.length > 0 && this.dnsResolverList().length > 0;
+        },
+
+        dnsResolverList() {
+            return (this.dnsResolvers || '')
+                .split(',').map(x => x.trim()).filter(Boolean);
+        },
+
+        async dnsDryRun() {
+            this.message = null;
+            this.dnsPreviewing = true;
+            try {
+                const res = await fetch('api/dns-lockdown', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        network_ids: this.dnsNetworks,
+                        resolver_ips: this.dnsResolverList(),
+                        block_dot: this.dnsBlockDot,
+                        dry_run: true
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    this.message = { kind: 'danger', text: data.detail || data.error || 'Review failed' };
+                    return;
+                }
+                this.dnsPreview = data.payloads;
+                this.dnsCaveats = data.caveats || [];
+            } finally {
+                this.dnsPreviewing = false;
+            }
+        },
+
+        async dnsApply() {
+            if (!this.dnsPreview) return;
+            this.dnsApplying = true;
+            this.message = null;
+            try {
+                const res = await fetch('api/dns-lockdown', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        network_ids: this.dnsNetworks,
+                        resolver_ips: this.dnsResolverList(),
+                        block_dot: this.dnsBlockDot,
+                        dry_run: false
+                    })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    this.message = { kind: 'danger', text: data.error };
+                } else {
+                    this.message = {
+                        kind: 'ok',
+                        text: 'DNS lockdown applied — ' + data.created.length + ' rules created.'
+                    };
+                    this.dnsPreview = null;
+                    await this.refreshAll();
+                }
+            } finally {
+                this.dnsApplying = false;
+            }
+        },
+
+        async dnsRelease(label) {
+            this.message = null;
+            const res = await fetch('api/dns-release?label=' + encodeURIComponent(label), { method: 'POST' });
+            const data = await res.json();
+            this.message = data.error
+                ? { kind: 'danger', text: data.error }
+                : { kind: 'ok', text: 'DNS lockdown removed for ' + label + '.' };
             await this.refreshAll();
         },
 

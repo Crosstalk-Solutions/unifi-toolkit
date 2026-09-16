@@ -19,6 +19,9 @@ from tools.house_arrest.models import (
     ArrestSummary,
     BlockedFlow,
     ClientInfo,
+    DnsLockdownEntry,
+    DnsLockdownRequest,
+    DnsLockdownResponse,
     InspectionFinding,
     InspectionResponse,
     IsolateRequest,
@@ -86,7 +89,11 @@ async def get_state():
     ours_all = P.find_ours(all_policies)
     # Network-scoped policies must never be listed as locked-down devices.
     net_policies = [p for p in ours_all if P.is_network_policy(p)]
-    ours = [p for p in ours_all if not P.is_network_policy(p)]
+    dns_policies = [p for p in ours_all if P.is_dns_policy(p)]
+    ours = [
+        p for p in ours_all
+        if not P.is_network_policy(p) and not P.is_dns_policy(p)
+    ]
 
     # Known clients, not active ones: a device that is merely switched off
     # has not broken its policy.
@@ -199,8 +206,25 @@ async def get_state():
             "label": P.network_label_from_policy(pol) or "network",
         })
 
+    dns_by_label: Dict[str, DnsLockdownEntry] = {}
+    for pol in dns_policies:
+        label = P.dns_label_from_policy(pol) or "network"
+        entry = dns_by_label.get(label)
+        if entry is None:
+            entry = DnsLockdownEntry(label=label)
+            dns_by_label[label] = entry
+        pid = pol.get("_id")
+        if pid:
+            entry.policy_ids.append(pid)
+        dest = pol.get("destination") or {}
+        if pol.get("action") == "ALLOW" and dest.get("ips"):
+            entry.resolvers = list(dest.get("ips"))
+        if dest.get("port") == P.DOT_PORT:
+            entry.blocks_dot = True
+
     return StateResponse(
         connected=True,
+        dns_lockdowns=list(dns_by_label.values()),
         isolated_networks=isolated,
         legacy_network_policies=legacy,
         zones=[ZoneInfo(id=z.get("_id", ""), name=z.get("name", "")) for z in zones],
@@ -383,6 +407,133 @@ async def release_network(req: IsolateRequest):
             error=f"Could not update {name}.",
         )
     return IsolateResponse(dry_run=False, changes=changes)
+
+
+@router.post("/dns-lockdown", response_model=DnsLockdownResponse)
+async def dns_lockdown(req: DnsLockdownRequest):
+    """
+    Force chosen networks to use only approved resolvers.
+
+    The allow rule must evaluate before the blocks, or the networks lose DNS
+    entirely. Creation order is respected by the controller, but the stored
+    index is not always the one we send — so after applying, the real order is
+    verified and the whole set rolled back if the allow did not land first.
+    """
+    client, err = await _client_or_error()
+    if err:
+        return DnsLockdownResponse(dry_run=req.dry_run, error=err)
+
+    if not req.network_ids:
+        raise HTTPException(status_code=400, detail="Select at least one network")
+    if not req.resolver_ips:
+        raise HTTPException(status_code=400, detail="Add at least one approved resolver")
+
+    try:
+        zones = await client.get_firewall_zones()
+        existing = await client.get_firewall_policies()
+        networks = await client.get_networks()
+    except Exception as e:
+        return DnsLockdownResponse(dry_run=req.dry_run, error=str(e))
+
+    internal_id, external_id = _zone_ids(zones)
+    if not internal_id or not external_id:
+        return DnsLockdownResponse(
+            dry_run=req.dry_run,
+            error="Could not find Internal and External zones on this console",
+        )
+
+    chosen = [n for n in networks if n.get("_id") in req.network_ids]
+    if not chosen:
+        raise HTTPException(status_code=400, detail="Unknown network")
+    label = ", ".join(n.get("name") or "network" for n in chosen)
+
+    # A resolver living on one of the locked-down networks cannot be reached
+    # through the gateway, so the rules would never see that traffic.
+    unreachable = []
+    for n in chosen:
+        for ip in req.resolver_ips:
+            if P._ip_in_subnet(ip, n.get("ip_subnet")):
+                unreachable.append(f"{ip} is on {n.get('name')} itself")
+
+    try:
+        indexes = P.next_free_index(existing, P.dns_policy_count(req.block_dot))
+        payloads = P.build_dns_lockdown(
+            network_ids=req.network_ids,
+            network_label=label,
+            resolver_ips=req.resolver_ips,
+            resolver_zone_id=internal_id,
+            client_zone_id=internal_id,
+            external_zone_id=external_id,
+            indexes=indexes,
+            block_dot=req.block_dot,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    caveats = list(P.DNS_CAVEATS) + [
+        f"{u} — traffic to it never passes the gateway, so these rules cannot "
+        f"police it." for u in unreachable
+    ]
+
+    if req.dry_run:
+        return DnsLockdownResponse(dry_run=True, payloads=payloads, caveats=caveats)
+
+    created = []
+
+    async def roll_back():
+        for done in created:
+            pid = done.get("_id")
+            if pid:
+                await client.delete_firewall_policy(pid)
+
+    for payload in payloads:
+        result = await client.create_firewall_policy(payload)
+        if result is None:
+            await roll_back()
+            return DnsLockdownResponse(
+                dry_run=False,
+                error=f"Failed to create {payload.get('name')!r}; rolled back.",
+            )
+        created.append(result)
+
+    if not P.dns_order_is_safe(created):
+        await roll_back()
+        return DnsLockdownResponse(
+            dry_run=False,
+            error=(
+                "The gateway placed the allow rule after the block rules, which "
+                "would have left these networks with no working DNS at all. "
+                "Everything was rolled back; nothing changed."
+            ),
+        )
+
+    return DnsLockdownResponse(dry_run=False, created=created, caveats=caveats)
+
+
+@router.post("/dns-release", response_model=DnsLockdownResponse)
+async def dns_release(label: Optional[str] = None):
+    """Remove DNS Lockdown policies. Only ever touches ones we created."""
+    client, err = await _client_or_error()
+    if err:
+        return DnsLockdownResponse(dry_run=False, error=err)
+
+    try:
+        all_policies = await client.get_firewall_policies()
+    except Exception as e:
+        return DnsLockdownResponse(dry_run=False, error=str(e))
+
+    targets = [p for p in P.find_ours(all_policies) if P.is_dns_policy(p)]
+    if label:
+        wanted = label.strip().lower()
+        targets = [p for p in targets
+                   if P.dns_label_from_policy(p).strip().lower() == wanted]
+
+    removed = []
+    for pol in targets:
+        pid = pol.get("_id")
+        if pid and await client.delete_firewall_policy(pid):
+            removed.append(pol)
+    return DnsLockdownResponse(dry_run=False, created=removed)
 
 
 @router.get("/networks", response_model=List[NetworkInfo])

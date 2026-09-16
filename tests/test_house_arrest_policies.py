@@ -536,3 +536,82 @@ class TestInboundAccess:
 
     def test_path_labels_cover_the_inbound_row(self):
         assert "inbound" in P.PATH_LABELS
+
+
+class TestDnsLockdown:
+    """
+    The allow rule must evaluate before the blocks. If it does not, the chosen
+    networks lose DNS entirely — a very visible outage — so ordering is
+    checked after the fact rather than assumed.
+    """
+
+    NETS = ["netA"]
+    RESOLVERS = ["192.168.200.50", "192.168.200.51"]
+
+    def _build(self, block_dot=False):
+        return P.build_dns_lockdown(
+            self.NETS, "IDIoT", self.RESOLVERS, CLIENT_ZONE,
+            CLIENT_ZONE, EXTERNAL_ZONE,
+            P.next_free_index([], P.dns_policy_count(block_dot)),
+            block_dot=block_dot,
+        )
+
+    def test_allow_is_created_first(self):
+        assert self._build()[0]["action"] == "ALLOW"
+
+    def test_allow_precedes_every_block(self):
+        assert P.dns_order_is_safe(self._build()) is True
+
+    def test_order_check_catches_a_bad_outcome(self):
+        """If the controller reorders, this must fail rather than pass."""
+        pols = self._build()
+        pols[0]["index"] = 99999          # allow pushed below the blocks
+        assert P.dns_order_is_safe(pols) is False
+
+    def test_order_check_requires_both_kinds(self):
+        assert P.dns_order_is_safe([]) is False
+        assert P.dns_order_is_safe([{"action": "ALLOW", "index": 1}]) is False
+
+    def test_blocks_cover_lan_and_internet(self):
+        zones = {p["destination"]["zone_id"] for p in self._build()
+                 if p["action"] == "BLOCK"}
+        assert zones == {CLIENT_ZONE, EXTERNAL_ZONE}
+
+    def test_allow_targets_only_the_approved_resolvers(self):
+        allow = self._build()[0]
+        assert allow["destination"]["ips"] == self.RESOLVERS
+        assert allow["destination"]["port"] == "53"
+
+    def test_dot_is_optional_and_adds_two_rules(self):
+        assert len(self._build(False)) == 3
+        assert len(self._build(True)) == 5
+        ports = {p["destination"]["port"] for p in self._build(True)}
+        assert ports == {"53", "853"}
+
+    def test_every_rule_is_marked_and_identifiable(self):
+        for pol in self._build(True):
+            assert P.is_house_arrest(pol)
+            assert P.is_dns_policy(pol)
+            assert not P.is_network_policy(pol)
+
+    def test_label_round_trips(self):
+        assert P.dns_label_from_policy(self._build()[1]) == "IDIoT"
+
+    def test_requires_networks_and_resolvers(self):
+        with pytest.raises(ValueError):
+            P.build_dns_lockdown([], "x", self.RESOLVERS, CLIENT_ZONE,
+                                 CLIENT_ZONE, EXTERNAL_ZONE, [1, 2, 3])
+        with pytest.raises(ValueError):
+            P.build_dns_lockdown(self.NETS, "x", [], CLIENT_ZONE,
+                                 CLIENT_ZONE, EXTERNAL_ZONE, [1, 2, 3])
+
+    def test_too_few_indexes_rejected(self):
+        with pytest.raises(ValueError):
+            P.build_dns_lockdown(self.NETS, "x", self.RESOLVERS, CLIENT_ZONE,
+                                 CLIENT_ZONE, EXTERNAL_ZONE, [1])
+
+    def test_doh_limitation_is_disclosed(self):
+        assert any("HTTPS" in c for c in P.DNS_CAVEATS)
+
+    def test_same_network_resolver_limitation_is_disclosed(self):
+        assert any("OWN network" in c for c in P.DNS_CAVEATS)
