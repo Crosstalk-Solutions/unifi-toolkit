@@ -296,12 +296,18 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
 - **`traffic-flows` paginates.** The response carries `has_next` and
   `total_element_count`; reading page 0 only truncated one device's 24h history by
   more than 20%.
-- **`mdns_enabled` on a network document is a READ-ONLY projection.** Writing it
-  returns `200 {"meta":{"rc":"ok"}}` and changes nothing (re-read at 0s/2s/5s). The
-  real control is the site-level `mdns` setting's `enabled_for_network_ids`, but
-  `PUT`/`POST` to `rest/setting/mdns[/{id}]` and `set/setting/mdns[/{id}]` were all
-  accepted and ignored, echoing the unchanged list. Unsolved — capture what the
-  console sends via DevTools before trying again.
+- **mDNS is writable, but only via v2 `global/config/network`.** `PUT
+  /proxy/network/v2/api/site/{site}/global/config/network` with
+  `{"mdns_enabled_for": "some", "mdns_enabled_for_network_ids": [...]}` works
+  (measured: write + restore round trip, API-key auth, no CSRF needed). A partial
+  payload is enough. The legacy `rest/setting/mdns` / `set/setting/mdns` routes use
+  the field names `enabled_for` / `enabled_for_network_ids` and silently discard
+  them, returning 200 with the unchanged list - that field-name mismatch was the
+  cause of the long-standing "toggle does nothing". `mdns_enabled` on a network
+  document is still a read-only projection. Note mDNS is a **site-level** control
+  (one shared VLAN list), not per-network, so any per-network UI writes shared
+  state. A browser-session PUT returns 403 without a CSRF token; the toolkit's
+  API key is unaffected.
 - **`l2_isolation` on a WLAN (`rest/wlanconf`) IS writable** and is the only control
   found that reaches same-VLAN peer traffic. Verified True→False→restored on an SSID
   with no clients.

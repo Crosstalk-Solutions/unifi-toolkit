@@ -665,9 +665,12 @@ the UI says the change lands on lease renewal, not immediately.
 Unused slots are written as empty strings rather than left alone, or a resolver
 the user just removed keeps being advertised.
 
-## FAILED 2026-09-16: mDNS forwarding cannot be written through any API route found
+## SOLVED 2026-09-16: mDNS forwarding IS writable - via v2 global/config/network
 
-Recorded because the next session will otherwise rediscover it.
+**This section previously read "FAILED: mDNS forwarding cannot be written through
+any API route found". That conclusion was wrong.** The routes tried were the wrong
+ones; the failure history is kept below because the *shape* of the failure is the
+diagnostic lesson. Superseded by the measured result at the end of this section.
 
 `mdns_enabled` on the network document is a **read-only projection**. Writing
 it the ordinary way returns `200 {"meta":{"rc":"ok"},"data":[]}` and the value
@@ -696,18 +699,62 @@ accepts the request and ignores the field:
 | `PUT  /v2/api/site/{site}/lan/{network_id}` | 404 |
 
 Note the echo: the response body itself carries the old list, so this is an
-inline rejection, not slow provisioning. `mode: "all"` alongside
-`enabled_for: "some"` is unexplained and may be relevant.
+inline rejection, not slow provisioning. That read was correct, and it was the
+clue: an endpoint echoing an unchanged document is one that parsed the request
+and recognised none of the fields in it.
 
-**Resolution for now:** the mDNS column is read-only, and its hover text says
-the change has to be made in the UniFi UI because the controller accepts the
-API change and then ignores it. A switch that silently no-ops is worse than no
-switch.
+### The answer
 
-**To unblock it:** capture what the console actually sends. Open the UniFi UI in
-Chrome, DevTools -> Network, toggle Multicast DNS on a network, and read the
-request off the Payload tab. That is the documented technique in CLAUDE.md and
-it is how the v2 traffic-flows payload was worked out.
+The console was observed (Chrome, 2026-09-16) saving this setting with **two**
+requests, of which only the first carries the change:
+
+| Request | Role |
+|---|---|
+| `PUT  /proxy/network/v2/api/site/{site}/global/config/network` | the real write |
+| `POST /proxy/network/api/s/{site}/set/setting/mdns` | the no-op we had been imitating |
+
+The v2 document names the same data with **different field names**, which is why
+every earlier attempt was accepted and discarded:
+
+| Legacy `setting/mdns` (ignored) | v2 `global/config/network` (works) |
+|---|---|
+| `enabled_for` | `mdns_enabled_for` |
+| `enabled_for_network_ids` | `mdns_enabled_for_network_ids` |
+
+A partial payload carrying only those two fields is sufficient - the rest of the
+document does not need to be echoed back.
+
+**MEASURED 2026-09-16** against the live UCG-Fiber, using the toolkit's own
+`X-API-KEY` auth (no session cookie, **no CSRF token required**):
+
+```
+GET  200  ids=4  openclaw=YES
+PUT  200  ->  re-read 200  ids=3  openclaw=no     WRITE WORKED
+restore PUT 200  ->  ids=4  openclaw=YES          RESTORED CORRECTLY
+```
+
+A PUT from an authenticated *browser* session returns **403 Forbidden** without a
+CSRF token. That 403 is a browser-session artefact and does not apply to the
+toolkit. Note its shape: an honest rejection, structurally unlike the
+200-and-ignore, and itself evidence the endpoint is the live one.
+
+### Two corrections to earlier claims in this document
+
+1. `mode: "all"` alongside `enabled_for: "some"` was recorded as "unexplained and
+   may be relevant". It is explained and it is **not** relevant to VLAN scoping.
+   The UI has two independent axes: **VLAN Scope** (`enabled_for` /
+   `enabled_for_network_ids`) and **Service Scope** (`mode`, All vs Specific).
+
+2. mDNS is **not a per-network setting**. It is one site-level "Gateway mDNS
+   Proxy" control (Auto / Off / Custom) whose Custom mode holds the VLAN list.
+   `mdns_enabled` on a network document remains a read-only projection of it -
+   that part of the original finding stands.
+
+**Consequence for the tool:** the mDNS column no longer needs to be read-only,
+and the hover text saying the change must be made in the UniFi UI is now wrong.
+Because the control is site-level, a per-network switch writes a *shared* list,
+so removing one network's mDNS is a site-scoped edit and must be presented as
+one - and released by restoring the exact prior list, not by re-adding blindly.
 
 ## MEASURED 2026-09-16: UPnP is off site-wide, so the per-network flag is inert
 
@@ -776,9 +823,10 @@ gateway, and with an important gap:
   as "Devices on its own VLAN: still reachable". A TV sharing a VLAN with the
   phones it is profiling is the worst case and the panel would stay empty.
 * Cross-VLAN discovery is only possible at all where **mDNS forwarding** is on
-  for the network — which makes that column's read-only status (see the mDNS
-  failure above) more annoying than it first looked, since it is the single
-  switch most relevant to this behaviour.
+  for the network — which makes it the single switch most relevant to this
+  behaviour. It is now known to be writable (see the mDNS section above); the
+  column stays read-only only because the control is site-level, which is a
+  presentation problem rather than an API one.
 
 **What this means for the tool's advice.** Quarantine into an isolated VLAN
 remains the right answer for a TV, and for the right reason: it is the only

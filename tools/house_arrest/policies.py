@@ -1508,11 +1508,18 @@ def build_isolation_matrix(
         )
 
         # mDNS
-        # Read-only on purpose. MEASURED 2026-09-16: `mdns_enabled` on the
-        # network document is a projection that cannot be written, and every
-        # route to the underlying site-level setting was accepted with
-        # 200 {"rc":"ok"} while changing nothing. Offering a switch that
-        # silently no-ops is worse than offering none.
+        # Read-only for now, but NOT because the write is impossible - that
+        # earlier finding was wrong and is corrected in the design doc.
+        # MEASURED 2026-09-16: `PUT v2/api/site/{site}/global/config/network`
+        # with `mdns_enabled_for_network_ids` works. The legacy setting/mdns
+        # routes we had been using name the field `enabled_for_network_ids`
+        # and silently discard it, which is what produced 200-and-no-change.
+        #
+        # It stays read-only because mDNS is a SITE-LEVEL control holding one
+        # shared VLAN list, so a per-network switch in this matrix would write
+        # site-scoped state from a per-network control. That needs its own
+        # presentation and its own release path (restore the exact prior list),
+        # not the per-network field write EDITABLE_COLUMNS performs.
         mdns = n.get("mdns_enabled")
         cells["mdns"] = _cell(
             "warn" if mdns else "good",
@@ -1522,9 +1529,10 @@ def build_isolation_matrix(
                "casting, but it does advertise what lives here."
                if mdns else
                "Service discovery does not cross this boundary.")
-            + " This one has to be changed in the UniFi UI, under Settings -> "
-              "Networks -> this network -> Multicast DNS: the controller "
-              "accepts the change over the API and then ignores it.",
+            + " mDNS is a site-wide setting, not a per-network one: it lives "
+              "under Settings -> Networks -> Gateway mDNS Proxy, where Custom "
+              "holds the list of VLANs it covers. Change it there, because "
+              "changing it for one network changes that shared list.",
             editable=False,
         )
 
