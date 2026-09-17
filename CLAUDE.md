@@ -242,6 +242,13 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 
 ## Known Environment Issues
 
+- **`shared/unifi_client.get_clients()` returns a dict keyed by MAC, not a list.**
+  Iterating it directly yields MAC strings, so `st.get(...)` either raises or
+  silently counts nothing. Iterate `.values()`.
+- **`run.py` does not enable auto-reload.** Jinja templates and static files are
+  picked up on refresh, but any Python change needs the process restarted before
+  it takes effect.
+
 - **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
   "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.
   The old form was removed in starlette 1.0 and 500s every template route with
