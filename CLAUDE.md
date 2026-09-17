@@ -133,6 +133,10 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 - Warn when DHCP advertises a resolver the lockdown is about to block
 - Dashboard: explicit 3-column grid, House Arrest ↔ Threat Watch swapped, info cards
   moved into the grid so it is two clean rows
+- Correct the mDNS "unwritable" finding: it IS writable via v2
+  `global/config/network`. The legacy `setting/mdns` routes discard the fields
+  silently. Removed the on-screen text claiming the controller ignores the change.
+  Column stays read-only because the control is site-level, not per-network.
 
 ### v1.11.2
 - Fix Network Pulse chart panels not resizing responsively (#96) — `min-width: 0` on `.chart-card` and `overflow: hidden` on `.chart-container` fix CSS Grid min-width:auto gotcha that prevented canvas-based chart cards from shrinking on narrow viewports
@@ -271,6 +275,17 @@ The UniFi v2 API is largely undocumented by Ubiquiti. When an endpoint isn't beh
 This is how we discovered the v2 `traffic-flows` filtered payload format (`policy_type`, `timestampFrom`/`timestampTo`, `pageNumber`/`pageSize`) — the console sends a completely different payload than what was publicly known.
 
 ### Known API Quirks
+
+- **A 200 that echoes back an UNCHANGED document means the endpoint recognised
+  none of the fields you sent** — wrong endpoint or wrong field names, not slow
+  provisioning. This cost a session on mDNS: the v2 and legacy endpoints hold the
+  same data under different field names (`mdns_enabled_for_network_ids` vs
+  `enabled_for_network_ids`), and the legacy one accepts and discards the other's
+  spelling. When a write "succeeds" and nothing changes, diff the field names
+  against what a GET on that same endpoint returns before assuming a controller bug.
+- **When an API route is a mystery, watch the console do it.** Chrome DevTools, or
+  a fetch/XHR interceptor, on the real UniFi UI. Note the console often sends
+  several requests per save and only one carries the change.
 - The legacy `stat/ips/event` endpoint returns 0 on Network 10.x+ — effectively deprecated
 - Express in AP-only mode reports `type: "udm"` (not `uap` or `ux`) with `device_mode_override: "mesh"` and `model: "UX"` — detect via `device_mode_override` field
 - The `rssi` and `signal` fields are separate values; the console displays `signal`
