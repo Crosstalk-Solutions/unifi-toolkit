@@ -15,9 +15,14 @@ Two rules this module exists to enforce:
   2. We never emit a policy with `predefined: True`, and callers must never
      delete one.
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Marker lives in `description`, not `name` — users rename things.
+# Every policy this tool creates is named "House Arrest: <label> — <what>".
+# The prefix is a constant because blocked-traffic attribution falls back to
+# it when a policy id is no longer on the controller.
+NAME_PREFIX = "House Arrest: "
+
 MARKER = "[HouseArrest]"
 
 # Custom policies must evaluate before the predefined allow-all, which sits at
@@ -120,11 +125,17 @@ def requires_network(preset: str) -> bool:
     return bool(PRESET_EFFECTS.get(preset, {}).get("requires_network"))
 
 
+# CORRECTED 2026-09-16. The inbound row used to read "You reaching in to it",
+# which understated the exposure. allow_inbound only narrows the BLOCK to the
+# NEW and INVALID states with the locked-down device as SOURCE — so a
+# connection STARTED by anything else never matches the policy at all, and the
+# device's ESTABLISHED reply flows back. That is every device that can already
+# route to it, not just the person reading this page.
 PATH_LABELS = {
     "internet": "The internet",
     "networks": "Your other networks",
     "peers": "Devices on its own VLAN",
-    "inbound": "You reaching in to it",
+    "inbound": "Other devices reaching in to it",
 }
 
 
@@ -346,9 +357,49 @@ def is_dns_policy(policy: Dict) -> bool:
     return DNS_MARKER in (policy.get("description") or "")
 
 
-def dns_policy_count(block_dot: bool = False) -> int:
-    """Allow-to-resolvers, plus a block per destination zone, plus DoT."""
-    return 3 + (2 if block_dot else 0)
+def dns_policy_count(
+    block_dot: bool = False,
+    has_lan_resolvers: bool = True,
+    has_wan_resolvers: bool = False,
+) -> int:
+    """
+    How many policies a DNS lockdown needs.
+
+    Two blocks always (LAN and internet), plus DoT's two, plus ONE ALLOW PER
+    ZONE PAIR that actually has an approved resolver in it. See
+    classify_resolvers() for why the allow cannot be a single policy.
+    """
+    allows = (1 if has_lan_resolvers else 0) + (1 if has_wan_resolvers else 0)
+    return allows + 2 + (2 if block_dot else 0)
+
+
+def classify_resolvers(
+    resolver_ips: List[str], networks: List[Dict]
+) -> Tuple[List[str], List[str]]:
+    """
+    Split approved resolvers by which zone they are reached through.
+
+    MEASURED 2026-09-16. Firewall policy ordering — and the `index` counter
+    itself — is scoped to a (source zone, destination zone) PAIR, not to the
+    site. So an ALLOW created in the Internal -> Internal pair does nothing
+    whatsoever about a BLOCK in the Internal -> External pair.
+
+    That made a public resolver silently fatal: picking 1.1.1.1 put the allow
+    in the Internal pair while the internet block killed the query, leaving the
+    chosen networks with no DNS at all. A resolver therefore has to be allowed
+    in the pair it is actually reached through, which means up to two allows.
+
+    Returns:
+        (resolvers inside the LAN, resolvers out on the internet)
+    """
+    subnets = [
+        n.get("ip_subnet") for n in networks or []
+        if n.get("purpose") != "wan" and n.get("ip_subnet")
+    ]
+    lan, wan = [], []
+    for ip in resolver_ips or []:
+        (lan if any(_ip_in_subnet(ip, sn) for sn in subnets) else wan).append(ip)
+    return lan, wan
 
 
 def _dns_dest(zone_id: str, port: str, ips: Optional[List[str]] = None) -> Dict:
@@ -369,8 +420,8 @@ def _dns_dest(zone_id: str, port: str, ips: Optional[List[str]] = None) -> Dict:
 def build_dns_lockdown(
     network_ids: List[str],
     network_label: str,
-    resolver_ips: List[str],
-    resolver_zone_id: str,
+    lan_resolvers: List[str],
+    wan_resolvers: List[str],
     client_zone_id: str,
     external_zone_id: str,
     indexes: List[int],
@@ -402,68 +453,244 @@ def build_dns_lockdown(
     """
     if not network_ids:
         raise ValueError("At least one network is required")
-    if not resolver_ips:
+    if not (lan_resolvers or wan_resolvers):
         raise ValueError("At least one approved resolver is required")
-    needed = dns_policy_count(block_dot)
+    needed = dns_policy_count(block_dot, bool(lan_resolvers), bool(wan_resolvers))
     if len(indexes) < needed:
         raise ValueError(f"DNS lockdown needs {needed} indexes, got {len(indexes)}")
 
     src = network_source(network_ids, client_zone_id)
     desc = describe_dns(f"DNS lockdown for {network_label}")
-    resolvers = ", ".join(resolver_ips)
+    out: List[Dict] = []
+    nxt = iter(indexes)
 
-    out = [
-        _base_policy(
-            name=f"House Arrest DNS: {network_label} - allow approved resolvers",
-            action="ALLOW", index=indexes[0], source=src,
-            destination=_dns_dest(resolver_zone_id, DNS_PORT, resolver_ips),
-            description=describe_dns(f"Allow {resolvers} for {network_label}"),
-        ),
-        _base_policy(
-            name=f"House Arrest DNS: {network_label} - block other DNS (LAN)",
-            action="BLOCK", index=indexes[1], source=src,
-            destination=_dns_dest(client_zone_id, DNS_PORT),
-            description=desc,
-        ),
-        _base_policy(
-            name=f"House Arrest DNS: {network_label} - block other DNS (internet)",
-            action="BLOCK", index=indexes[2], source=src,
-            destination=_dns_dest(external_zone_id, DNS_PORT),
-            description=desc,
-        ),
-    ]
+    # Allows first, one per zone pair that holds an approved resolver. A
+    # resolver only survives the block that follows it if its allow sits in
+    # the same (source zone -> destination zone) pair as that block.
+    if lan_resolvers:
+        out.append(_base_policy(
+            name=f"House Arrest DNS: {network_label} - allow approved resolvers (LAN)",
+            action="ALLOW", index=next(nxt), source=src,
+            destination=_dns_dest(client_zone_id, DNS_PORT, lan_resolvers),
+            description=describe_dns(
+                f"Allow {', '.join(lan_resolvers)} for {network_label}"),
+        ))
+    if wan_resolvers:
+        out.append(_base_policy(
+            name=f"House Arrest DNS: {network_label} - allow approved resolvers (internet)",
+            action="ALLOW", index=next(nxt), source=src,
+            destination=_dns_dest(external_zone_id, DNS_PORT, wan_resolvers),
+            description=describe_dns(
+                f"Allow {', '.join(wan_resolvers)} for {network_label}"),
+        ))
+
+    out.append(_base_policy(
+        name=f"House Arrest DNS: {network_label} - block other DNS (LAN)",
+        action="BLOCK", index=next(nxt), source=src,
+        destination=_dns_dest(client_zone_id, DNS_PORT),
+        description=desc,
+    ))
+    out.append(_base_policy(
+        name=f"House Arrest DNS: {network_label} - block other DNS (internet)",
+        action="BLOCK", index=next(nxt), source=src,
+        destination=_dns_dest(external_zone_id, DNS_PORT),
+        description=desc,
+    ))
 
     if block_dot:
         out.append(_base_policy(
             name=f"House Arrest DNS: {network_label} - block DoT (LAN)",
-            action="BLOCK", index=indexes[3], source=src,
+            action="BLOCK", index=next(nxt), source=src,
             destination=_dns_dest(client_zone_id, DOT_PORT),
             description=desc,
         ))
         out.append(_base_policy(
             name=f"House Arrest DNS: {network_label} - block DoT (internet)",
-            action="BLOCK", index=indexes[4], source=src,
+            action="BLOCK", index=next(nxt), source=src,
             destination=_dns_dest(external_zone_id, DOT_PORT),
             description=desc,
         ))
     return out
 
 
+# DHCP hands out at most four name servers, in these fields.
+DHCP_DNS_FIELDS = ("dhcpd_dns_1", "dhcpd_dns_2", "dhcpd_dns_3", "dhcpd_dns_4")
+MAX_DHCP_DNS = len(DHCP_DNS_FIELDS)
+
+
+def dhcp_dns_payload(resolver_ips: List[str]) -> Dict:
+    """
+    The network-document fields that make DHCP hand out these resolvers.
+
+    Verified against a live network document: `dhcpd_dns_1..4` are plain
+    strings and `dhcpd_dns_enabled` gates them. Unused slots must be written
+    as empty strings, not left alone, or a resolver the user just removed
+    keeps being advertised.
+    """
+    ips = [str(ip).strip() for ip in (resolver_ips or []) if str(ip).strip()]
+    if not ips:
+        raise ValueError("At least one resolver is required")
+    if len(ips) > MAX_DHCP_DNS:
+        raise ValueError(
+            f"DHCP can advertise at most {MAX_DHCP_DNS} name servers; "
+            f"{len(ips)} given"
+        )
+    payload = {"dhcpd_dns_enabled": True}
+    for i, field in enumerate(DHCP_DNS_FIELDS):
+        payload[field] = ips[i] if i < len(ips) else ""
+    return payload
+
+
+def dhcp_dns_of(network: Dict) -> List[str]:
+    """What DHCP currently hands out on this network."""
+    return [v for v in ((network or {}).get(f) for f in DHCP_DNS_FIELDS) if v]
+
+
+def dhcp_dns_conflicts(networks: List[Dict], resolver_ips: List[str]) -> List[str]:
+    """
+    Warn where DHCP hands out a resolver the lockdown is about to block.
+
+    This is the most likely way to lock yourself out with this tool. The rules
+    police which resolver a device may TALK to; DHCP decides which resolver it
+    is TOLD to use. Nothing keeps the two in step, so approving 192.168.200.50
+    while DHCP still advertises 192.168.200.12 leaves every device on that
+    network pointed at an address it is no longer allowed to reach.
+
+    Measured on a live console 2026-09-16: a Guests VLAN handing out
+    192.168.200.12 and 1.1.1.1 while .50/.51 were the approved resolvers.
+
+    Returns one message per affected network, empty when DHCP already agrees.
+    """
+    approved = {str(ip).strip() for ip in resolver_ips or []}
+    out = []
+    for n in networks or []:
+        handed = [n.get(f"dhcpd_dns_{i}") for i in (1, 2, 3, 4)]
+        handed = [h for h in handed if h]
+        if not handed:
+            # No override: DHCP points at the gateway, which is not in the
+            # approved list either, but the gateway is never blocked by these
+            # rules -- its own DNS service answers locally.
+            continue
+        stale = [h for h in handed if h not in approved]
+        if not stale:
+            continue
+        name = n.get("name") or "network"
+        if len(stale) == len(handed):
+            out.append(
+                f"{name} hands out {', '.join(handed)} over DHCP, and none of "
+                f"those are approved. Devices there will be told to use a "
+                f"resolver this lockdown blocks, so they will lose DNS until "
+                f"you change the DHCP name servers to {', '.join(sorted(approved))} "
+                f"in Settings -> Networks -> {name}."
+            )
+        else:
+            out.append(
+                f"{name} hands out {', '.join(handed)} over DHCP. "
+                f"{', '.join(stale)} "
+                + ("is" if len(stale) == 1 else "are")
+                + " not approved and will be blocked, so devices there fall "
+                  "back to whichever handed-out resolver is still allowed. "
+                  "Tidier to match the DHCP name servers to the approved list."
+            )
+    return out
+
+
+def zone_pair_of(policy: Dict) -> Tuple[Optional[str], Optional[str]]:
+    """The (source zone, destination zone) pair a policy is ordered within."""
+    return (
+        (policy.get("source") or {}).get("zone_id"),
+        (policy.get("destination") or {}).get("zone_id"),
+    )
+
+
 def dns_order_is_safe(created: List[Dict]) -> bool:
     """
-    Confirm the allow really did land ahead of every block.
+    Confirm each allow really did land ahead of the blocks it competes with.
 
-    If it did not, the networks would have no working DNS at all, so the
-    caller must roll back rather than leave that in place. Lower index
-    evaluates first.
+    CORRECTED 2026-09-16. This used to compare every allow against every block
+    site-wide, and that was wrong: it caused a false rollback carrying the
+    message "the gateway placed the allow rule after the block rules".
+
+    Ordering -- and the `index` counter itself -- is scoped to a
+    (source zone, destination zone) PAIR, not to the site. Measured on a live
+    console: two enabled policies both sat at index 10000, one
+    Internal -> Internal and one Internal -> External. If ordering were
+    site-wide that collision could not exist.
+
+    So the internet-facing block routinely gets a LOWER index than the LAN
+    allow, and that is not a conflict at all -- they never evaluate against
+    each other. Comparing them rolled back a perfectly good lockdown.
+
+    A pair holding blocks but no allow is fine and expected: it means no
+    approved resolver is reached that way, so DNS in that direction is
+    supposed to be shut.
+
+    Lower index evaluates first.
     """
-    allows = [p.get("index") for p in created
-              if p.get("action") == "ALLOW" and isinstance(p.get("index"), int)]
-    blocks = [p.get("index") for p in created
-              if p.get("action") == "BLOCK" and isinstance(p.get("index"), int)]
-    if not allows or not blocks:
+    by_pair: Dict[Tuple, Dict[str, List[int]]] = {}
+    for p in created or []:
+        idx = p.get("index")
+        action = p.get("action")
+        if not isinstance(idx, int) or action not in ("ALLOW", "BLOCK"):
+            continue
+        slot = by_pair.setdefault(zone_pair_of(p), {"ALLOW": [], "BLOCK": []})
+        slot[action].append(idx)
+
+    # No allow anywhere means nothing was created, or every resolver was
+    # dropped. Either way it is not a safe state to walk away from.
+    if not any(slot["ALLOW"] for slot in by_pair.values()):
         return False
-    return max(allows) < min(blocks)
+
+    for slot in by_pair.values():
+        if not slot["ALLOW"] or not slot["BLOCK"]:
+            continue
+        if max(slot["ALLOW"]) >= min(slot["BLOCK"]):
+            return False
+    return True
+
+
+def dns_locked_network_ids(policies: List[Dict]) -> Dict[str, str]:
+    """
+    Networks already covered by a House Arrest DNS lockdown.
+
+    Returns {network_id: label}, read from the source block of our own DNS
+    policies. Matching by network id rather than by the policy's label, because
+    the label is a comma-joined list of names and would not match a partially
+    overlapping selection.
+
+    This exists because nothing stopped a second lockdown being applied over
+    the first. Measured on the bench console: a Guests lockdown showed **10
+    rules** where five are correct, because the form kept its selection after
+    applying and the same set was written twice. Duplicate BLOCK rules are
+    mostly harmless; a duplicate ALLOW is not, since release deletes both and
+    the precedence check then has two allows to reason about.
+    """
+    out: Dict[str, str] = {}
+    for pol in policies or []:
+        if not is_dns_policy(pol):
+            continue
+        label = dns_label_from_policy(pol) or "an existing lockdown"
+        for nid in ((pol.get("source") or {}).get("network_ids") or []):
+            out.setdefault(nid, label)
+    return out
+
+
+def arrested_macs(policies: List[Dict]) -> Dict[str, str]:
+    """
+    MACs already covered by a House Arrest device lockdown, as {mac: label}.
+
+    Same reasoning as dns_locked_network_ids: applying a second preset over a
+    device that already has one leaves two contradictory rule sets in place,
+    and the tool would then report whichever it found first.
+    """
+    out: Dict[str, str] = {}
+    for pol in policies or []:
+        if is_network_policy(pol) or is_dns_policy(pol):
+            continue
+        label = _label_from_policy(pol) or "an existing lockdown"
+        for mac in policy_macs(pol):
+            out.setdefault(str(mac).lower(), label)
+    return out
 
 
 def dns_label_from_policy(policy: Dict) -> str:
@@ -760,7 +987,7 @@ def build_lockdown(
         )
 
     block_internet = _base_policy(
-        name=f"House Arrest: {label} — no internet",
+        name=f"{NAME_PREFIX}{label} — no internet",
         action="BLOCK",
         index=indexes[0],
         source=src,
@@ -768,7 +995,7 @@ def build_lockdown(
         description=describe(f"{PRESET_LABELS[preset]} for {label}"),
     )
     block_lan = _base_policy(
-        name=f"House Arrest: {label} — no LAN",
+        name=f"{NAME_PREFIX}{label} — no LAN",
         action="BLOCK",
         index=indexes[-1],
         source=src,
@@ -815,7 +1042,7 @@ def build_exception(
     label = device_label or "device"
     where = note or (dest_ips[0] if dest_ips else "exception")
     return _base_policy(
-        name=f"House Arrest: {label} — allow {where}",
+        name=f"{NAME_PREFIX}{label} — allow {where}",
         action="ALLOW",
         index=index,
         source=client_source(macs, client_zone_id),
@@ -846,7 +1073,7 @@ def build_inbound_exception(
     label = device_label or "device"
     where = note or "LAN access"
     return _base_policy(
-        name=f"House Arrest: {label} — allow {where} inbound",
+        name=f"{NAME_PREFIX}{label} — allow {where} inbound",
         action="ALLOW",
         index=index,
         source=zone_destination(source_zone_id),
@@ -861,27 +1088,61 @@ def find_ours(policies: List[Dict]) -> List[Dict]:
     return [p for p in policies or [] if is_house_arrest(p)]
 
 
-def summarize_blocked(flows: List[Dict], our_policy_ids: set) -> List[Dict]:
+def summarize_blocked(
+    flows: List[Dict],
+    our_policy_ids: set,
+    device_label: Optional[str] = None,
+) -> List[Dict]:
     """
     Reduce raw blocked traffic flows to what a person needs to see.
 
-    Only flows attributed to one of OUR policies are kept. Attribution is by
-    policy `id`, not name: a user can rename a policy in the UniFi UI, and
-    counting someone else's block as proof that House Arrest is working would
-    be the same class of lie as showing a dead rule as green.
+    Every flow here is already scoped to this device as SOURCE and to
+    action=blocked by the query, so the only open question per flow is which
+    rule stopped it. Each row is tagged rather than filtered:
+
+      "ours"   - blocked by a House Arrest policy that exists right now
+      "stale"  - blocked by a policy that carries our name for THIS device but
+                 is no longer on the controller
+      "other"  - blocked by somebody else's rule
+
+    CORRECTED 2026-09-16. This used to drop everything but "ours" outright.
+    Measured on a real device: 251 flows / 793 attempts existed, 87 flows /
+    274 attempts of which were blocked by `6aaabcd0...`, a policy with the
+    identical name to the live one but a different id -- the leftover of an
+    earlier lockdown of the same device. Dropping them under-reported that
+    device by more than a third, with no hint that anything had been
+    discarded. Silently throwing away real blocks is the same failure as
+    counting someone else's.
+
+    Attribution is still by id for the "ours" claim. The "stale" tier falls
+    back to the policy NAME, which is weaker -- a renamed policy could in
+    principle land here -- so it is reported as its own tier and never folded
+    into the headline as though the current rule did it.
 
     Returns:
         Newest first, each: time_ms, destination, port, protocol, count,
-        policy (name), network (destination network), direction.
+        policy (name), attribution, network, direction.
     """
     out = []
+    marker_name = f"{NAME_PREFIX}{device_label}" if device_label else None
+
     for f in flows or []:
-        attributed = [
-            p for p in (f.get("policies") or [])
-            if p.get("id") in our_policy_ids
-        ]
-        if not attributed:
-            continue
+        policies = f.get("policies") or []
+        ours = [p for p in policies if p.get("id") in our_policy_ids]
+
+        if ours:
+            attribution, blamed = "ours", ours[0]
+        else:
+            stale = [
+                p for p in policies
+                if marker_name and (p.get("name") or "").startswith(marker_name)
+            ]
+            if stale:
+                attribution, blamed = "stale", stale[0]
+            elif policies:
+                attribution, blamed = "other", policies[0]
+            else:
+                attribution, blamed = "other", {}
 
         dest = f.get("destination") or {}
         # Prefer a name a human recognises over a bare IP.
@@ -899,13 +1160,120 @@ def summarize_blocked(flows: List[Dict], our_policy_ids: set) -> List[Dict]:
             "port": dest.get("port"),
             "protocol": f.get("protocol"),
             "count": f.get("count") or 1,
-            "policy": attributed[0].get("name"),
+            "policy": blamed.get("name"),
+            "attribution": attribution,
             "network": dest.get("network_name"),
             "direction": f.get("direction"),
         })
 
     out.sort(key=lambda x: x.get("time_ms") or 0, reverse=True)
     return out
+
+
+# Destination ports at or above this are ephemeral: the transient port an OS
+# picks as the SOURCE of its own outgoing conversation. Traffic aimed at one is
+# therefore almost never a service being contacted.
+EPHEMERAL_PORT = 32768
+
+
+def flow_kind(row: Dict) -> str:
+    """
+    Split blocked traffic into connection attempts and return traffic.
+
+    MEASURED 2026-09-16 on a locked-down Roku, over 7 days: 246 blocked flows,
+    778 attempts, 100% UDP, and *not one* destination port below 32768. Every
+    packet was aimed at an ephemeral port on one of exactly four devices — the
+    four that actually use that Roku (a PC and three phones).
+
+    A device probing the LAN does not behave like that. It contacts services on
+    well-known ports (8060 Roku ECP, 1900 SSDP, 5353 mDNS, 53, 443) and it
+    sprays across hosts. Traffic to a scattering of high ports on precisely the
+    devices that talk to it has the shape of the far side of a conversation
+    those devices opened.
+
+    INFERRED, not measured: that these are specifically replies whose UDP
+    conntrack entry expired and so came back through as NEW. The obvious test —
+    querying flows where the Roku is the DESTINATION — returned zero rows, but
+    the `destination_mac` filter is unverified and may simply be ignored, so
+    that null result proves nothing and is not cited as evidence.
+
+    Either way the operational point stands and does not depend on the
+    mechanism: these rows are not the device reaching out, they drown out the
+    rows that are, and they must not be presented as "what it tried to reach".
+
+    Returns "connection" or "return_traffic".
+    """
+    port = row.get("port")
+    proto = (row.get("protocol") or "").upper()
+    # Demote ONLY the pattern that was actually measured as return traffic:
+    # UDP aimed at an ephemeral port. Everything else — TCP, UDP to a service
+    # port, and anything portless such as an ICMP ping sweep — counts as the
+    # device reaching out.
+    #
+    # The polarity matters. Written the other way round (list what counts as a
+    # connection, default to return traffic) an ICMP sweep, which carries no
+    # port at all, fell through to return traffic and got hidden. A host
+    # discovery sweep is exactly what this panel must not bury, so the default
+    # is "show it".
+    if proto == "UDP" and isinstance(port, int) and port >= EPHEMERAL_PORT:
+        return "return_traffic"
+    return "connection"
+
+
+def aggregate_blocked(rows: List[Dict]) -> List[Dict]:
+    """
+    Collapse blocked flows to one row per thing the device tried to reach.
+
+    Grouped by (destination, ip, protocol) — deliberately NOT by port. Measured
+    2026-09-16 on a real locked-down Roku: 424 attempts across 399 flow records,
+    which grouping by port only folded to 87 rows because the device hit the
+    same two peers on dozens of ephemeral UDP ports. Dropping port from the key
+    takes it to a handful of rows, which is the honest shape of the finding —
+    "it keeps trying to reach your PC", not eighty-seven separate events.
+
+    The port is still reported when every record agreed on one; otherwise the
+    row carries how many distinct ports were folded in, so nothing is hidden.
+
+    Busiest first: "what does this device keep trying to do" is the question
+    the panel exists to answer, and that is a question about volume.
+    """
+    groups: Dict[Tuple, Dict] = {}
+    for r in rows or []:
+        key = (r.get("destination"), r.get("destination_ip"), r.get("protocol"),
+               r.get("attribution"))
+        g = groups.get(key)
+        if g is None:
+            g = dict(r)
+            g["_ports"] = {r.get("port")} if r.get("port") is not None else set()
+            g["_raw"] = [r]
+            g["flow_count"] = 1
+            groups[key] = g
+            continue
+        g["_raw"].append(r)
+        g["count"] = (g.get("count") or 0) + (r.get("count") or 0)
+        g["flow_count"] = g.get("flow_count", 1) + 1
+        if r.get("port") is not None:
+            g["_ports"].add(r.get("port"))
+        if (r.get("time_ms") or 0) > (g.get("time_ms") or 0):
+            g["time_ms"] = r.get("time_ms")
+        g["network"] = g.get("network") or r.get("network")
+
+    merged = []
+    for g in groups.values():
+        ports = g.pop("_ports", set())
+        g["port_count"] = len(ports)
+        # Only claim a specific port when there genuinely was only one.
+        g["port"] = next(iter(ports)) if len(ports) == 1 else None
+        # Classified on the aggregate: a destination is a connection attempt if
+        # ANY of the folded flows looked like one, so a single real attempt is
+        # never buried under a pile of return traffic to the same host.
+        g["kind"] = ("connection"
+                     if any(flow_kind(r) == "connection" for r in g.pop("_raw", [g]))
+                     else "return_traffic")
+        merged.append(g)
+
+    merged.sort(key=lambda x: (-(x.get("count") or 0), -(x.get("time_ms") or 0)))
+    return merged
 
 
 def observed_location(flows: List[Dict], our_policy_ids: set = None) -> Dict[str, Dict]:
@@ -943,20 +1311,45 @@ def observed_location(flows: List[Dict], our_policy_ids: set = None) -> Dict[str
 
 
 def blocked_counts_by_label(
-    flows: List[Dict], policy_id_to_label: Dict[str, str]
+    flows: List[Dict],
+    policy_id_to_label: Dict[str, str],
+    label_for_mac: Optional[Dict[str, str]] = None,
 ) -> Dict[str, int]:
     """
     Total blocked attempts per locked-down device.
 
-    Counts the flow's own `count` field, not the number of flow records — one
+    Counts the flow's own `count` field, not the number of flow records -- one
     record can represent several attempts.
+
+    A flow whose blocking policy is no longer on the controller still counts,
+    provided the policy name says it was ours for that device. Those are the
+    leftovers of an earlier lockdown of the same device; measured at over a
+    third of one device's traffic, and dropping them made the headline disagree
+    with reality.
     """
     totals: Dict[str, int] = {}
     for f in flows or []:
+        n = f.get("count") or 1
+        matched = False
         for p in f.get("policies") or []:
             label = policy_id_to_label.get(p.get("id"))
             if label:
-                totals[label] = totals.get(label, 0) + (f.get("count") or 1)
+                totals[label] = totals.get(label, 0) + n
+                matched = True
+                break
+        if matched:
+            continue
+        # Fall back to the policy name for a rule we no longer own.
+        for p in f.get("policies") or []:
+            name = p.get("name") or ""
+            if not name.startswith(NAME_PREFIX):
+                continue
+            for label in set(policy_id_to_label.values()):
+                if name.startswith(f"{NAME_PREFIX}{label}"):
+                    totals[label] = totals.get(label, 0) + n
+                    matched = True
+                    break
+            if matched:
                 break
     return totals
 
@@ -973,13 +1366,49 @@ MATRIX_COLUMNS = [
     {"key": "dns", "label": "DNS handed out",
      "help": "Which resolver DHCP gives devices here. A resolver on this same "
              "network cannot be filtered by the gateway."},
-    {"key": "upnp", "label": "UPnP",
-     "help": "Lets devices here open ports on the gateway by themselves."},
 ]
 
 
-def _cell(state: str, label: str, detail: str) -> Dict:
-    return {"state": state, "label": label, "detail": detail}
+# Which matrix columns are a single boolean on the network object, and so can
+# be flipped straight from the table.
+#
+# Zone and DNS are deliberately NOT here. Zone is membership in a zone that
+# other networks also belong to — changing it is a move, not a toggle, and its
+# blast radius reaches every network in both zones. DNS is a list of resolver
+# addresses (dhcpd_dns_1..4), so there is no second state to toggle TO; a
+# one-click cell would have to invent one.
+EDITABLE_COLUMNS = {
+    "isolation": {
+        "field": NET_FLAG_ISOLATION,
+        "on": "On", "off": "Off",
+        "on_warning": "Every device on this network loses access to your other "
+                      "networks, now and in future.",
+        "off_warning": "Devices here will be able to reach your other networks "
+                       "again. If House Arrest isolated this network, this "
+                       "releases it.",
+    },
+    "internet": {
+        "field": NET_FLAG_INTERNET,
+        "on": "Allowed", "off": "Blocked",
+        # This flag reads the opposite way round: True means internet allowed.
+        "on_warning": "Devices here get internet access back.",
+        "off_warning": "Every device on this network loses internet access, "
+                       "now and in future.",
+    },
+}
+
+
+def editable_column(key: str) -> Optional[Dict]:
+    """The toggle spec for a matrix column, or None if it is not a switch."""
+    return EDITABLE_COLUMNS.get(key)
+
+
+def _cell(state: str, label: str, detail: str, editable: bool = False) -> Dict:
+    """
+    One matrix cell. `editable` is decided here rather than in the browser so
+    the UI cannot offer a switch the controller will ignore.
+    """
+    return {"state": state, "label": label, "detail": detail, "editable": editable}
 
 
 def _ip_in_subnet(ip: Optional[str], subnet: Optional[str]) -> bool:
@@ -1062,7 +1491,8 @@ def build_isolation_matrix(
             + ("Devices here are blocked from reaching your other networks."
                if iso else
                "Devices here can reach other networks unless a firewall policy "
-               "stops them.")
+               "stops them."),
+            editable=True,
         )
 
         # Internet access
@@ -1073,10 +1503,16 @@ def build_isolation_matrix(
             f"internet_access_enabled={inet!r}. "
             + ("Devices here can reach the internet."
                if inet is not False else
-               "Devices here have no internet access at the network level.")
+               "Devices here have no internet access at the network level."),
+            editable=True,
         )
 
         # mDNS
+        # Read-only on purpose. MEASURED 2026-09-16: `mdns_enabled` on the
+        # network document is a projection that cannot be written, and every
+        # route to the underlying site-level setting was accepted with
+        # 200 {"rc":"ok"} while changing nothing. Offering a switch that
+        # silently no-ops is worse than offering none.
         mdns = n.get("mdns_enabled")
         cells["mdns"] = _cell(
             "warn" if mdns else "good",
@@ -1086,6 +1522,10 @@ def build_isolation_matrix(
                "casting, but it does advertise what lives here."
                if mdns else
                "Service discovery does not cross this boundary.")
+            + " This one has to be changed in the UniFi UI, under Settings -> "
+              "Networks -> this network -> Multicast DNS: the controller "
+              "accepts the change over the API and then ignores it.",
+            editable=False,
         )
 
         # DNS handed out by DHCP.
@@ -1126,17 +1566,6 @@ def build_isolation_matrix(
                 "Devices here use the gateway as resolver, so DNS can be "
                 "controlled at the gateway."
             )
-
-        # UPnP
-        upnp = n.get("upnp_lan_enabled")
-        cells["upnp"] = _cell(
-            "warn" if upnp else "good",
-            "On" if upnp else "Off",
-            f"upnp_lan_enabled={upnp!r}. "
-            + ("Devices here can open inbound ports on the gateway without "
-               "asking you." if upnp else
-               "Devices here cannot open their own inbound ports.")
-        )
 
         rows.append({
             "id": nid, "name": name, "vlan": vlan,
@@ -1280,6 +1709,30 @@ def check_breakage(ours: List[Dict], known: Dict[str, str]) -> List[Dict]:
             "suggestion": suggestion,
         })
     return results
+
+
+def preset_from_policy(policy: Dict) -> str:
+    """
+    Recover the preset NAME from a policy we created.
+
+    Descriptions read "[HouseArrest] <preset> for <label>", so the preset is
+    everything before the last " for ". Returned as the human label the preset
+    grid shows ("Full lockdown", "Internet only", ...) rather than the internal
+    key, because this goes straight on screen.
+
+    Returns "" when it cannot be read — the caller shows nothing rather than
+    guessing at a lockdown level, since naming the wrong one would misdescribe
+    what is actually being enforced.
+    """
+    desc = (policy.get("description") or "")
+    desc = desc.replace(MARKER, "").replace(NETWORK_MARKER, "")
+    desc = desc.replace(DNS_MARKER, "").strip()
+    if " for " not in desc:
+        return ""
+    candidate = desc.rsplit(" for ", 1)[0].strip()
+    # Only report it if it is genuinely one of our preset names.
+    known = set(PRESET_LABELS.values())
+    return candidate if candidate in known else ""
 
 
 def _label_from_policy(policy: Dict) -> str:

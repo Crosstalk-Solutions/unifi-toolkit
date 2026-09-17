@@ -23,6 +23,7 @@
 <script id="ha-presets" type="application/json">{{ presets|tojson }}</script>
 <script id="ha-path-labels" type="application/json">{{ path_labels|tojson }}</script>
 <script id="ha-network-presets" type="application/json">{{ network_presets|tojson }}</script>
+<script id="ha-asset-version" type="application/json">{{ version|tojson }}</script>
 
 <div x-data="houseArrest()" x-init="init()" class="container">
 
@@ -65,33 +66,60 @@
         <div class="notice" :class="message.kind" x-text="message.text"></div>
     </template>
 
-    <template x-if="state.precedence_warnings && state.precedence_warnings.length">
-        <div class="notice warn">
-            <strong>Rule order may override a lockdown.</strong>
-            Your gateway assigns firewall rule positions itself, and
-            <span x-text="state.precedence_warnings.length"></span>
-            of your own ALLOW <span x-text="state.precedence_warnings.length === 1 ? 'rule sits' : 'rules sit'"></span>
-            ahead of a House Arrest block:
-            <span class="mono" x-text="state.precedence_warnings.map(w => w.name + ' (#' + w.index + ')').join(', ')"></span>.
-            If one of those matches this device, it wins. Worth checking in the UniFi UI.
-        </div>
-    </template>
 
-    <nav class="tabs" role="tablist" aria-label="House Arrest sections">
-        <button role="tab" class="tab" :class="{ 'is-active': tab === 'networks' }"
+
+    <!-- Tool switcher. These are three separate tools that happen to share a
+         page, not three views of one thing, so they are drawn as three cards
+         with their own icon and their own job rather than as text tabs. The
+         active one is the only one that gets a lit icon chip and a top rule. -->
+    <p class="tool-tabs-hint">House Arrest is three separate tools — pick one</p>
+    <nav class="tool-tabs" role="tablist" aria-label="House Arrest tools">
+        <button role="tab" class="tool-tab" :class="{ 'is-active': tab === 'networks' }"
                 :aria-selected="tab === 'networks'" @click="setTab('networks')">
-            Networks
-            <span class="tab-sub">isolation &amp; status</span>
+            <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="2" width="6" height="6" rx="1.5" />
+                    <rect x="1.5" y="16" width="6" height="6" rx="1.5" />
+                    <rect x="16.5" y="16" width="6" height="6" rx="1.5" />
+                    <path d="M12 8v3.5M4.5 16v-2.5h15V16" />
+                </svg>
+            </span>
+            <span class="tool-text">
+                <span class="tool-name">Networks</span>
+                <span class="tool-sub">Network-wide isolation settings</span>
+            </span>
         </button>
-        <button role="tab" class="tab" :class="{ 'is-active': tab === 'dns' }"
+
+        <button role="tab" class="tool-tab" :class="{ 'is-active': tab === 'dns' }"
                 :aria-selected="tab === 'dns'" @click="setTab('dns')">
-            DNS Lockdown
-            <span class="tab-sub">approved resolvers only</span>
+            <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="9.25" />
+                    <path d="M2.75 12h18.5" />
+                    <path d="M12 2.75c2.4 2.6 3.6 5.75 3.6 9.25S14.4 18.65 12 21.25c-2.4-2.6-3.6-5.75-3.6-9.25S9.6 5.35 12 2.75z" />
+                </svg>
+            </span>
+            <span class="tool-text">
+                <span class="tool-name">DNS Lockdown</span>
+                <span class="tool-sub">Manage approved DNS resolvers</span>
+            </span>
         </button>
-        <button role="tab" class="tab" :class="{ 'is-active': tab === 'devices' }"
+
+        <button role="tab" class="tool-tab" :class="{ 'is-active': tab === 'devices' }"
                 :aria-selected="tab === 'devices'" @click="setTab('devices')">
-            Devices
-            <span class="tab-sub">per-device lockdown</span>
+            <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2.5" y="4" width="19" height="12" rx="2" />
+                    <path d="M8.5 20h7M12 16v4" />
+                </svg>
+            </span>
+            <span class="tool-text">
+                <span class="tool-name">Devices</span>
+                <span class="tool-sub">Per-device lockdown settings</span>
+            </span>
         </button>
     </nav>
 
@@ -148,13 +176,21 @@
                                 <span class="vlan-tag" x-show="r.vlan !== null" x-text="'VLAN ' + r.vlan"></span>
                             </th>
                             <template x-for="c in inspection.matrix.columns" :key="c.key">
-                                <td class="cell" :class="'is-' + (r.cells[c.key] ? r.cells[c.key].state : 'neutral')"
+                                <td class="cell"
+                                    :class="['is-' + (r.cells[c.key] ? r.cells[c.key].state : 'neutral'),
+                                             cellEditable(r, c) ? 'is-editable' : '']"
                                     tabindex="0"
-                                    :aria-label="r.name + ' — ' + c.label + ': ' + (r.cells[c.key] ? r.cells[c.key].label + '. ' + r.cells[c.key].detail : '')">
+                                    :role="cellEditable(r, c) ? 'button' : null"
+                                    @click="cellEditable(r, c) && openToggle(r, c)"
+                                    @keydown.enter.prevent="cellEditable(r, c) && openToggle(r, c)"
+                                    @keydown.space.prevent="cellEditable(r, c) && openToggle(r, c)"
+                                    :aria-label="r.name + ' — ' + c.label + ': ' + (r.cells[c.key] ? r.cells[c.key].label + '. ' + r.cells[c.key].detail : '') + (cellEditable(r, c) ? ' Activate to change this setting.' : '')">
                                     <span class="cell-label" x-text="r.cells[c.key] ? r.cells[c.key].label : '—'"></span>
+                                    <span class="cell-edit" x-show="cellEditable(r, c)" aria-hidden="true">✎</span>
                                     <span class="tip" role="tooltip">
                                         <strong x-text="r.name + ' · ' + c.label"></strong>
                                         <span x-text="r.cells[c.key] ? r.cells[c.key].detail : ''"></span>
+                                        <span class="tip-cta" x-show="cellEditable(r, c)">Click to change</span>
                                     </span>
                                 </td>
                             </template>
@@ -162,12 +198,101 @@
                     </template>
                 </tbody>
             </table>
-            <p class="hint">Hover or focus any cell for what it means on that network.</p>
+            <p class="hint">
+                Hover or focus any cell for what it means on that network. Cells
+                marked <span class="cell-edit is-inline" aria-hidden="true">✎</span>
+                are settings you can change from here.
+            </p>
+
+            <!-- Toggle dialog. Only the four columns that are genuinely a
+                 boolean on the network object are editable; Zone is membership
+                 rather than a switch, and DNS is a list of addresses. Writing
+                 those from a one-click cell would be guessing at intent. -->
+            <template x-if="wlanToggle">
+                <div class="modal-backdrop" @click.self="wlanToggle = null"
+                     @keydown.escape.window="wlanToggle = null">
+                    <div class="modal" role="dialog" aria-modal="true"
+                         :aria-label="'Client isolation for ' + wlanToggle.name">
+                        <h3>Wi-Fi client isolation</h3>
+                        <p class="modal-net"><strong x-text="wlanToggle.name"></strong></p>
+
+                        <div class="modal-change">
+                            <span x-text="wlanToggle.isolated ? 'Isolated' : 'Can reach each other'"></span>
+                            <span aria-hidden="true">→</span>
+                            <strong x-text="wlanToggle.next ? 'Isolated' : 'Can reach each other'"></strong>
+                        </div>
+
+                        <p class="modal-warn" x-show="wlanToggle.next">
+                            This applies to all
+                            <strong x-text="wlanToggle.client_count"></strong>
+                            <span x-text="wlanToggle.client_count === 1 ? 'device' : 'devices'"></span>
+                            on this SSID, not just the one you are worried about.
+                            Casting, AirPlay, local printing and phone-to-speaker
+                            control between them will stop working. Wired devices
+                            are unaffected either way.
+                        </p>
+                        <p class="modal-warn" x-show="!wlanToggle.next">
+                            Devices on this SSID will be able to reach each other
+                            again — including discovering and profiling one another.
+                        </p>
+
+                        <p class="notice danger" x-show="wlanToggle.error" x-text="wlanToggle.error"></p>
+
+                        <div class="actions">
+                            <button class="btn btn-secondary" @click="wlanToggle = null"
+                                    :disabled="wlanToggle.saving">Cancel</button>
+                            <button class="btn btn-primary" @click="applyWlanToggle()"
+                                    :disabled="wlanToggle.saving">
+                                <span x-text="wlanToggle.saving ? 'Applying…' : 'Apply change'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <template x-if="toggle">
+                <div class="modal-backdrop" @click.self="toggle = null"
+                     @keydown.escape.window="toggle = null">
+                    <div class="modal" role="dialog" aria-modal="true"
+                         :aria-label="toggle.columnLabel + ' for ' + toggle.networkName">
+                        <h3 x-text="toggle.columnLabel"></h3>
+                        <p class="modal-net">
+                            <strong x-text="toggle.networkName"></strong>
+                            <span class="vlan-tag" x-show="toggle.vlan !== null"
+                                  x-text="'VLAN ' + toggle.vlan"></span>
+                        </p>
+                        <p class="modal-detail" x-text="toggle.detail"></p>
+
+                        <div class="modal-change">
+                            <span x-text="toggle.currentLabel"></span>
+                            <span aria-hidden="true">→</span>
+                            <strong x-text="toggle.nextLabel"></strong>
+                        </div>
+
+                        <p class="modal-warn" x-show="toggle.warning" x-text="toggle.warning"></p>
+                        <p class="notice danger" x-show="toggle.error" x-text="toggle.error"></p>
+
+                        <div class="actions">
+                            <button class="btn btn-secondary" @click="toggle = null"
+                                    :disabled="toggle.saving">Cancel</button>
+                            <button class="btn btn-primary" @click="applyToggle()"
+                                    :disabled="toggle.saving">
+                                <span x-text="toggle.saving ? 'Applying…' : 'Apply change'"></span>
+                            </button>
+                        </div>
+                        <p class="hint" x-show="toggle.saving">
+                            The controller provisions asynchronously, so this is
+                            confirmed by re-reading rather than assumed.
+                        </p>
+                    </div>
+                </div>
+            </template>
         </div>
 
         <!-- Acting on what the matrix shows: isolate a whole network, using the
              same preview-then-apply discipline as a device lockdown. -->
         <div class="isolate-block">
+            <div class="subsection is-first">
             <h3>Isolate a network</h3>
             <p class="card-note">
                 Uses UniFi's own per-network settings, the same switches as
@@ -175,25 +300,6 @@
                 firewall rules, so this page and the UniFi UI always agree.
                 Applies to every device on the network, now and in future.
             </p>
-
-            <template x-if="state.isolated_networks && state.isolated_networks.length">
-                <div>
-                    <template x-for="n in state.isolated_networks" :key="n.label">
-                        <div class="arrest">
-                            <span class="arrest-id">
-                                <span class="arrest-name" x-text="n.label"></span>
-                                <span class="muted small" x-text="' · ' + n.preset"></span>
-                            </span>
-                            <span class="state ok">
-                                <span class="dot" style="background: var(--state-enforcing)"></span>
-                                <span>Enforcing</span>
-                            </span>
-                            <button class="btn btn-danger btn-sm"
-                                    @click="releaseNetwork(n.network_id, n.label)">Release</button>
-                        </div>
-                    </template>
-                </div>
-            </template>
 
             <div class="field-row">
                 <div>
@@ -246,6 +352,86 @@
                     </ul>
                 </div>
             </template>
+
+            </div>
+
+            <!-- What is isolated right now. Sits directly under the control
+                 that creates it, because "what did I just do" is the next
+                 question after doing it. It used to be stranded at the very
+                 bottom of the tab, below an unrelated Wi-Fi section. -->
+            <div class="subsection" x-show="state.isolated_networks && state.isolated_networks.length">
+                <h3>Networks currently isolated</h3>
+                <p class="card-note">
+                    Read from UniFi's own per-network settings, so anything you
+                    isolated in the UniFi UI appears here too.
+                </p>
+                <!-- x-for directly: the wrapper's x-show already gates on the
+                     same condition, and the extra x-if it used to carry was a
+                     second root element waiting to swallow whatever followed. -->
+                <template x-for="n in state.isolated_networks" :key="n.label">
+                    <div class="arrest">
+                        <span class="arrest-id">
+                            <span class="arrest-name" x-text="n.label"></span>
+                            <span class="muted small" x-text="' · ' + n.preset"></span>
+                        </span>
+                        <span class="state ok">
+                            <span class="dot" style="background: var(--state-enforcing)"></span>
+                            <span>Enforcing</span>
+                        </span>
+                        <button class="btn btn-danger btn-sm"
+                                @click="releaseNetwork(n.network_id, n.label)">Release</button>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Wi-Fi client isolation. Kept next to network isolation because
+                 they answer adjacent questions, but deliberately separate: this
+                 one is the ONLY control here that reaches same-VLAN peer
+                 traffic, and it is a property of the SSID rather than of any
+                 one device. -->
+            <div class="subsection wifi-isolation">
+                <h3>Wi-Fi client isolation</h3>
+                <p class="card-note">
+                    Stops devices on an SSID reaching <em>each other</em>. This is
+                    the only setting here that touches traffic between neighbours
+                    on the same VLAN — firewall policies never see it, so no
+                    per-device lockdown can do this job. Wireless clients only;
+                    wired devices are unaffected.
+                </p>
+
+                <p class="hint" x-show="wlansLoading">Reading SSIDs…</p>
+                <table class="wlan-table" x-show="!wlansLoading && wlans.length">
+                    <thead>
+                        <tr><th>Wi-Fi network</th><th>Clients</th><th>Isolation</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="w in wlans" :key="w.id">
+                            <tr :class="{ 'is-off': !w.enabled }">
+                                <td>
+                                    <span x-text="w.name"></span>
+                                    <span class="hint" x-show="!w.enabled">disabled</span>
+                                </td>
+                                <td x-text="w.client_count"></td>
+                                <td>
+                                    <span class="state" :class="w.isolated ? 'ok' : ''">
+                                        <span class="dot"
+                                              :style="'background: var(--state-' + (w.isolated ? 'enforcing' : 'rotated') + ')'"></span>
+                                        <span x-text="w.isolated ? 'Isolated' : 'Can reach each other'"></span>
+                                    </span>
+                                </td>
+                                <td>
+                                    <button class="btn btn-secondary btn-sm"
+                                            @click="openWlanToggle(w)"
+                                            x-text="w.isolated ? 'Turn off' : 'Turn on'"></button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <p class="hint" x-show="!wlansLoading && !wlans.length">
+                    No wireless networks reported by the controller.
+                </p>
+            </div>
 
             <template x-if="state.legacy_network_policies && state.legacy_network_policies.length">
                 <div class="notice warn">
@@ -312,15 +498,86 @@
                 <label>Networks that must use them</label>
                 <div class="net-picker">
                     <template x-for="n in networks" :key="n.id">
-                        <label class="net-option">
+                        <label class="net-option" :class="{ 'is-taken': dnsLockedIds().includes(n.id) }">
                             <input type="checkbox" :value="n.id" x-model="dnsNetworks"
-                                   @change="dnsPreview = null">
+                                   :disabled="dnsLockedIds().includes(n.id)"
+                                   @change="dnsPreview = null; dhcpPreview = null">
                             <span x-text="n.name + ' (VLAN ' + n.vlan + ')'"></span>
+                            <span class="hint" x-show="dnsLockedIds().includes(n.id)">
+                                already locked down — release it first
+                            </span>
                         </label>
                     </template>
                 </div>
             </div>
         </div>
+
+        <!-- What each network currently hands out. Choosing which networks to
+             force onto a resolver means knowing what they already advertise,
+             and that used to mean switching to the Networks tab and back. The
+             row for a network you have selected is highlighted, and a resolver
+             that is not on the approved list is called out, because that is
+             the combination that takes a network's DNS out. -->
+        <div class="dns-current">
+            <div class="dns-current-head">
+                <strong>What each network hands out now</strong>
+                <span class="hint">Via DHCP. Same data as the Networks tab.</span>
+            </div>
+            <table class="dns-table">
+                <thead>
+                    <tr><th>Network</th><th>VLAN</th><th>DHCP name servers</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="n in networks" :key="'dns-' + n.id">
+                        <tr :class="{ 'is-chosen': dnsNetworks.includes(n.id) }">
+                            <td x-text="n.name"></td>
+                            <td class="mono" x-text="n.vlan"></td>
+                            <td>
+                                <template x-if="!n.dhcp_dns.length">
+                                    <span class="muted">Gateway</span>
+                                </template>
+                                <template x-if="n.dhcp_dns.length">
+                                    <span>
+                                        <template x-for="(ip, i) in n.dhcp_dns" :key="i">
+                                            <span class="dns-ip"
+                                                  :class="{ 'is-stale': dnsNetworks.includes(n.id)
+                                                            && dnsResolverList().length
+                                                            && !dnsResolverList().includes(ip) }"
+                                                  x-text="ip"></span>
+                                        </template>
+                                    </span>
+                                </template>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p class="hint" x-show="staleResolverCount() > 0">
+                <strong x-text="staleResolverCount()"></strong>
+                highlighted <span x-text="staleResolverCount() === 1 ? 'address is' : 'addresses are'"></span>
+                not on your approved list. Devices told to use
+                <span x-text="staleResolverCount() === 1 ? 'it' : 'them'"></span>
+                will lose DNS unless you also tick “Also point DHCP at these resolvers”.
+            </p>
+        </div>
+
+        <!-- The other half of a DNS lockdown, and the likeliest way to take a
+             network's DNS out. The rules decide which resolver a device may
+             TALK to; DHCP decides which one it is TOLD to use, and nothing
+             links the two. This was a button with a tooltip, which buried the
+             most consequential option on the tab. -->
+        <label class="inline-check">
+            <input type="checkbox" x-model="dnsFixDhcp" @change="dnsPreview = null; dhcpPreview = null">
+            <span>
+                <strong>Also point DHCP at these resolvers</strong>
+                <span class="hint" style="margin-top:0.15rem">
+                    Otherwise these networks keep handing out whatever resolver
+                    they already advertise — and if that is not on the approved
+                    list, the rules below block it and devices there lose DNS
+                    entirely. Applies on each device's next lease renewal.
+                </span>
+            </span>
+        </label>
 
         <label class="inline-check">
             <input type="checkbox" x-model="dnsBlockDot" @change="dnsPreview = null">
@@ -347,6 +604,39 @@
             </span>
         </div>
 
+        <template x-if="dnsFixDhcp && dhcpPreview">
+            <div class="review">
+                <h3 x-text="dhcpChangesNeeded() ? 'DHCP name servers will change'
+                                                : 'DHCP name servers already match'"></h3>
+                <ul>
+                    <template x-for="(c, i) in dhcpPreview.changes" :key="i">
+                        <li>
+                            <strong x-text="c.label"></strong>:
+                            <template x-if="c.current.join(',') === c.proposed.join(',')">
+                                <span>
+                                    <span x-text="c.proposed.join(', ')"></span>
+                                    <span class="muted small"> · already correct, nothing to do</span>
+                                </span>
+                            </template>
+                            <template x-if="c.current.join(',') !== c.proposed.join(',')">
+                                <span>
+                                    <span x-text="c.current.length ? c.current.join(', ') : 'gateway'"></span>
+                                    &rarr;
+                                    <strong x-text="c.proposed.join(', ')"></strong>
+                                    <span class="muted small" x-show="c.applied"> · applied</span>
+                                    <span x-show="c.error" x-text="c.error"></span>
+                                </span>
+                            </template>
+                        </li>
+                    </template>
+                </ul>
+                <p class="hint" x-show="dhcpChangesNeeded()">
+                    Every device on those networks is told to use these. Existing
+                    devices pick it up when their DHCP lease renews.
+                </p>
+            </div>
+        </template>
+
         <template x-if="dnsPreview">
             <div class="review">
                 <h3 x-text="dnsPreview.length + ' rules will be created, in this order'"></h3>
@@ -354,7 +644,7 @@
                     <template x-for="(p, i) in dnsPreview" :key="i">
                         <li>
                             <span x-text="p.action"></span>
-                            <span x-text="p.name.replace('House Arrest DNS: ', '')"></span>
+                            <span x-text="(p.name || '').replace('House Arrest DNS: ', '')"></span>
                         </li>
                     </template>
                 </ul>
@@ -376,6 +666,21 @@
     <!-- ============ 1. Lock down a device ============
          The primary task leads the page. Previously an empty table sat above
          it, so the first thing a new user saw was a list of nothing. -->
+    <!-- Precedence only affects per-device blocks, so it rides with the
+         Devices tab rather than sitting above the switcher looking like a
+         site-wide alarm. -->
+    <template x-if="tab === 'devices' && state.precedence_warnings && state.precedence_warnings.length">
+        <div class="notice warn">
+            <strong>Rule order may override a lockdown.</strong>
+            Your gateway assigns firewall rule positions itself, and
+            <span x-text="state.precedence_warnings.length"></span>
+            of your own ALLOW <span x-text="state.precedence_warnings.length === 1 ? 'rule sits' : 'rules sit'"></span>
+            ahead of a House Arrest block:
+            <span class="mono" x-text="state.precedence_warnings.map(w => w.name + ' (#' + w.index + ')').join(', ')"></span>.
+            If one of those matches this device, it wins. Worth checking in the UniFi UI.
+        </div>
+    </template>
+
     <section class="card" x-show="tab === 'devices'" role="tabpanel">
         <div class="card-head">
             <span class="step">STEP 1</span>
@@ -437,29 +742,113 @@
         <div class="paths">
             <div class="paths-title">What this does to the device's traffic</div>
 
-            <template x-for="path in pathRows()" :key="path.key">
-                <div class="path" :class="'is-' + path.verdict">
-                    <svg class="path-line" viewBox="0 0 74 20" aria-hidden="true">
-                        <line x1="2" y1="10" x2="72" y2="10"
-                              :stroke="pathStroke(path.verdict)"
-                              stroke-width="2"
-                              :stroke-dasharray="path.verdict === 'allow' ? '0' : '4 4'" />
-                        <!-- x-show, not <template x-if>: a <template> inside
-                             <svg> is lifted out by the HTML parser and the
-                             group never renders. The cross also carries the
-                             blocked state without relying on red vs green. -->
-                        <g x-show="path.verdict === 'block'"
-                           stroke="var(--state-broken)" stroke-width="2.5" stroke-linecap="round">
-                            <line x1="32" y1="3" x2="42" y2="17" />
-                            <line x1="42" y1="3" x2="32" y2="17" />
-                        </g>
-                    </svg>
-                    <span class="path-label" x-text="path.label"></span>
-                    <span class="path-verdict" x-text="verdictText(path)"></span>
+            <!-- Two columns: the verdict list reads as a compact left rail, and
+                 the picture of the same thing sits beside it. The list used to
+                 stretch the full width, which pushed each verdict an inch away
+                 from the label it belonged to. -->
+            <div class="paths-split">
+                <div class="paths-list">
+                    <template x-for="path in pathRows()" :key="path.key">
+                        <div class="path" :class="'is-' + path.verdict">
+                            <svg class="path-line" viewBox="0 0 74 20" aria-hidden="true">
+                                <line x1="2" y1="10" x2="72" y2="10"
+                                      :stroke="pathStroke(path.verdict)"
+                                      stroke-width="2"
+                                      :stroke-dasharray="path.verdict === 'allow' ? '0' : '4 4'" />
+                                <!-- x-show, not <template x-if>: a <template> inside
+                                     <svg> is lifted out by the HTML parser and the
+                                     group never renders. The cross also carries the
+                                     blocked state without relying on red vs green. -->
+                                <g x-show="path.verdict === 'block'"
+                                   stroke="var(--state-broken)" stroke-width="2.5" stroke-linecap="round">
+                                    <line x1="32" y1="3" x2="42" y2="17" />
+                                    <line x1="42" y1="3" x2="32" y2="17" />
+                                </g>
+                            </svg>
+                            <span class="path-label" x-text="path.label"></span>
+                            <span class="path-verdict" x-text="verdictText(path)"></span>
+                        </div>
+                    </template>
+
+                    <!-- Key to the line styles used both in the rows above and
+                         in the diagram beside them. Same vocabulary in both, so
+                         it is worth stating once rather than leaving a layperson
+                         to infer that a dashed red line means anything. -->
+                    <div class="path-legend">
+                        <span class="legend-item">
+                            <svg viewBox="0 0 34 12" aria-hidden="true">
+                                <line x1="2" y1="6" x2="32" y2="6"
+                                      stroke="var(--state-enforcing)" stroke-width="2" />
+                            </svg>
+                            <span>Traffic gets through</span>
+                        </span>
+                        <span class="legend-item">
+                            <svg viewBox="0 0 34 12" aria-hidden="true">
+                                <line x1="2" y1="6" x2="32" y2="6"
+                                      stroke="var(--state-broken)" stroke-width="2"
+                                      stroke-dasharray="4 4" />
+                                <g stroke="var(--state-broken)" stroke-width="2.5" stroke-linecap="round">
+                                    <line x1="13" y1="2" x2="21" y2="10" />
+                                    <line x1="21" y1="2" x2="13" y2="10" />
+                                </g>
+                            </svg>
+                            <span>Traffic is dropped</span>
+                        </span>
+                        <span class="legend-item" x-show="currentPreset() && currentPreset().requires_network">
+                            <svg viewBox="0 0 34 12" aria-hidden="true">
+                                <line x1="2" y1="6" x2="32" y2="6"
+                                      stroke="var(--state-rotated)" stroke-width="2"
+                                      stroke-dasharray="4 4" />
+                            </svg>
+                            <span>Depends where you move it</span>
+                        </span>
+                    </div>
                 </div>
-            </template>
+
+                <!-- The same four verdicts, drawn. One image per preset AND per
+                     inbound setting: the inbound direction is a checkbox, so a
+                     single picture per preset would start contradicting the list
+                     the moment it was unticked. Width/height are set so swapping
+                     the image never shifts the layout. -->
+                <figure class="paths-figure">
+                    <img :src="scenarioImage()" :alt="scenarioAlt()"
+                         width="900" height="713" decoding="async">
+                    <figcaption x-text="scenarioCaption()"></figcaption>
+                </figure>
+            </div>
 
             <p class="path-note" x-text="pathNote()"></p>
+
+            <!-- The one thing a firewall genuinely cannot do, stated at full
+                 size. Same-VLAN peer traffic never passes the gateway, so no
+                 preset on this page touches it — and that is exactly the
+                 behaviour people are now worried about after the LG reporting.
+                 Leaving it as a grey footnote under the diagram let the page
+                 imply a completeness it does not have. -->
+            <div class="blindspot">
+                <h4>What no firewall rule here can stop</h4>
+                <p>
+                    <strong x-text="selectedClient() ? (selectedClient().name || selectedClient().mac) : 'This device'"></strong>
+                    can still see and profile everything sharing its own VLAN —
+                    discovery traffic between neighbours never passes the gateway,
+                    so no policy on this page ever sees it. A smart TV doing this
+                    is what the recent LG reporting describes.
+                </p>
+                <p class="blindspot-fix">Two things actually stop it:</p>
+                <ul>
+                    <li>
+                        <strong>Give it a VLAN of its own</strong> — the
+                        <em>Quarantine + VLAN move</em> preset, pointed at a network
+                        nothing else lives on. It does not filter peer traffic; it
+                        removes the peers.
+                    </li>
+                    <li>
+                        <strong>Turn on Client Isolation for its Wi-Fi network</strong>,
+                        on the Networks tab. Wireless only, and it applies to every
+                        device on that SSID.
+                    </li>
+                </ul>
+            </div>
 
             <!-- Measured caveats: paths that survive a lockdown. Shown next to
                  the claim they qualify, not hidden in docs. -->
@@ -479,14 +868,20 @@
             </div>
         </template>
 
+        <!-- Deliberately not "let ME reach it". The rule cannot tell one person
+             from another: it blocks what the DEVICE starts, so anything able to
+             route to the device can still open a connection to it. Saying "me"
+             would promise a narrowness the firewall is not delivering. -->
         <label class="inline-check">
             <input type="checkbox" x-model="allowInbound" @change="preview = null">
             <span>
-                <strong>Let me still reach this device</strong>
+                <strong>Let other devices still reach this device</strong>
                 <span class="hint" style="margin-top:0.15rem">
-                    It can't start connections out, but it can answer when you
-                    contact it — so a camera or smart bulb on another VLAN stays
-                    usable. Uncheck for absolute isolation in both directions.
+                    It can't start connections out, but it can still answer when
+                    something contacts it — so a camera or smart bulb stays usable.
+                    This is not limited to your computer: anything that can already
+                    route to the device, on any VLAN a firewall rule doesn't stop,
+                    can reach in. Uncheck for absolute isolation in both directions.
                 </span>
             </span>
         </label>
@@ -549,7 +944,14 @@
                 <div class="arrest"
                      :class="{ 'is-broken': a.status === 'broken', 'is-rotated': a.status === 'rotated', 'is-pending_move': a.status === 'pending_move' }">
                     <span class="arrest-id">
-                        <span class="arrest-name" x-text="a.label"></span>
+                        <span class="arrest-name">
+                            <span x-text="a.label"></span>
+                            <!-- Which lockdown is in force. The row used to say a
+                                 device was "Enforcing" without ever saying what,
+                                 so two devices under opposite presets looked
+                                 identical. -->
+                            <span class="preset-chip" x-show="a.preset" x-text="a.preset"></span>
+                        </span>
                         <span class="arrest-meta">
                             <span class="mono" x-text="a.macs.join(', ')"></span>
                             <template x-if="a.ip">
@@ -591,25 +993,81 @@
                             <button class="btn btn-secondary btn-sm" @click="openBlocked = null">Close</button>
                         </div>
                         <p class="hint" x-show="blockedLoading">Loading…</p>
-                        <table x-show="!blockedLoading && blockedFlows.length">
+                        <p class="hint" x-show="!blockedLoading && shownFlows().length">
+                            One row per destination, busiest first — repeated
+                            attempts on different ports are counted together.
+                            <span x-show="shownFlows().length > 10">
+                                <strong x-text="shownFlows().length"></strong>
+                                destinations — scroll for the rest.
+                            </span>
+                        </p>
+
+                        <!-- Connection attempts lead. Measured on a real locked
+                             down device: 100% of its blocked traffic over 7 days
+                             was UDP aimed at ephemeral ports on the four devices
+                             that actually use it — the reply side of someone
+                             else's conversation, not this device reaching out.
+                             Left in the main list it buries anything that
+                             matters. It is parked below, never dropped. -->
+                        <p class="hint"
+                           x-show="!blockedLoading && !connectionFlows().length && returnFlows().length">
+                            <strong>No connection attempts.</strong>
+                            Nothing was contacted on a service port, and nothing
+                            tried to open a TCP connection.
+                        </p>
+
+                        <div class="blocked-scroll"
+                             :class="{ 'is-scrolling': shownFlows().length > 10 }">
+                        <table x-show="!blockedLoading && shownFlows().length">
                             <thead>
                                 <tr><th>When</th><th>Tried to reach</th><th>Port</th><th>Tries</th><th>Stopped by</th></tr>
                             </thead>
                             <tbody>
-                                <template x-for="(f, i) in blockedFlows" :key="i">
+                                <template x-for="(f, i) in shownFlows()" :key="i">
                                     <tr>
                                         <td class="muted small" x-text="when(f.time_ms)"></td>
                                         <td>
                                             <span x-text="f.destination"></span>
                                             <span class="hint" x-show="f.network" x-text="f.network"></span>
                                         </td>
-                                        <td class="mono" x-text="(f.protocol || '') + (f.port ? ' ' + f.port : '')"></td>
+                                        <td class="mono"
+                                            x-text="(f.protocol || '') + (f.port ? ' ' + f.port
+                                                    : (f.port_count > 1 ? ' · ' + f.port_count + ' ports' : ''))"></td>
                                         <td x-text="f.count"></td>
-                                        <td class="muted small" x-text="f.policy"></td>
+                                        <td class="muted small">
+                                            <span x-text="f.policy"></span>
+                                            <span class="hint" x-show="f.attribution === 'stale'">
+                                                an earlier House Arrest rule, since replaced
+                                            </span>
+                                            <span class="hint" x-show="f.attribution === 'other'">
+                                                not a House Arrest rule
+                                            </span>
+                                        </td>
                                     </tr>
                                 </template>
                             </tbody>
                         </table>
+                        </div>
+
+                        <div class="return-traffic"
+                             x-show="!blockedLoading && returnFlows().length">
+                            <button class="btn btn-secondary btn-sm"
+                                    @click="showReturnTraffic = !showReturnTraffic">
+                                <span x-text="(showReturnTraffic ? 'Hide' : 'Show') + ' return traffic'"></span>
+                            </button>
+                            <span class="hint">
+                                Also blocked:
+                                <strong x-text="returnAttempts()"></strong>
+                                UDP <span x-text="returnAttempts() === 1 ? 'packet' : 'packets'"></span>
+                                aimed at short-lived high ports on
+                                <strong x-text="returnDeviceCount()"></strong>
+                                <span x-text="returnDeviceCount() === 1 ? 'device' : 'devices'"></span>.
+                                Those ports belong to conversations the other
+                                device opened, so this is the reply side being
+                                cut rather than this device reaching out.
+                            </span>
+                        </div>
+
                         <p class="hint" x-show="!blockedLoading && !blockedFlows.length">
                             Nothing recorded yet. The gateway logs a flow when the device
                             actually tries to reach something blocked.

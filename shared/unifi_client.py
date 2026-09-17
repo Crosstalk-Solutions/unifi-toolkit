@@ -2000,7 +2000,8 @@ class UniFiClient:
         self,
         macs: List[str],
         hours: int = 24,
-        page_size: int = 200,
+        page_size: int = 1000,
+        max_pages: int = 20,
     ) -> List[Dict]:
         """
         Get traffic the gateway BLOCKED from the given clients.
@@ -2018,7 +2019,9 @@ class UniFiClient:
         Args:
             macs: source MACs to report on
             hours: how far back to look
-            page_size: max flows to request
+            page_size: flows per request
+            max_pages: ceiling on pages followed, so a pathological device
+                cannot make this loop forever
 
         Returns:
             List of raw flow dicts, newest first, or [] on failure
@@ -2030,30 +2033,55 @@ class UniFiClient:
 
         import time as _time
         now_ms = int(_time.time() * 1000)
-        payload = {
-            "timestampFrom": now_ms - hours * 3600 * 1000,
-            "timestampTo": now_ms,
-            "pageNumber": 0,
-            "pageSize": page_size,
-            "source_mac": [m.lower() for m in macs],
-            "action": ["blocked"],
-        }
         url = f"{self.host}/proxy/network/v2/api/site/{self.site}/traffic-flows"
 
+        # CORRECTED 2026-09-16: this used to read page 0 only, at pageSize 200,
+        # and silently truncate. Measured on a real locked-down device: 245
+        # blocked flows / 774 attempts existed while the single page returned
+        # exactly 200 flows / 425 attempts. A count that quietly stops at the
+        # page boundary is the same class of lie as a dead rule showing green.
+        # The response carries `has_next`, so follow it.
+        flows: List[Dict] = []
+        page = 0
         try:
-            async with self._session.post(url, json=payload) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.error(
-                        f"Failed to get blocked flows: {resp.status} {body[:300]}"
-                    )
-                    return []
-                data = await resp.json()
-                flows = data.get("data", data) if isinstance(data, dict) else data
-                if not isinstance(flows, list):
-                    return []
-                logger.debug(f"Retrieved {len(flows)} blocked flows for {len(macs)} client(s)")
-                return flows
+            while page <= max_pages:
+                payload = {
+                    "timestampFrom": now_ms - hours * 3600 * 1000,
+                    "timestampTo": now_ms,
+                    "pageNumber": page,
+                    "pageSize": page_size,
+                    "source_mac": [m.lower() for m in macs],
+                    "action": ["blocked"],
+                }
+                async with self._session.post(url, json=payload) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.error(
+                            f"Failed to get blocked flows: {resp.status} {body[:300]}"
+                        )
+                        return flows
+                    data = await resp.json()
+
+                batch = data.get("data", data) if isinstance(data, dict) else data
+                if not isinstance(batch, list):
+                    return flows
+                flows.extend(batch)
+
+                has_next = bool(data.get("has_next")) if isinstance(data, dict) else False
+                if not has_next or not batch:
+                    break
+                page += 1
+
+            if page > max_pages:
+                logger.warning(
+                    f"Blocked flows hit the {max_pages}-page ceiling; "
+                    f"{len(flows)} flows returned and there may be more"
+                )
+            logger.debug(
+                f"Retrieved {len(flows)} blocked flows for {len(macs)} client(s) "
+                f"across {page + 1} page(s)"
+            )
+            return flows
 
         except Exception as e:
             logger.error(f"Error getting blocked flows: {e}")
@@ -2161,6 +2189,126 @@ class UniFiClient:
             logger.error(f"Error setting client network for {mac_address}: {e}")
             return False
 
+    async def get_wlans(self) -> List[Dict]:
+        """
+        Wireless networks (SSIDs) with their client-isolation state.
+
+        `l2_isolation` is per-SSID client isolation: the switch that stops
+        clients on that SSID reaching each other. It is the only control found
+        on this API that touches same-VLAN peer traffic — a firewall policy
+        never sees that traffic, because it does not pass the gateway.
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+        url = f"{self.host}/proxy/network/api/s/{self.site}/rest/wlanconf"
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to get WLANs: {resp.status}")
+                    return []
+                return (await resp.json()).get("data", []) or []
+        except Exception as e:
+            logger.error(f"Error getting WLANs: {e}")
+            return []
+
+    async def set_wlan_isolation(self, wlan_id: str, enabled: bool) -> bool:
+        """
+        Turn client isolation on or off for one SSID.
+
+        MEASURED 2026-09-16 on a live console: unlike `mdns_enabled`, this one
+        actually takes. Flipped True -> False on an SSID with no clients,
+        confirmed at 0s, 2s and 4s, then restored.
+
+        Whole document read-modify-PUT, like the network writer, and verified
+        by re-reading rather than trusting the 200 — the mDNS case returned
+        `200 {"rc":"ok"}` while changing nothing, so a success code proves
+        nothing on this API.
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        base = f"{self.host}/proxy/network/api/s/{self.site}/rest/wlanconf"
+        try:
+            async with self._session.get(f"{base}/{wlan_id}") as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to read WLAN {wlan_id}: {resp.status}")
+                    return False
+                data = (await resp.json()).get("data", [])
+            if not data:
+                logger.error(f"WLAN {wlan_id} not found")
+                return False
+
+            doc = dict(data[0])
+            doc["l2_isolation"] = bool(enabled)
+
+            async with self._session.put(f"{base}/{wlan_id}", json=doc) as put_resp:
+                if put_resp.status != 200:
+                    body = await put_resp.text()
+                    logger.error(
+                        f"Failed to update WLAN {wlan_id}: "
+                        f"{put_resp.status} {body[:300]}"
+                    )
+                    return False
+
+            deadline, waited, delay = 20.0, 0.0, 1.0
+            while waited <= deadline:
+                async with self._session.get(f"{base}/{wlan_id}") as vr:
+                    if vr.status != 200:
+                        return False
+                    fresh = (await vr.json()).get("data", [])
+                if fresh and bool(fresh[0].get("l2_isolation")) == bool(enabled):
+                    logger.info(
+                        f"WLAN {wlan_id} l2_isolation={enabled} "
+                        f"(confirmed after {waited:.0f}s)"
+                    )
+                    return True
+                await asyncio.sleep(delay)
+                waited += delay
+                delay = min(delay * 1.6, 5.0)
+
+            logger.error(f"WLAN {wlan_id} isolation did not take: {enabled}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error setting WLAN {wlan_id} isolation: {e}")
+            return False
+
+    async def get_site_setting(self, key: str) -> Optional[Dict]:
+        """
+        One entry from the site settings collection, e.g. 'mdns' or 'usg'.
+
+        Returns None when the key is absent or unreadable — callers must treat
+        that as "unknown", never as "off".
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+        url = f"{self.host}/proxy/network/api/s/{self.site}/rest/setting/{key}"
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to read site setting {key}: {resp.status}")
+                    return None
+                data = (await resp.json()).get("data", [])
+            return data[0] if data else None
+        except Exception as e:
+            logger.error(f"Error reading site setting {key}: {e}")
+            return None
+
+    async def set_network_fields(self, network_id: str, **fields) -> bool:
+        """
+        Set arbitrary fields on a network, confirming they actually stuck.
+
+        The boolean-only `set_network_flags` is a thin wrapper over this. The
+        split exists because DHCP name servers (`dhcpd_dns_1..4`) are plain
+        strings, and the old verification compared `bool(stored) == bool(sent)`
+        — which would have called '8.8.8.8' and '1.1.1.1' equal.
+
+        Same read-modify-PUT as ever: the endpoint wants a complete network
+        document. Verification polls, because provisioning is asynchronous and
+        a single immediate re-read reports false failures.
+        """
+        return await self._write_network(network_id, fields, strict=True)
+
     async def set_network_flags(self, network_id: str, **flags) -> bool:
         """
         Change boolean settings on a network (isolation, internet access).
@@ -2186,10 +2334,21 @@ class UniFiClient:
         Returns:
             True only if every flag reads back as requested
         """
+        return await self._write_network(network_id, flags, strict=False)
+
+    async def _write_network(
+        self, network_id: str, fields: Dict, strict: bool
+    ) -> bool:
+        """
+        Shared implementation. `strict` compares values exactly; otherwise
+        truthiness is compared, which is what the boolean flags want (an unset
+        field and False mean the same thing there).
+        """
         if not self._session:
             raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
-        if not flags:
+        if not fields:
             return True
+        flags = fields
 
         base = f"{self.host}/proxy/network/api/s/{self.site}/rest/networkconf"
 
@@ -2221,8 +2380,13 @@ class UniFiClient:
                     if vr.status != 200:
                         return False
                     fresh = (await vr.json()).get('data', [])
+                def matches(stored, wanted):
+                    if strict:
+                        return (stored if stored is not None else "") == wanted
+                    return bool(stored) == bool(wanted)
+
                 if fresh and all(
-                    bool(fresh[0].get(k)) == bool(v) for k, v in flags.items()
+                    matches(fresh[0].get(k), v) for k, v in flags.items()
                 ):
                     logger.info(
                         f"Network {network_id} updated: {flags} "

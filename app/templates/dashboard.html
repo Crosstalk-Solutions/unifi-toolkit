@@ -347,25 +347,24 @@
                     </div>
                 </div>
 
-                <!-- Threat Watch Tool -->
-                <div class="tool-card" id="threat-watch-card">
-                    <div class="tool-icon">🛡️</div>
-                    <h2>Threat Watch</h2>
+                <div class="tool-card">
+                    <div class="tool-icon">🔒</div>
+                    <h2>House Arrest</h2>
                     <p class="tool-description">
-                        Monitor IDS/IPS events in real-time, view blocked threats and top attackers,
-                        and analyze security trends across your UniFi network.
+                        Lock a device down so it stays connected but can't reach the internet
+                        or talk to anything else — with exceptions you choose. Audits whether
+                        your VLANs are actually isolated.
                     </p>
                     <div class="tool-features">
-                        <span class="feature-badge">IDS/IPS Events</span>
-                        <span class="feature-badge">Top Attackers</span>
-                        <span class="feature-badge">Geo Lookup</span>
+                        <span class="feature-badge">Device Lockdown</span>
+                        <span class="feature-badge">Firewall Policies</span>
+                        <span class="feature-badge">Isolation Audit</span>
                     </div>
-                    <div class="tool-status" id="threat-watch-status" style="display: none;"></div>
                     <div class="tool-bottom">
                         <div class="tool-actions">
-                            <a href="/threats/" class="btn btn-primary" id="threat-watch-btn">Open Threat Watch</a>
+                            <a href="/arrest/" class="btn btn-primary">Open House Arrest</a>
                         </div>
-                        <div class="tool-version">v{{ threat_watch_version }}</div>
+                        <div class="tool-version">v{{ arrest_version }}</div>
                     </div>
                 </div>
 
@@ -390,31 +389,30 @@
                     </div>
                 </div>
 
-                <div class="tool-card">
-                    <div class="tool-icon">🔒</div>
-                    <h2>House Arrest</h2>
+
+                <!-- Threat Watch Tool -->
+                <div class="tool-card" id="threat-watch-card">
+                    <div class="tool-icon">🛡️</div>
+                    <h2>Threat Watch</h2>
                     <p class="tool-description">
-                        Lock a device down so it stays connected but can't reach the internet
-                        or talk to anything else — with exceptions you choose. Audits whether
-                        your VLANs are actually isolated.
+                        Monitor IDS/IPS events in real-time, view blocked threats and top attackers,
+                        and analyze security trends across your UniFi network.
                     </p>
                     <div class="tool-features">
-                        <span class="feature-badge">Device Lockdown</span>
-                        <span class="feature-badge">Firewall Policies</span>
-                        <span class="feature-badge">Isolation Audit</span>
+                        <span class="feature-badge">IDS/IPS Events</span>
+                        <span class="feature-badge">Top Attackers</span>
+                        <span class="feature-badge">Geo Lookup</span>
                     </div>
+                    <div class="tool-status" id="threat-watch-status" style="display: none;"></div>
                     <div class="tool-bottom">
                         <div class="tool-actions">
-                            <a href="/arrest/" class="btn btn-primary">Open House Arrest</a>
+                            <a href="/threats/" class="btn btn-primary" id="threat-watch-btn">Open Threat Watch</a>
                         </div>
-                        <div class="tool-version">v{{ arrest_version }}</div>
+                        <div class="tool-version">v{{ threat_watch_version }}</div>
                     </div>
                 </div>
 
-            </div>
-
-            <div class="info-row">
-                <div class="info-card-grid">
+                <div class="info-card-grid info-in-grid">
                     <h3>About UI Toolkit</h3>
                     <p>
                         UI Toolkit is a comprehensive collection of tools designed to enhance
@@ -428,7 +426,7 @@
                     </p>
                 </div>
 
-                <div class="info-card-grid">
+                <div class="info-card-grid info-in-grid">
                     <h3>Getting Started</h3>
                     <ol>
                         <li>Select a tool from the grid above</li>

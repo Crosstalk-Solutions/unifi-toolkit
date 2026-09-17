@@ -31,11 +31,17 @@ from tools.house_arrest.models import (
     LockdownRequest,
     LockdownResponse,
     NetworkInfo,
+    NetworkSettingRequest,
+    DhcpDnsChange,
+    DhcpDnsRequest,
+    DhcpDnsResponse,
     PolicyHealth,
     PrecedenceWarning,
     ReleaseRequest,
     ReleaseResponse,
     StateResponse,
+    WlanInfo,
+    WlanIsolationRequest,
     ZoneInfo,
 )
 
@@ -134,6 +140,10 @@ async def get_state():
         pid = pol.get("_id")
         if pid:
             summary.policy_ids.append(pid)
+        # Which lockdown this is. Read off the first policy that declares it;
+        # every policy in a set carries the same preset.
+        if not summary.preset:
+            summary.preset = P.preset_from_policy(pol) or None
         h = health_by_id.get(pid)
         if h and h["status"] != P.OK:
             summary.status = h["status"]
@@ -216,6 +226,9 @@ async def get_state():
         pid = pol.get("_id")
         if pid:
             entry.policy_ids.append(pid)
+        for nid in ((pol.get("source") or {}).get("network_ids") or []):
+            if nid not in entry.network_ids:
+                entry.network_ids.append(nid)
         dest = pol.get("destination") or {}
         if pol.get("action") == "ALLOW" and dest.get("ips"):
             entry.resolvers = list(dest.get("ips"))
@@ -278,6 +291,169 @@ async def list_clients(online_only: bool = False):
     return out
 
 
+@router.get("/wlans", response_model=List[WlanInfo])
+async def list_wlans():
+    """
+    SSIDs with their client-isolation state and how many clients each carries.
+
+    This is the only control the tool has over same-VLAN peer traffic. A
+    firewall policy never sees that traffic — it does not pass the gateway —
+    so no preset on the Devices tab can touch it.
+    """
+    client, err = await _client_or_error()
+    if err:
+        raise HTTPException(status_code=503, detail=err)
+
+    try:
+        wlans = await client.get_wlans()
+        stations = await client.get_clients()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    # get_clients() returns a dict keyed by MAC, not a list — iterating it
+    # directly yields MAC strings and silently counts nothing.
+    counts: Dict[str, int] = {}
+    for st in (stations or {}).values():
+        if not isinstance(st, dict):
+            continue
+        essid = st.get("essid")
+        if essid:
+            counts[essid] = counts.get(essid, 0) + 1
+
+    out = []
+    for w in wlans:
+        name = w.get("name") or "(unnamed)"
+        out.append(WlanInfo(
+            id=w.get("_id") or "",
+            name=name,
+            enabled=bool(w.get("enabled", True)),
+            isolated=bool(w.get("l2_isolation")),
+            client_count=counts.get(name, 0),
+            network_id=w.get("networkconf_id"),
+        ))
+    out.sort(key=lambda x: (not x.enabled, x.name.lower()))
+    return out
+
+
+@router.post("/wlan-isolation")
+async def set_wlan_isolation(req: WlanIsolationRequest):
+    """
+    Turn client isolation on or off for one SSID.
+
+    Deliberately not folded into any device preset. Isolation is a property of
+    the SSID, so it lands on every client using it — turning it on to contain
+    one television also stops every phone on that SSID casting or printing. A
+    per-device tool must not make that choice on the user's behalf.
+    """
+    client, err = await _client_or_error()
+    if err:
+        raise HTTPException(status_code=503, detail=err)
+
+    ok = await client.set_wlan_isolation(req.wlan_id, req.enabled)
+    if not ok:
+        raise HTTPException(
+            status_code=502,
+            detail=("The controller did not apply the change. Nothing was "
+                    "changed as far as we can confirm — check the UniFi UI."),
+        )
+    return {"ok": True, "wlan_id": req.wlan_id, "isolated": req.enabled}
+
+
+@router.post("/dhcp-dns", response_model=DhcpDnsResponse)
+async def set_dhcp_dns(req: DhcpDnsRequest):
+    """
+    Point a network's DHCP name servers at the approved resolvers.
+
+    This is the other half of a DNS lockdown, and it is deliberately a separate,
+    explicit action rather than something the lockdown does for you. The rules
+    police which resolver a device may TALK to; DHCP decides which one it is
+    TOLD to use. Applying a lockdown while DHCP still advertises a blocked
+    resolver is the main way to take a network's DNS out, so the tool offers to
+    fix it — but changing what every device on a network is told is a bigger
+    blast radius than a firewall rule, and it gets its own confirmation.
+
+    Always previewed first: dry_run reports the from/to per network.
+    """
+    client, err = await _client_or_error()
+    if err:
+        return DhcpDnsResponse(dry_run=req.dry_run, error=err)
+    if not req.network_ids:
+        raise HTTPException(status_code=400, detail="Select at least one network")
+
+    try:
+        payload = P.dhcp_dns_payload(req.resolver_ips)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        networks = await client.get_networks()
+    except Exception as e:
+        return DhcpDnsResponse(dry_run=req.dry_run, error=str(e))
+
+    by_id = {n.get("_id"): n for n in networks}
+    proposed = [v for v in (payload[f] for f in P.DHCP_DNS_FIELDS) if v]
+
+    changes: List[DhcpDnsChange] = []
+    for nid in req.network_ids:
+        n = by_id.get(nid)
+        if n is None:
+            raise HTTPException(status_code=400, detail=f"Unknown network {nid}")
+        changes.append(DhcpDnsChange(
+            network_id=nid,
+            label=n.get("name") or "network",
+            current=P.dhcp_dns_of(n),
+            proposed=list(proposed),
+        ))
+
+    if req.dry_run:
+        return DhcpDnsResponse(dry_run=True, changes=changes)
+
+    for ch in changes:
+        # Already correct: leave it alone and say so, rather than writing a
+        # document back for no reason.
+        if ch.current == ch.proposed:
+            ch.applied = True
+            continue
+        ok = await client.set_network_fields(ch.network_id, **payload)
+        ch.applied = ok
+        if not ok:
+            ch.error = ("The controller did not apply the change. Check the "
+                        "UniFi UI before assuming it took.")
+
+    return DhcpDnsResponse(dry_run=False, changes=changes)
+
+
+@router.post("/network-setting")
+async def set_network_setting(req: NetworkSettingRequest):
+    """
+    Flip one boolean network setting from the inspection matrix.
+
+    Only the columns listed in EDITABLE_COLUMNS can be written, so a crafted
+    request cannot set an arbitrary field on the network object. The write is
+    confirmed by re-reading (set_network_flags polls), because the controller
+    provisions asynchronously and a single immediate re-read reports false
+    failures.
+    """
+    spec = P.editable_column(req.column)
+    if spec is None:
+        raise HTTPException(
+            status_code=400, detail=f"{req.column!r} is not an editable setting")
+
+    client, err = await _client_or_error()
+    if err:
+        raise HTTPException(status_code=503, detail=err)
+
+    field = spec["field"]
+    ok = await client.set_network_flags(req.network_id, **{field: req.value})
+    if not ok:
+        raise HTTPException(
+            status_code=502,
+            detail=(f"The controller did not apply {field}. Nothing was "
+                    f"changed as far as we can confirm — check the UniFi UI."),
+        )
+    return {"ok": True, "field": field, "value": req.value}
+
+
 @router.get("/blocked", response_model=List[BlockedFlow])
 async def blocked(label: Optional[str] = None, hours: int = 24):
     """
@@ -311,7 +487,12 @@ async def blocked(label: Optional[str] = None, hours: int = 24):
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
-    return [BlockedFlow(**row) for row in P.summarize_blocked(flows, our_ids)]
+    # device_label lets a flow blocked by an earlier, now-deleted policy for
+    # THIS device still be attributed, instead of being silently dropped.
+    rows = P.aggregate_blocked(
+        P.summarize_blocked(flows, our_ids, device_label=label)
+    )
+    return [BlockedFlow(**row) for row in rows]
 
 
 @router.post("/isolate", response_model=IsolateResponse)
@@ -447,6 +628,23 @@ async def dns_lockdown(req: DnsLockdownRequest):
         raise HTTPException(status_code=400, detail="Unknown network")
     label = ", ".join(n.get("name") or "network" for n in chosen)
 
+    # Refuse to stack a second lockdown on a network that already has one.
+    # Without this the same set could be written twice — it was, on the bench
+    # console, leaving 10 rules where 5 are correct.
+    already = P.dns_locked_network_ids(P.find_ours(existing))
+    clashes = [
+        f"{n.get('name') or 'network'} (already covered by \"{already[n['_id']]}\")"
+        for n in chosen if n.get("_id") in already
+    ]
+    if clashes:
+        return DnsLockdownResponse(
+            dry_run=req.dry_run,
+            error=("Already locked down: " + "; ".join(clashes) +
+                   ". Release the existing lockdown first, or pick different "
+                   "networks — applying a second set over the first leaves "
+                   "duplicate rules that both have to be cleaned up."),
+        )
+
     # A resolver living on one of the locked-down networks cannot be reached
     # through the gateway, so the rules would never see that traffic.
     unreachable = []
@@ -455,13 +653,23 @@ async def dns_lockdown(req: DnsLockdownRequest):
             if P._ip_in_subnet(ip, n.get("ip_subnet")):
                 unreachable.append(f"{ip} is on {n.get('name')} itself")
 
+    # A resolver has to be allowed in the zone pair it is actually reached
+    # through. Splitting them is what stops a public resolver like 1.1.1.1
+    # from being allowed on the LAN side while the internet block kills it.
+    lan_resolvers, wan_resolvers = P.classify_resolvers(req.resolver_ips, networks)
+
     try:
-        indexes = P.next_free_index(existing, P.dns_policy_count(req.block_dot))
+        indexes = P.next_free_index(
+            existing,
+            P.dns_policy_count(
+                req.block_dot, bool(lan_resolvers), bool(wan_resolvers)
+            ),
+        )
         payloads = P.build_dns_lockdown(
             network_ids=req.network_ids,
             network_label=label,
-            resolver_ips=req.resolver_ips,
-            resolver_zone_id=internal_id,
+            lan_resolvers=lan_resolvers,
+            wan_resolvers=wan_resolvers,
             client_zone_id=internal_id,
             external_zone_id=external_id,
             indexes=indexes,
@@ -470,10 +678,25 @@ async def dns_lockdown(req: DnsLockdownRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    caveats = list(P.DNS_CAVEATS) + [
+    # The likeliest self-inflicted outage: DHCP still advertising a resolver
+    # these rules are about to block. Leads the caveats because it is the one
+    # that actually breaks the network.
+    caveats = P.dhcp_dns_conflicts(chosen, req.resolver_ips)
+    caveats += [
         f"{u} — traffic to it never passes the gateway, so these rules cannot "
         f"police it." for u in unreachable
     ]
+    caveats += list(P.DNS_CAVEATS)
+    if wan_resolvers:
+        caveats.append(
+            f"{', '.join(wan_resolvers)} "
+            + ("is" if len(wan_resolvers) == 1 else "are")
+            + " out on the internet, so "
+            + ("it gets" if len(wan_resolvers) == 1 else "they get")
+            + " its own allow rule on the internet side. Queries to "
+            + ("it" if len(wan_resolvers) == 1 else "them")
+            + " leave your network in the clear, as ordinary DNS always does."
+        )
 
     if req.dry_run:
         return DnsLockdownResponse(dry_run=True, payloads=payloads, caveats=caveats)
@@ -563,6 +786,7 @@ async def list_networks():
             vlan=n.get("vlan"),
             isolation_enabled=n.get("network_isolation_enabled"),
             mdns_enabled=n.get("mdns_enabled"),
+            dhcp_dns=P.dhcp_dns_of(n),
             purpose=n.get("purpose"),
         ))
     out.sort(key=lambda x: x.vlan or 0)
@@ -715,6 +939,21 @@ async def lockdown(req: LockdownRequest):
         return LockdownResponse(
             dry_run=req.dry_run,
             error="Could not find Internal and External zones on this console",
+        )
+
+    # Same guard as DNS: a second preset over a device that already has one
+    # leaves two contradictory rule sets, and the tool would then report
+    # whichever it happened to read first.
+    arrested = P.arrested_macs(P.find_ours(existing))
+    dupes = [
+        f"{m} (already under \"{arrested[m.lower()]}\")"
+        for m in req.macs if m.lower() in arrested
+    ]
+    if dupes:
+        return LockdownResponse(
+            dry_run=req.dry_run,
+            error=("Already locked down: " + "; ".join(dupes) +
+                   ". Release it first, then apply the new preset."),
         )
 
     try:

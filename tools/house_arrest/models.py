@@ -19,6 +19,11 @@ class NetworkInfo(BaseModel):
     isolation_enabled: Optional[bool] = None
     mdns_enabled: Optional[bool] = None
     purpose: Optional[str] = None
+    # What DHCP hands out on this network. Carried here so the DNS tab can
+    # show it beside the resolver picker — deciding which networks to force
+    # onto a resolver means knowing what they currently advertise, and that
+    # used to require switching tabs.
+    dhcp_dns: List[str] = Field(default_factory=list)
 
 
 class ClientInfo(BaseModel):
@@ -53,6 +58,19 @@ class BlockedFlow(BaseModel):
     destination: str = "unknown"
     destination_ip: Optional[str] = None
     port: Optional[int] = None
+    # How many distinct destination ports were folded into this row, and how
+    # many separate flow records. A chatty device hits one peer on dozens of
+    # ephemeral ports, which is one fact, not dozens.
+    port_count: int = 1
+    flow_count: int = 1
+    # "connection" = TCP, or UDP aimed at a service port. "return_traffic" =
+    # UDP aimed at an ephemeral port, which is the far side of someone else's
+    # conversation rather than this device reaching out.
+    kind: str = "connection"
+    # "ours" = a live House Arrest policy stopped this. "stale" = a policy that
+    # carried our name for this device but is no longer on the controller (the
+    # leftover of an earlier lockdown). "other" = somebody else's rule.
+    attribution: str = "ours"
     protocol: Optional[str] = None
     count: int = 1
     policy: Optional[str] = None
@@ -140,6 +158,9 @@ class DnsLockdownEntry(BaseModel):
     resolvers: List[str] = Field(default_factory=list)
     policy_ids: List[str] = Field(default_factory=list)
     blocks_dot: bool = False
+    # Which networks this covers, so the picker can mark them before the user
+    # selects one and hits the duplicate guard as an error.
+    network_ids: List[str] = Field(default_factory=list)
 
 
 class StateResponse(BaseModel):
@@ -187,6 +208,11 @@ class MatrixCell(BaseModel):
     state: str = "neutral"
     label: str = "—"
     detail: str = ""
+    # Whether this particular cell can be changed from the table. Decided on
+    # the server so the UI can never offer a switch the controller will ignore,
+    # and so editability can depend on more than the column (site state, the
+    # network's own purpose) without the browser having to know any of it.
+    editable: bool = False
 
 
 class MatrixRow(BaseModel):
@@ -259,3 +285,54 @@ class SystemStatus(BaseModel):
     connected: bool
     arrests_active: int = 0
     policies_broken: int = 0
+
+
+class NetworkSettingRequest(BaseModel):
+    """One boolean network setting, flipped from the inspection matrix."""
+    network_id: str
+    column: str = Field(..., description="Matrix column key, e.g. 'mdns'")
+    value: bool
+
+
+class DhcpDnsRequest(BaseModel):
+    """Point a network's DHCP name servers at the approved resolvers."""
+    network_ids: List[str]
+    resolver_ips: List[str]
+    dry_run: bool = True
+
+
+class DhcpDnsChange(BaseModel):
+    """What one network's DHCP name servers would go from, and to."""
+    network_id: str
+    label: str
+    current: List[str] = []
+    proposed: List[str] = []
+    applied: bool = False
+    error: Optional[str] = None
+
+
+class DhcpDnsResponse(BaseModel):
+    dry_run: bool = True
+    changes: List[DhcpDnsChange] = []
+    error: Optional[str] = None
+
+
+class WlanInfo(BaseModel):
+    """
+    One SSID and whether its clients can reach each other.
+
+    `client_count` is what makes the trade-off concrete: isolation applies to
+    every client on the SSID, so the number of devices about to lose local
+    connectivity belongs next to the switch.
+    """
+    id: str
+    name: str
+    enabled: bool = True
+    isolated: bool = False
+    client_count: int = 0
+    network_id: Optional[str] = None
+
+
+class WlanIsolationRequest(BaseModel):
+    wlan_id: str
+    enabled: bool

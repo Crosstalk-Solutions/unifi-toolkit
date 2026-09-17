@@ -474,6 +474,522 @@ lockdown. Noted as a possible future feature, not adopted here. Its advice to
 "put the TV in an IoT VLAN with default-deny toward other segments" is what
 Quarantine already does.
 
+## MEASURED 2026-09-16: firewall policy ordering is PER ZONE PAIR
+
+This corrects the earlier note that the stored `index` "is not the one you
+send" and should just be re-checked afterwards. That was true but incomplete,
+and the incomplete version caused a real bug.
+
+**The measurement.** Dumping every custom policy with its zone pair:
+
+```
+  10000 ALLOW  Internal -> Internal    Madelena to n8n
+  10000 BLOCK  Internal -> External    House Arrest: testclient - no internet
+  10001 ALLOW  Internal -> Internal    SSH to Madelena
+  10002 ALLOW  Internal -> Internal    TEST ANY to Elgato2
+  10003 BLOCK  Internal -> Internal    House Arrest: MasterBedRokuUltra - no LAN
+  10004 BLOCK  Internal -> Internal    House Arrest: testclient - no LAN
+```
+
+Two *enabled* policies both sit at index 10000. They are in different zone
+pairs. Every Internal -> Internal policy has a unique index. So the index
+counter, and therefore evaluation order, is scoped to a
+(source zone, destination zone) pair — not to the site.
+
+**The disproof, had it been wrong:** if ordering were site-wide, that duplicate
+index could not exist.
+
+### Bug this caused #1 — false rollback (reported symptom)
+
+`dns_order_is_safe()` compared every ALLOW against every BLOCK site-wide. The
+internet-facing block routinely lands at a lower index than the LAN allow,
+because it is counted in its own pair starting near 10000. The check read that
+as an inversion and rolled the whole lockdown back with:
+
+> "The gateway placed the allow rule after the block rules, which would have
+> left these networks with no working DNS at all. Everything was rolled back;
+> nothing changed."
+
+Nothing was actually wrong. The two rules never evaluate against each other.
+Fixed by grouping the created policies by zone pair and only comparing within
+a pair. A pair holding blocks but no allow is legitimate — it means no
+approved resolver is reached that way.
+
+### Bug this caused #2 — public resolvers were silently fatal (not reported)
+
+`build_dns_lockdown()` always created its single ALLOW with
+`resolver_zone_id=internal_id`. With an internal resolver that happens to be
+correct. With a public one (1.1.1.1, 8.8.8.8) the allow landed in the Internal
+pair where it does nothing, while the Internal -> External block on port 53
+killed the query — total DNS loss for the chosen networks, and the rollback
+check would not have caught it because the *indexes* looked fine.
+
+Fixed by `classify_resolvers()`, which splits approved resolvers by whether
+they fall inside a configured LAN subnet, and emitting one ALLOW per zone pair
+that actually holds a resolver.
+
+### Also discovered
+
+`PUT /proxy/network/v2/api/site/{site}/firewall-policies/batch-reorder` exists
+(it rejects a list with a JSON parse error rather than 404) and its payload
+requires `sourceZoneId` and `destinationZoneId` — independent confirmation that
+ordering is per zone pair. Not used yet; creation order within a pair has been
+sufficient. It is the endpoint to reach for if placement ever needs forcing.
+
+## MEASURED 2026-09-16: DHCP and the DNS rules are not kept in step
+
+The rules police which resolver a device may TALK to. DHCP decides which
+resolver it is TOLD to use. Nothing links them.
+
+Measured on the live console: the Guests VLAN hands out `192.168.200.12` and
+`1.1.1.1` via `dhcpd_dns_1..4`, while `.50/.51` were being set as the approved
+resolvers. Applying that would have left every device on Guests pointed at an
+address it was no longer allowed to reach — a self-inflicted outage that every
+existing check would have passed.
+
+`dhcp_dns_conflicts()` now compares the two and leads the caveat list when they
+disagree. **DNS Lockdown does not and should not write DHCP settings** — it
+creates firewall policies only. The fix is the user's to make in
+Settings -> Networks -> <network>, and the tool says so.
+
+## CORRECTED 2026-09-16: "You reaching in to it" understated the exposure
+
+`allow_inbound` narrows the BLOCK to the NEW and INVALID connection states with
+the locked-down device as SOURCE. A connection STARTED by anything else never
+matches the policy at all, and the device's ESTABLISHED reply flows back
+freely. That is *every device that can already route to it*, not the person
+reading the page.
+
+The row label is now "Other devices reaching in to it", the checkbox reads
+"Let other devices still reach this device", and the eight scenario images say
+"Other devices" rather than "You". Saying "me" promised a narrowness the
+firewall was never delivering.
+
+## Editable inspection-matrix cells
+
+Four of the six matrix columns are a single boolean on the network object and
+can be flipped from the table: `isolation` (`network_isolation_enabled`),
+`internet` (`internet_access_enabled`), `mdns` (`mdns_enabled`) and `upnp`
+(`upnp_lan_enabled`). `EDITABLE_COLUMNS` in `policies.py` is the whitelist and
+the `/api/network-setting` endpoint enforces it, so a crafted request cannot
+set an arbitrary field on the network document.
+
+**Zone and DNS are deliberately not editable.** Zone is membership in a zone
+other networks also belong to — changing it is a move whose blast radius
+reaches every network in both zones, not a toggle. DNS is a list of addresses
+(`dhcpd_dns_1..4`), so there is no second state to toggle *to*; a one-click
+cell would have to invent one.
+
+This does not fight the isolation tool: `isolated_networks` is derived purely
+from the native flags with no ownership marker, so a network isolated from the
+matrix, from the isolate form, or from the UniFi UI all read identically.
+
+## MEASURED 2026-09-16: the blocked-attempts panel was under-reporting badly
+
+Reported as "I don't believe this data". Correct instinct — two independent
+bugs were eating more than half of it.
+
+**Bug 1: the fetch stopped at one page.** `get_blocked_flows()` sent
+`pageNumber: 0, pageSize: 200` and returned whatever came back. The response
+carries `has_next` and `total_element_count`, both ignored. Measured: page 0 at
+size 200 returned *exactly* 200 flows with `has_next: true`, while the real
+total was 249 flows / 788 attempts. Now paginated, with a `max_pages` ceiling.
+
+**Bug 2: flows blocked by a replaced policy were silently dropped.** Two
+policies existed with the identical name
+`House Arrest: MasterBedRokuUltra - no LAN` but different ids:
+
+```
+  6aaad4a7c0c0564963fb0b2b   519 attempts   (live, owned by the tool)
+  6aaabcd0c0c0564963faf8ec   274 attempts   (not on the controller any more)
+```
+
+The second is the leftover of an earlier lockdown of the same device.
+`summarize_blocked()` attributed strictly by live policy id and threw the rest
+away, losing 87 flows / 274 attempts — over a third of that device — with no
+indication anything had been discarded.
+
+Attribution is now a tier, not a filter: `ours` (live policy id), `stale`
+(policy name matches `NAME_PREFIX` + this device's label, id no longer owned)
+and `other`. The headline counts `ours` + `stale`; every row names the rule
+that stopped it and says when that rule was an earlier one. The `stale` tier is
+name-based and therefore weaker than id attribution, which is exactly why it is
+reported as its own tier and never folded in as though the current rule did it.
+
+Combined, the device went from a reported 425 attempts to a true 798.
+
+## MEASURED 2026-09-16: that device's blocked traffic is all return traffic
+
+Over 7 days, the same locked-down Roku: 246 flows, 778 attempts, **100% UDP**,
+and **not one destination port below 32768**. Every packet was aimed at an
+ephemeral port on one of exactly four hosts — the PC and phones that actually
+use that Roku.
+
+A device probing the LAN does not look like that. It contacts services on
+well-known ports (8060 Roku ECP, 1900 SSDP, 5353 mDNS, 53, 443) and it spreads
+across hosts. Traffic to a scatter of high ports on precisely the devices that
+talk to it has the shape of the far side of a conversation they opened.
+
+INFERRED, not measured: that these are specifically replies whose UDP conntrack
+entry expired and so re-entered as NEW. The obvious test — querying flows with
+the Roku as DESTINATION — returned zero rows, but the `destination_mac` filter
+is unverified and may simply be ignored, so **that null result proves nothing
+and is not cited as evidence** (see rule 9).
+
+The operational conclusion does not depend on the mechanism: these rows are not
+the device reaching out, and listing them as "what it tried to reach" is
+misleading. `flow_kind()` splits rows into `connection` (TCP, or UDP to a port
+below 32768) and `return_traffic` (UDP to an ephemeral port). The panel leads
+with connection attempts and says plainly when there are none; return traffic
+is parked behind a disclosure with its count stated. **It is never dropped** —
+hiding data silently is the bug this section exists to record.
+
+## DHCP name servers CAN be written, and now are (opt-in)
+
+Confirmed against a live network document: `dhcpd_dns_1..4` are plain string
+fields gated by `dhcpd_dns_enabled`, on the same document the tool already
+read-modify-PUTs. So yes, the tool can set them.
+
+`set_network_flags()` could not — it verified with `bool(stored) == bool(sent)`,
+which would call `'8.8.8.8'` and `'1.1.1.1'` equal. Split into
+`set_network_fields()` (exact comparison) over a shared `_write_network()`.
+
+This is exposed as a separate **"Also fix DHCP"** action on the DNS tab, always
+previewed, never folded into Apply. Rationale: the firewall rules decide which
+resolver a device may talk to and DHCP decides which one it is told to use;
+nothing links them, so leaving them inconsistent is the main way to take a
+network's DNS out. But changing what every device on a network is told is a
+wider blast radius than a firewall rule, so it gets its own confirmation — and
+the UI says the change lands on lease renewal, not immediately.
+
+Unused slots are written as empty strings rather than left alone, or a resolver
+the user just removed keeps being advertised.
+
+## FAILED 2026-09-16: mDNS forwarding cannot be written through any API route found
+
+Recorded because the next session will otherwise rediscover it.
+
+`mdns_enabled` on the network document is a **read-only projection**. Writing
+it the ordinary way returns `200 {"meta":{"rc":"ok"},"data":[]}` and the value
+reads back unchanged at 0s, 2s and 5s. The tool's verification caught this
+correctly and refused to claim success — which is what the user saw as "the
+toggle isn't working". The report was accurate; the toggle genuinely could not
+work.
+
+The underlying control is the site-level setting:
+
+```json
+{"key": "mdns", "enabled_for": "some", "mode": "all",
+ "enabled_for_network_ids": ["66311ae3...", "6633b432...", "6633bca6...", "699b7a01..."]}
+```
+
+Removing a network id from `enabled_for_network_ids` was attempted four ways.
+**All four returned 200 and echoed back the UNCHANGED list** — the controller
+accepts the request and ignores the field:
+
+| Attempt | Result |
+|---|---|
+| `PUT  /api/s/{site}/rest/setting/mdns/{_id}` | 200, list unchanged |
+| `PUT  /api/s/{site}/rest/setting/mdns` | 200, list unchanged |
+| `POST /api/s/{site}/set/setting/mdns` | 200, list unchanged |
+| `POST /api/s/{site}/set/setting/mdns/{_id}` | 200, list unchanged |
+| `PUT  /v2/api/site/{site}/lan/{network_id}` | 404 |
+
+Note the echo: the response body itself carries the old list, so this is an
+inline rejection, not slow provisioning. `mode: "all"` alongside
+`enabled_for: "some"` is unexplained and may be relevant.
+
+**Resolution for now:** the mDNS column is read-only, and its hover text says
+the change has to be made in the UniFi UI because the controller accepts the
+API change and then ignores it. A switch that silently no-ops is worse than no
+switch.
+
+**To unblock it:** capture what the console actually sends. Open the UniFi UI in
+Chrome, DevTools -> Network, toggle Multicast DNS on a network, and read the
+request off the Payload tab. That is the documented technique in CLAUDE.md and
+it is how the v2 traffic-flows payload was worked out.
+
+## MEASURED 2026-09-16: UPnP is off site-wide, so the per-network flag is inert
+
+`rest/setting/usg` reports `upnp_enabled: false`. While that master switch is
+off, `upnp_lan_enabled` on a network does nothing. The matrix now reads the
+site setting, shows the cell as "Off (site-wide)" with that explanation, and
+does not offer it as a toggle.
+
+This is why matrix editability moved from a per-COLUMN judgement in the browser
+to a per-CELL `editable` flag decided on the server: whether UPnP can be
+changed depends on site state, not just on which column it is.
+
+## CORRECTED 2026-09-16: flow_kind polarity — a ping sweep was being hidden
+
+The first version listed what counted as a connection and defaulted everything
+else to return traffic:
+
+```python
+if proto == "TCP": return "connection"
+if isinstance(port, int) and port < EPHEMERAL_PORT: return "connection"
+return "return_traffic"          # <- ICMP has no port, so it landed here
+```
+
+An ICMP host-discovery sweep carries no port at all and therefore fell through
+to the hidden bucket. A sweep is precisely the thing this panel must not bury.
+
+Inverted: demote **only** the pattern actually measured — UDP aimed at a port
+>= 32768 — and treat everything else as the device reaching out. Default to
+showing. Covered by a case table including TCP at any port, SSDP/mDNS/ECP/DNS,
+ICMP with a null and a zero port, and unknown protocols.
+
+## UPnP column removed 2026-09-16
+
+UniFi ships UPnP off, and nobody should be turning it on. The column was
+surfacing a setting that is off by default, inert on this console anyway
+(`rest/setting/usg` -> `upnp_enabled: false`), and not something the tool
+should invite anyone to change. Removed rather than left read-only: an
+always-"Off" column is noise in a table meant to show what is actually open.
+
+The per-cell `editable` flag introduced for it stays — it is the right shape
+regardless, because editability can depend on site state rather than only on
+which column a cell is in.
+
+## The LG TV story, and what this tool would and would not have shown
+
+[REFERENCE, from press coverage — not verified on the bench here.] In early
+September 2026 a Gamers Nexus / Level1Techs investigation reported that LG
+smart TVs sweep the local network and profile what they find. Reported details:
+one TV enumerated 38 devices (phones, smartwatches, a 3D printer, an air
+purifier, thermostats), collecting device names, MAC addresses, internal IPs and
+signal strength, plus nearby Wi-Fi SSIDs and channels. Coverage names **mDNS and
+SSDP** as the discovery mechanism, with reverse DNS to name whatever does not
+announce itself. LG has publicly denied the central claims.
+
+**Would the blocked-traffic panel show this?** Only when the traffic crosses the
+gateway, and with an important gap:
+
+* mDNS (udp/5353), SSDP (udp/1900) and reverse DNS (53) are all below
+  `EPHEMERAL_PORT`, so they classify as `connection` and appear in the panel by
+  default. Any TCP probe does too, at any port. An ICMP sweep does after the
+  polarity correction above — before it, that case was being hidden.
+* **But a sweep of the TV's OWN VLAN is invisible to this tool and always will
+  be.** mDNS and SSDP are multicast and link-local; that traffic never reaches
+  the gateway, so no firewall policy sees it and nothing appears in the flow
+  data. This is the same measured limitation the `peers` path already reports
+  as "Devices on its own VLAN: still reachable". A TV sharing a VLAN with the
+  phones it is profiling is the worst case and the panel would stay empty.
+* Cross-VLAN discovery is only possible at all where **mDNS forwarding** is on
+  for the network — which makes that column's read-only status (see the mDNS
+  failure above) more annoying than it first looked, since it is the single
+  switch most relevant to this behaviour.
+
+**What this means for the tool's advice.** Quarantine into an isolated VLAN
+remains the right answer for a TV, and for the right reason: it is the only
+preset that changes which peers exist rather than trying to filter traffic the
+gateway never sees. Worth stating plainly in any user-facing writing: House
+Arrest can stop a TV phoning home and can stop it reaching other VLANs, but it
+cannot stop it profiling devices sitting next to it on the same VLAN. Only
+per-network Device Isolation or per-SSID Client Isolation does that.
+
+## UI corrections 2026-09-16 (round 4)
+
+**Current DNS per network, on the DNS tab.** Choosing which networks to force
+onto a resolver means knowing what they already advertise, which meant
+switching to the Networks tab and back. `NetworkInfo` now carries `dhcp_dns`,
+and a compact table sits under the picker. Two things it does beyond echoing
+the Networks tab: the row for a selected network is highlighted, and an
+advertised resolver that is NOT on the approved list is drawn in red with a
+count beneath. That combination — selected network, unapproved resolver — is
+precisely the self-inflicted outage the DHCP checkbox exists to prevent, so it
+is worth showing at the moment of the decision rather than after.
+
+**The DNS form resets after a successful apply.** It previously kept the
+network ticked, both checkboxes set and the resolver list populated, which
+invites applying the same lockdown twice without noticing — and that had
+already happened on the bench console, where Guests showed **10 rules** for
+what should be a 5-rule lockdown. Now: network selection, DoT and the DHCP
+option all reset; the approved resolver list stays, because it is almost always
+the same for the next network. The green confirmation and the refreshed
+"currently enforcing" list were already correct.
+
+**Hardened one template expression.** `p.name.replace(...)` in the rules
+preview threw on a payload without a name. An uncaught throw inside an Alpine
+expression kills reactivity for the whole component, not just that node, so it
+is guarded even though real payloads always carry a name.
+
+## Dashboard layout 2026-09-16
+
+Four tools made `repeat(auto-fit, minmax(350px, 1fr))` reflow the fourth onto a
+row of its own, stranding the info cards and the Rogue Support banner far down
+the page. Now an explicit `repeat(3, 1fr)` with the two info cards moved INTO
+the same grid, giving exactly two rows of three:
+
+```
+Wi-Fi Stalker | House Arrest  | Network Pulse
+Threat Watch  | About         | Getting Started
+```
+
+House Arrest and Threat Watch swapped so the active tool leads. `.info-row` is
+gone; `.info-card-grid.info-in-grid` gives the info cards the tool cards'
+footprint while staying visually lighter (no icon, no button, smaller heading).
+Breakpoints: 2 columns under 1200px, 1 under 768px.
+
+## UI corrections 2026-09-16 (round 3)
+
+**Networks tab is three sub-sections, in the order you work in them.** Isolate
+a network -> Networks currently isolated -> Wi-Fi client isolation, each with a
+heading and a 2px rule. The "currently isolated" list had drifted to the very
+bottom of the tab, under a Wi-Fi heading it has nothing to do with; "what did I
+just do" belongs directly under the control that did it.
+
+While moving it, two real bugs:
+
+* The list was wrapped in `<template x-if>` *and* the new sub-section carried
+  the same `x-show`. The x-if was redundant, and worse — when its closing tag
+  was lost in the move, the Wi-Fi block was parsed INTO the template. Alpine
+  only clones a template's first root element, so **the entire Wi-Fi section
+  silently stopped rendering** while the HTML still contained it. Tag-balance
+  counting caught the imbalance; the DOM walk proved the block was absent.
+  Lesson: `<template x-if>` must wrap exactly one root element, and a lost
+  closing tag there fails silently rather than loudly.
+* An orphaned `</div></template>` pair was left behind after the move, which
+  closed `.isolate-block` early.
+
+**"Also fix DHCP" is now a checkbox, not a button.** It sits directly above
+"Also block DNS-over-TLS" in the same format, with the same kind of
+explanation, because it is an option ON a DNS lockdown rather than a separate
+task. As a button with a tooltip it was both misaligned and buried — and it is
+the single most consequential option on that tab, since getting it wrong is how
+a network loses DNS entirely. Previewing now shows both halves together, and
+applying does the rules first: they are the half that can fail and roll itself
+back, and there is no sense repointing every device on a network at resolvers
+whose allow rule did not survive.
+
+The preview also distinguishes "will change" from "already match" per network,
+rather than rendering `a, b -> a, b` under a heading claiming a change.
+
+**Devices under arrest now show which lockdown they are under.** The row said
+"Enforcing" without ever saying what was being enforced, so a device on
+Internet only and one on Full lockdown looked identical. `preset_from_policy()`
+reads it back out of the description (`[HouseArrest] <preset> for <label>`) and
+returns it **only** when it matches a known preset name — an unrecognised value
+shows nothing rather than guessing at a lockdown level.
+
+## Built 2026-09-16: the blind spot, and Wi-Fi client isolation
+
+Two changes, shipped together on purpose.
+
+**The blind spot is now a first-class element** on the Devices tab, not a grey
+footnote. "Devices on its own VLAN: still reachable" was technically present
+and practically invisible, which let the page imply a completeness it does not
+have. It now states what no rule on that page can stop, and names the only two
+things that do: a VLAN of the device's own (Quarantine), or Client Isolation on
+its SSID.
+
+One deliberate omission: the callout does NOT name the device's VLAN. The first
+version did, and printed **"Default"** for a Roku measured to be on IDIoT —
+straight into the documented `stat/sta` wrong-network quirk. A callout whose
+entire job is honesty must not print a fact it cannot stand behind, so it says
+"its own VLAN" and stops there.
+
+**Wi-Fi client isolation** is on the Networks tab: every SSID with its client
+count and isolation state, behind a confirm dialog. It is kept out of the
+device presets on purpose — isolation belongs to the SSID, so containing one
+television also stops every phone on it casting or printing. The dialog leads
+with that count ("all 31 devices on this SSID, not just the one you are worried
+about") because that number is the decision.
+
+`client_count` comes from `get_clients()`, which returns a dict keyed by MAC
+rather than a list; iterating it directly yields MAC strings and silently
+counts zero. Iterate `.values()`.
+
+## MEASURED 2026-09-16: what is and is not buildable against the LG threat model
+
+Probed while looking for gaps the LG story exposes. The negative results matter
+as much as the positive one — they close off three plausible-sounding features.
+
+### `l2_isolation` on a WLAN is real and IS writable  [Measured]
+
+Per-SSID client isolation is `l2_isolation` on the `rest/wlanconf` document.
+Tested on `Sherwood_guest` (0 clients, so nothing to disrupt): PUT flipped it
+True -> False, confirmed at 0s/2s/4s, and it was restored. Unlike
+`mdns_enabled`, this one actually takes.
+
+This is **the only lever found that stops a device profiling peers on its own
+VLAN**, which is the central LG behaviour. Current site state:
+
+| SSID | l2_isolation | clients |
+|---|---|---|
+| Sherwood_forest | False | 8 |
+| IDIoT | False | 31 |
+| Sherwood_guest | True | 0 |
+| Elgato | False | 3 |
+
+Limits to state plainly wherever this is offered: it is **wireless only**, it
+applies to **every client on that SSID**, and it breaks casting, AirPlay and
+local printing for all of them. The IDIoT SSID carrying 31 clients with
+isolation off is the realistic version of that trade-off.
+
+### There is NO per-network Device Isolation field  [Measured]
+
+The network document carries only `network_isolation_enabled`, which is the
+cross-network control this tool already uses. Nothing on it isolates clients
+from each other within the network. For wired devices that would need a
+switch-port ACL, which was not found in the API surface examined.
+
+### `traffic-flows` returns ONLY blocked flows  [Measured]
+
+This kills the idea of a pre-lockdown audit ("show me what this TV is doing
+before I lock it down"). Queried with no `action` filter at all:
+
+* Roku, locked down: 363 flows, every one `action: blocked`
+* VENGEANCE, an active PC that is NOT locked down: **0 flows**
+
+The endpoint is the firewall log, not a netflow record. There is no "what is
+this device talking to" data to draw on unless a policy is already stopping it.
+
+### DPI is not a fallback  [Measured]
+
+`stat/stadpi` and `stat/sitedpi` both return 200 with an empty payload on this
+console, so per-client application breakdown is unavailable without the user
+first enabling Traffic Identification. Blocked flows also carry an empty
+`domains[]`, so domain-level visibility is not available either.
+
+### Consequence for the roadmap
+
+"Show what the device is doing" can only ever be a **post**-lockdown view here:
+"since you locked this down, it has tried to reach N distinct devices". That is
+still the number the LG story makes concrete (the investigation reported 38),
+and it only counts attempts that crossed the gateway — same-VLAN sweeping stays
+invisible no matter what.
+
+## Scenario infographics (UI)
+
+The Devices tab draws each preset as a picture beside the verdict list, in
+`tools/house_arrest/static/images/`. Two invariants keep the pictures honest:
+
+1. **There is one image per `(preset, inbound)` pair, not one per preset.**
+   The inbound direction is a checkbox rather than a preset property, so a
+   single per-preset picture starts contradicting the row list the moment the
+   box is unticked. Eight files: `scenario-<preset>-<inbound|noinbound>.png`.
+   `scenarioKey()` in `app.js` builds the filename from the same two values
+   `pathRows()` reads, so the list and the picture cannot drift apart.
+
+2. **The drawn spokes must match `PRESET_EFFECTS`.** Each image draws four
+   spokes — Internet, Other networks, Same VLAN, You — in the same fixed
+   positions, so switching presets changes only the colours. Solid green is
+   allowed, red dashed with an X is blocked, amber with a relocation glyph is
+   `moved` (quarantine only, where the bottom group is redrawn as "New VLAN"
+   inside a dashed amber pen because relocating changes *which* peers exist
+   rather than cutting peer traffic).
+
+**If you add or change a preset, regenerate its two images.** A preset with no
+matching file renders a broken image; worse, a preset whose effects changed but
+whose picture did not is the tool claiming protection it is not delivering.
+The `alt` text is generated from the rendered verdicts rather than written by
+hand, so it stays correct on its own.
+
+Images were generated with Gemini (Nano Banana) and are flat-vector art on a
+white ground in both themes, framed in their own white card. They are cropped,
+resized to 900px wide and palette-quantised (~40 KB each).
+
 ## Open items before building
 
 1. **[Inferred]** Whether `client_macs` accepts multiple MACs in one policy in practice,

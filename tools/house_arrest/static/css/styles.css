@@ -165,39 +165,112 @@ h2 {
 
 .trust-actions { margin-left: auto; }
 
-.tabs {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
-    flex-wrap: wrap;
+/* Tool switcher.
+ *
+ * These are three separate tools sharing a page, not three views of one
+ * thing, so they are drawn as cards with their own icon and their own job.
+ * The old version was three near-identical text tabs, which read as a filter.
+ * Only the active card gets a lit icon chip, a top rule and a raised surface,
+ * so which tool you are in is legible from across the room. */
+
+.tool-tabs-hint {
+    margin: 0 0 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
 }
-.tab {
-    flex: 1 1 180px;
+
+.tool-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1.75rem;
+}
+
+.tool-tab {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
     text-align: left;
-    padding: 0.75rem 1rem;
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    background: var(--surface);
+    padding: 0.9rem 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--surface-sunken);
     color: var(--text-secondary);
     font-family: inherit;
-    font-size: 0.95rem;
-    font-weight: 600;
     cursor: pointer;
-    transition: border-color 0.2s, background 0.2s, color 0.2s;
+    overflow: hidden;
+    transition: border-color 0.15s, background 0.15s, color 0.15s,
+                box-shadow 0.15s;
 }
-.tab:hover { border-color: var(--primary-color); }
-.tab.is-active {
+
+/* Top rule on the active card. Scaled rather than toggled so the switch
+   reads as movement between tools, not a repaint. */
+.tool-tab::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 4px;
+    background: var(--primary-color);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.2s ease;
+}
+
+.tool-tab:hover {
+    border-color: var(--secondary-color);
+    background: var(--surface);
+}
+.tool-tab.is-active {
     border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface));
+    background: var(--surface);
     color: var(--text-primary);
+    box-shadow: var(--shadow);
 }
-.tab:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-.tab-sub {
-    display: block;
-    font-size: 0.75rem;
+.tool-tab.is-active::before { transform: scaleX(1); }
+.tool-tab:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+
+.tool-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border-color);
+    color: var(--secondary-color);
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tool-icon svg { width: 20px; height: 20px; }
+.tool-tab.is-active .tool-icon {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+}
+
+.tool-text { display: flex; flex-direction: column; min-width: 0; }
+.tool-name { font-size: 1rem; font-weight: 700; line-height: 1.3; }
+.tool-tab.is-active .tool-name { color: var(--primary-color); }
+/* The dark-mode primary is too dim against the raised card, so the active
+   name falls back to the plain heading colour there. */
+:root[data-theme="dark"] .tool-tab.is-active .tool-name { color: var(--text-primary); }
+.tool-sub {
+    font-size: 0.8125rem;
     font-weight: 400;
     color: var(--text-secondary);
-    margin-top: 0.1rem;
+    line-height: 1.3;
+}
+
+@media (max-width: 760px) {
+    .tool-tabs { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tool-tab, .tool-tab::before, .tool-icon { transition: none; }
 }
 
 .net-picker {
@@ -382,6 +455,21 @@ select:focus, input[type="text"]:focus {
     margin-bottom: 0.875rem;
 }
 
+/* Verdict list on the left, the picture of the same verdicts on the right.
+   The list used to run the full width of the card, which parked each verdict
+   an inch away from the label it described. */
+.paths-split {
+    display: grid;
+    /* The list column is sized to the list, not to half the card, so the
+       verdicts sit next to their labels instead of being stranded against a
+       column edge with an inch of nothing after them. */
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    gap: 1.75rem;
+    align-items: center;
+}
+
+.paths-list { min-width: 0; width: 100%; max-width: 440px; }
+
 .path {
     display: flex;
     align-items: center;
@@ -389,6 +477,53 @@ select:focus, input[type="text"]:focus {
     padding: 0.5rem 0;
 }
 .path + .path { border-top: 1px solid var(--border-color); }
+
+/* Key to the line styles. The rows and the diagram share one visual
+   vocabulary, so it is explained once, next to both. */
+.path-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    margin-top: 1rem;
+    padding-top: 0.875rem;
+    border-top: 1px solid var(--border-color);
+}
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.78125rem;
+    color: var(--text-secondary);
+}
+.legend-item svg { flex: none; width: 34px; height: 12px; }
+
+/* The artwork is drawn on white in both themes, so it gets its own white
+   card rather than bleeding into a dark surface. */
+.paths-figure {
+    margin: 0;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: #ffffff;
+}
+.paths-figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 6px;
+}
+.paths-figure figcaption {
+    margin-top: 0.5rem;
+    text-align: center;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #374151;
+}
+
+@media (max-width: 900px) {
+    .paths-split { grid-template-columns: 1fr; }
+    .paths-list { max-width: none; }
+}
 
 .path-line {
     flex: none;
@@ -766,3 +901,278 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
     .field-row { grid-template-columns: 1fr; }
     .trust-actions { margin-left: 0; width: 100%; }
 }
+
+/* ---------------------------------------------------------------------------
+   Editable matrix cells + the toggle dialog
+   ------------------------------------------------------------------------ */
+
+/* Only the columns backed by a single boolean on the network are clickable, so
+   they have to look clickable — an affordance, not just a cursor change. */
+.cell.is-editable {
+    cursor: pointer;
+    position: relative;
+}
+.cell.is-editable:hover,
+.cell.is-editable:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--primary-color);
+}
+/* Tucked into the cell's corner rather than sitting inline: the cell label is
+   a block, so an inline glyph dropped to its own line and read as a value. */
+.cell-edit {
+    position: absolute;
+    top: 0.3rem;
+    right: 0.4rem;
+    font-size: 0.7rem;
+    line-height: 1;
+    color: var(--text-secondary);
+    opacity: 0.45;
+    pointer-events: none;
+}
+.cell.is-editable:hover .cell-edit { opacity: 1; color: var(--primary-color); }
+/* The same glyph used inline in prose, where it has no cell to anchor to. */
+.cell-edit.is-inline { position: static; opacity: 1; font-size: 0.8125rem; }
+.tip-cta {
+    display: block;
+    margin-top: 0.4rem;
+    font-weight: 600;
+    color: var(--accent-color);
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.55);
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+    z-index: 50;
+}
+.modal {
+    width: min(520px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+    padding: 1.5rem;
+}
+.modal h3 { margin: 0 0 0.25rem; font-size: 1.05rem; }
+.modal-net { margin: 0 0 0.875rem; font-size: 0.95rem; }
+.modal-detail {
+    margin: 0 0 1rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    line-height: 1.55;
+}
+
+/* The change itself, stated as from -> to. A dialog that only says "turn this
+   off" makes the reader reconstruct what it is currently set to. */
+.modal-change {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 0.875rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--surface-sunken);
+    font-size: 0.95rem;
+}
+.modal-change strong { color: var(--primary-color); }
+:root[data-theme="dark"] .modal-change strong { color: var(--text-primary); }
+
+.modal-warn {
+    margin: 0 0 1rem;
+    padding: 0.7rem 0.9rem;
+    border-left: 3px solid var(--warning-color);
+    background: color-mix(in srgb, var(--warning-color) 10%, var(--surface));
+    border-radius: 0 8px 8px 0;
+    font-size: 0.8125rem;
+    line-height: 1.55;
+}
+
+/* Blocked attempts: aggregated rows still need a ceiling, because a busy
+   device can reach a lot of distinct destinations. */
+.blocked-scroll.is-scrolling {
+    max-height: 22rem;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+/* Return traffic sits below the attempts it was crowding out, disclosed with
+   its count rather than dropped. */
+.return-traffic {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-top: 0.875rem;
+    padding-top: 0.875rem;
+    border-top: 1px solid var(--border-color);
+}
+.return-traffic .btn { flex: none; }
+.return-traffic .hint { margin: 0; }
+
+/* ---------------------------------------------------------------------------
+   The blind spot, and the one control that addresses it
+   ------------------------------------------------------------------------ */
+
+/* Same-VLAN peer traffic is the one thing no policy on this page can touch.
+   It used to be a grey footnote under the diagram, which let the page imply a
+   completeness it does not have. Sized like the warning it is. */
+.blindspot {
+    margin-top: 1.25rem;
+    padding: 1rem 1.15rem;
+    border: 1px solid var(--warning-color);
+    border-left-width: 4px;
+    border-radius: 0 10px 10px 0;
+    background: color-mix(in srgb, var(--warning-color) 8%, var(--surface));
+}
+.blindspot h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+.blindspot p { margin: 0 0 0.6rem; font-size: 0.875rem; line-height: 1.6; }
+.blindspot-fix { font-weight: 600; margin-bottom: 0.35rem !important; }
+.blindspot ul {
+    margin: 0;
+    padding-left: 1.15rem;
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+.blindspot li { margin-bottom: 0.4rem; }
+.blindspot li:last-child { margin-bottom: 0; }
+
+.wifi-isolation h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+
+.wlan-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+.wlan-table th {
+    text-align: left;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border-color);
+}
+.wlan-table td {
+    padding: 0.6rem;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.9rem;
+    vertical-align: middle;
+}
+.wlan-table tr:last-child td { border-bottom: none; }
+.wlan-table tr.is-off td { opacity: 0.55; }
+.wlan-table td:last-child { text-align: right; }
+.wlan-table .hint { display: block; margin: 0; }
+
+/* ---------------------------------------------------------------------------
+   Sub-sections within a tab
+   ------------------------------------------------------------------------ */
+
+/* The Networks tab stacks three unrelated jobs — isolate a network, see what
+   is isolated, isolate an SSID's clients. Run together they read as one long
+   form, and the "currently isolated" list ended up stranded at the bottom
+   under a Wi-Fi heading it had nothing to do with. */
+.subsection {
+    margin-top: 1.75rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid var(--border-color);
+}
+.subsection.is-first { margin-top: 0; padding-top: 0; border-top: none; }
+.subsection > h3 {
+    margin: 0 0 0.4rem;
+    font-size: 1rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+/* wifi-isolation carried its own rule before .subsection existed. */
+.wifi-isolation.subsection { margin-top: 1.75rem; padding-top: 1.5rem; }
+
+/* Which lockdown a device is actually under. The row said "Enforcing" without
+   ever saying what was being enforced, so two devices under opposite presets
+   looked identical. */
+.preset-chip {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary-color) 12%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--primary-color) 35%, var(--surface));
+    color: var(--primary-color);
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+:root[data-theme="dark"] .preset-chip { color: var(--text-primary); }
+
+/* ---------------------------------------------------------------------------
+   Current DNS per network, on the DNS tab
+   ------------------------------------------------------------------------ */
+
+/* Deciding which networks to force onto a resolver means knowing what they
+   already advertise. That used to mean switching to the Networks tab, so a
+   compact copy lives here, beside the picker it informs. */
+.dns-current {
+    margin: 1.25rem 0 1.5rem;
+    padding: 1rem 1.15rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--surface-sunken);
+}
+.dns-current-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+.dns-current-head .hint { margin: 0; }
+
+.dns-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.dns-table th {
+    text-align: left;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    font-weight: 600;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+.dns-table td {
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+.dns-table tr:last-child td { border-bottom: none; }
+/* The rows you are about to change, marked while you pick them. */
+.dns-table tr.is-chosen td {
+    background: color-mix(in srgb, var(--primary-color) 7%, transparent);
+    font-weight: 600;
+}
+
+.dns-ip {
+    display: inline-block;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Courier New', monospace;
+    font-size: 0.8125rem;
+}
+.dns-ip + .dns-ip::before { content: ", "; font-family: inherit; }
+/* An advertised resolver that is not on the approved list: this is the one
+   that takes a network's DNS out once the block rules land. */
+.dns-ip.is-stale {
+    color: var(--danger-color);
+    font-weight: 700;
+}
+
+/* A network that already has a DNS lockdown. Greyed in the picker so the
+   duplicate guard on the server never has to fire as an error. */
+.net-option.is-taken { opacity: 0.55; cursor: not-allowed; }
+.net-option.is-taken .hint { display: block; margin: 0.1rem 0 0 1.6rem; }

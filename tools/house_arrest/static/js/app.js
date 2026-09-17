@@ -29,6 +29,16 @@ function houseArrest() {
         networkPresets: [],
         presets: [],
         pathLabels: {},
+        assetVersion: '',
+        toggle: null,
+        wlans: [],
+        wlansLoading: false,
+        wlanToggle: null,
+        showReturnTraffic: false,
+        dnsFixDhcp: false,
+        dhcpPreview: null,
+        dhcpPreviewing: false,
+        dhcpApplying: false,
         inspection: null,
         openBlocked: null,
         blockedFlows: [],
@@ -65,11 +75,13 @@ function houseArrest() {
             this.presets = this.readJson('ha-presets', []);
             this.pathLabels = this.readJson('ha-path-labels', {});
             this.networkPresets = this.readJson('ha-network-presets', []);
+            this.assetVersion = this.readJson('ha-asset-version', '');
             if (this.networkPresets.length) this.isoPreset = this.networkPresets[0].value;
             if (this.presets.length) this.preset = this.presets[0].value;
 
             await this.refresh();
             this.loadNetworks();
+            this.loadWlans();
             this.loadInspection();
             setInterval(() => this.refresh(true), 60000);
         },
@@ -248,6 +260,11 @@ function houseArrest() {
                 }
                 this.dnsPreview = data.payloads;
                 this.dnsCaveats = data.caveats || [];
+                // Preview both halves together, so "Review changes" shows the
+                // whole change rather than only the firewall part.
+                this.dhcpPreview = this.dnsFixDhcp
+                    ? await this.dhcpPreviewFor(true)
+                    : null;
             } finally {
                 this.dnsPreviewing = false;
             }
@@ -276,8 +293,46 @@ function houseArrest() {
                         kind: 'ok',
                         text: 'DNS lockdown applied — ' + data.created.length + ' rules created.'
                     };
+                    // DHCP goes second on purpose: the rules are the half
+                    // that can fail and roll itself back, and there is no
+                    // sense repointing every device on a network at resolvers
+                    // whose allow rule did not survive.
+                    if (this.dnsFixDhcp) {
+                        try {
+                            const dhcp = await this.dhcpPreviewFor(false);
+                            this.dhcpPreview = dhcp;
+                            const failed = (dhcp.changes || []).filter(c => !c.applied);
+                            if (failed.length) {
+                                this.message = {
+                                    kind: 'warn',
+                                    text: 'Rules applied, but DHCP did not take on ' +
+                                          failed.length + ' network(s) — check the UniFi UI.'
+                                };
+                            } else {
+                                this.message.text +=
+                                    ' DHCP now hands out the approved resolvers.';
+                            }
+                        } catch (e) {
+                            this.message = {
+                                kind: 'warn',
+                                text: 'Rules applied, but the DHCP change failed: ' + e.message
+                            };
+                        }
+                    }
                     this.dnsPreview = null;
+                    this.dhcpPreview = null;
+                    this.dnsCaveats = [];
+                    // Clear what was just consumed, keep what is reusable. The
+                    // approved resolver list is almost always the same for the
+                    // next network, so it stays; the network selection and the
+                    // per-lockdown options do not carry over, and leaving them
+                    // ticked invites applying the same thing twice without
+                    // noticing.
+                    this.dnsNetworks = [];
+                    this.dnsBlockDot = false;
+                    this.dnsFixDhcp = false;
                     await this.refreshAll();
+                    await this.loadNetworks();
                 }
             } finally {
                 this.dnsApplying = false;
@@ -297,6 +352,7 @@ function houseArrest() {
         async toggleBlocked(label) {
             if (this.openBlocked === label) { this.openBlocked = null; return; }
             this.openBlocked = label;
+            this.showReturnTraffic = false;
             this.blockedLoading = true;
             this.blockedFlows = [];
             try {
@@ -399,6 +455,300 @@ function houseArrest() {
                 fixed: false
             });
             return rows;
+        },
+
+        // ---- Wi-Fi client isolation ----
+        //
+        // The only control in this tool that reaches traffic between devices on
+        // the same VLAN. A firewall policy never sees that traffic, so no
+        // per-device preset can do this job — which is exactly the gap the LG
+        // network-scanning reporting is about.
+        //
+        // Kept as its own action rather than bundled into a preset: isolation
+        // belongs to the SSID, so containing one television also stops every
+        // phone on that SSID casting or printing. That is the user's call.
+
+        async loadWlans() {
+            this.wlansLoading = true;
+            try {
+                const res = await fetch('api/wlans');
+                this.wlans = res.ok ? await res.json() : [];
+            } catch (e) {
+                this.wlans = [];
+            } finally {
+                this.wlansLoading = false;
+            }
+        },
+
+        openWlanToggle(w) {
+            this.wlanToggle = {
+                id: w.id,
+                name: w.name,
+                isolated: w.isolated,
+                client_count: w.client_count,
+                next: !w.isolated,
+                saving: false,
+                error: null,
+            };
+        },
+
+        async applyWlanToggle() {
+            if (!this.wlanToggle) return;
+            this.wlanToggle.saving = true;
+            this.wlanToggle.error = null;
+            try {
+                const res = await fetch('api/wlan-isolation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        wlan_id: this.wlanToggle.id,
+                        enabled: this.wlanToggle.next,
+                    }),
+                });
+                if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    this.wlanToggle.error = body.detail ||
+                        'The controller rejected the change. Nothing was altered.';
+                    this.wlanToggle.saving = false;
+                    return;
+                }
+                const name = this.wlanToggle.name;
+                const on = this.wlanToggle.next;
+                this.wlanToggle = null;
+                this.message = {
+                    kind: '',
+                    text: on
+                        ? `Client isolation is on for ${name}. Devices there can no longer reach each other.`
+                        : `Client isolation is off for ${name}. Devices there can reach each other again.`,
+                };
+                // Re-read rather than patching locally: the table should show
+                // what the controller actually has.
+                await this.loadWlans();
+            } catch (e) {
+                this.wlanToggle.error = String(e);
+                this.wlanToggle.saving = false;
+            }
+        },
+
+        // ---- blocked traffic: attempts vs return traffic ----
+        //
+        // The server tags each aggregated destination as "connection" or
+        // "return_traffic". Return traffic is UDP aimed at an ephemeral port,
+        // which is the far side of a conversation the OTHER device opened —
+        // measured at 100% of one real device's blocked traffic over 7 days.
+        // Showing it inline made the panel useless, so it is parked behind a
+        // disclosure with its count stated. It is never discarded.
+
+        connectionFlows() {
+            return this.blockedFlows.filter(f => f.kind !== 'return_traffic');
+        },
+
+        returnFlows() {
+            return this.blockedFlows.filter(f => f.kind === 'return_traffic');
+        },
+
+        returnAttempts() {
+            return this.returnFlows().reduce((n, f) => n + (f.count || 0), 0);
+        },
+
+        // Distinct peers, not rows: a destination can appear more than once
+        // because rows are split by which rule blocked them.
+        returnDeviceCount() {
+            return new Set(this.returnFlows().map(f => f.destination)).size;
+        },
+
+        shownFlows() {
+            return this.showReturnTraffic ? this.blockedFlows : this.connectionFlows();
+        },
+
+        // ---- DHCP name servers ----
+        //
+        // Previewed and applied as part of the DNS flow rather than from its
+        // own button: it is an option ON a lockdown, not a separate task. It is
+        // also the likeliest way to take a network's DNS out, so it belongs in
+        // the same review as the firewall rules.
+
+        // Networks already covered by a DNS lockdown. The server refuses these
+        // outright; the picker greys them out so it never gets that far.
+        dnsLockedIds() {
+            return (this.state.dns_lockdowns || [])
+                .flatMap(l => l.network_ids || []);
+        },
+
+        // Advertised resolvers on the CHOSEN networks that are not on the
+        // approved list. Each one is a device about to be told to use a
+        // resolver these rules will block — the exact self-inflicted outage
+        // the DHCP checkbox exists to prevent.
+        staleResolverCount() {
+            const approved = this.dnsResolverList();
+            if (!approved.length) return 0;
+            return this.networks
+                .filter(n => this.dnsNetworks.includes(n.id))
+                .reduce((total, n) => total +
+                    (n.dhcp_dns || []).filter(ip => !approved.includes(ip)).length, 0);
+        },
+
+        // True only when at least one network would actually change. Saying
+        // "will change" over a list where every row already matches is a small
+        // lie, and this tool does not get to tell small ones.
+        dhcpChangesNeeded() {
+            const changes = (this.dhcpPreview && this.dhcpPreview.changes) || [];
+            return changes.some(c => c.current.join(',') !== c.proposed.join(','));
+        },
+
+        async dhcpPreviewFor(dryRun) {
+            const res = await fetch('api/dhcp-dns', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    network_ids: this.dnsNetworks,
+                    resolver_ips: this.dnsResolverList(),
+                    dry_run: dryRun,
+                }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.detail || 'DHCP request failed.');
+            if (body.error) throw new Error(body.error);
+            return body;
+        },
+
+        // ---- editable matrix cells ----
+        //
+        // Only the four columns that are a single boolean on the network can be
+        // flipped here. The server enforces the same list, so this is about
+        // what the UI offers, not about what it is allowed to do.
+
+        EDITABLE: {
+            isolation: { on: 'On', off: 'Off' },
+            internet:  { on: 'Allowed', off: 'Blocked' },
+        },
+
+        // The server decides per cell, not per column. Editability can depend
+        // on site-wide state, not just on which column this is, so the browser
+        // asks rather than infers.
+        cellEditable(row, col) {
+            const cell = row.cells[col.key];
+            return !!(cell && cell.editable) &&
+                Object.prototype.hasOwnProperty.call(this.EDITABLE, col.key);
+        },
+
+        // The matrix cell label is the source of truth for the current value,
+        // so the dialog reads the state off the same thing the user just
+        // clicked rather than re-deriving it from a second copy of the data.
+        openToggle(row, col) {
+            const spec = this.EDITABLE[col.key];
+            if (!spec || !this.cellEditable(row, col)) return;
+            const cell = row.cells[col.key] || {};
+            const isOn = cell.label === spec.on;
+            const next = !isOn;
+
+            this.toggle = {
+                networkId: row.id,
+                networkName: row.name,
+                vlan: row.vlan,
+                column: col.key,
+                columnLabel: col.label,
+                detail: cell.detail || '',
+                currentLabel: isOn ? spec.on : spec.off,
+                nextLabel: next ? spec.on : spec.off,
+                // Each cell's "on" label maps to the field being true:
+                // isolation On, and internet Allowed. So the value
+                // to write is simply the state being moved to.
+                value: next,
+                warning: this.toggleWarning(col.key, next),
+                saving: false,
+                error: null,
+            };
+        },
+
+        toggleWarning(key, next) {
+            const W = {
+                isolation: [
+                    'Devices here will be able to reach your other networks again. If House Arrest isolated this network, this releases it.',
+                    'Every device on this network loses access to your other networks, now and in future.',
+                ],
+                internet: [
+                    'Every device on this network loses internet access, now and in future.',
+                    'Devices here get internet access back.',
+                ],
+            };
+            const pair = W[key];
+            return pair ? (next ? pair[1] : pair[0]) : '';
+        },
+
+        async applyToggle() {
+            if (!this.toggle) return;
+            this.toggle.saving = true;
+            this.toggle.error = null;
+            try {
+                const res = await fetch('api/network-setting', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        network_id: this.toggle.networkId,
+                        column: this.toggle.column,
+                        value: this.toggle.value,
+                    }),
+                });
+                if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    this.toggle.error = body.detail ||
+                        'The controller rejected the change. Nothing was altered.';
+                    this.toggle.saving = false;
+                    return;
+                }
+                const name = this.toggle.networkName;
+                const label = this.toggle.columnLabel;
+                const to = this.toggle.nextLabel;
+                this.toggle = null;
+                this.message = { kind: '', text: `${label} for ${name} is now ${to}.` };
+                // Re-read rather than patching the cell locally: the matrix is
+                // supposed to show what the controller actually has.
+                await this.loadInspection();
+                this.refresh(true);
+            } catch (e) {
+                this.toggle.error = String(e);
+                this.toggle.saving = false;
+            }
+        },
+
+        // ---- scenario infographic ----
+        //
+        // The picture beside the verdict list. There is one image per
+        // (preset, inbound) pair rather than one per preset, because the
+        // inbound direction is a checkbox rather than a preset property — a
+        // single per-preset picture would contradict the list the moment the
+        // box was unticked, which is exactly the kind of quiet lie this tool
+        // exists to avoid. Filenames are built from the same two values the
+        // rows are, so the two cannot drift apart.
+
+        scenarioKey() {
+            const preset = this.preset ||
+                (this.presets.length ? this.presets[0].value : 'full_lockdown');
+            return preset + '-' + (this.allowInbound ? 'inbound' : 'noinbound');
+        },
+
+        scenarioImage() {
+            return '/arrest/static/images/scenario-' + this.scenarioKey() + '.png' +
+                (this.assetVersion ? '?v=' + this.assetVersion : '');
+        },
+
+        // Generated from the rendered verdicts rather than written by hand, so
+        // a screen reader gets the diagram's actual content.
+        scenarioAlt() {
+            const p = this.currentPreset();
+            const verdicts = this.pathRows()
+                .map(r => r.label + ': ' + this.verdictText(r).toLowerCase())
+                .join('. ');
+            return 'Diagram of ' + (p ? p.label : 'this lockdown') + '. ' + verdicts + '.';
+        },
+
+        scenarioCaption() {
+            const p = this.currentPreset();
+            const name = p ? p.label : 'This lockdown';
+            return name + (this.allowInbound
+                ? ' — other devices can still reach in to it'
+                : ' — nothing can reach in to it');
         },
 
         pathStroke(verdict) {
