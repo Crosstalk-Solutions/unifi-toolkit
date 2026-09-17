@@ -13,7 +13,7 @@ cryptography>=44.0.1
 aiohttp>=3.10.0
 starlette>=0.47.2
 bcrypt>=4.0.0
-python-multipart>=0.0.6
+python-multipart>=0.0.32
 itsdangerous>=2.2.0
 
 # Security: Minimum versions to address known CVEs
