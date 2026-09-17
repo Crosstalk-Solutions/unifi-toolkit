@@ -256,7 +256,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     CSRF_PROTECTED_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 
     # API paths that need CSRF protection (when using protected methods)
-    API_PREFIXES = ["/api/", "/stalker/api/", "/threats/api/", "/pulse/api/"]
+    API_PREFIXES = ["/api/", "/stalker/api/", "/threats/api/", "/pulse/api/", "/arrest/api/"]
 
     # Paths exempt from CSRF (login form uses traditional form submission)
     CSRF_EXEMPT_PATHS = ["/login"]

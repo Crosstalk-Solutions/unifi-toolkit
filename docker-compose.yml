@@ -15,6 +15,10 @@ services:
       - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./data/unifi_toolkit.db}
       # Deployment settings
       - DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE:-local}
+      # The app needs DOMAIN too (not just Caddy): Caddy passes the public Host
+      # header upstream, and the anti-rebinding check must recognise it.
+      - DOMAIN=${DOMAIN:-}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-}
       - AUTH_USERNAME=${AUTH_USERNAME:-}
       - AUTH_PASSWORD_HASH=${AUTH_PASSWORD_HASH:-}
       # UniFi settings (optional)

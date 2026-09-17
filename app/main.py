@@ -185,8 +185,96 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+
+class RebindingProtectionMiddleware(BaseHTTPMiddleware):
+    """
+    Reject requests whose Host header we don't recognise, to defeat DNS
+    rebinding.
+
+    In the default (local) deployment there is no auth, and the app binds
+    0.0.0.0. Without this check, a web page the user merely visits could rebind
+    its own hostname to this box's LAN IP and drive the firewall-rewriting
+    endpoints from the victim's browser. The rebound request still carries the
+    attacker's own Host header, so refusing any Host that isn't a private-side
+    identity blocks it while leaving every legitimate access path working:
+
+      * any IP literal (direct LAN access by address)
+      * localhost / loopback
+      * a local-network name suffix (.local/.lan/.internal/.home[.arpa])
+      * the configured reverse-proxy DOMAIN
+      * anything explicitly listed in ALLOWED_HOSTS ("*" disables the check)
+
+    Runs in every mode — the exposure exists with or without auth.
+    """
+    import ipaddress as _ipaddress
+    LOCAL_SUFFIXES = (".local", ".lan", ".internal", ".home", ".home.arpa")
+
+    def __init__(self, app):
+        super().__init__(app)
+        s = get_settings()
+        allow = {"localhost"}
+        if s.domain:
+            allow.add(s.domain.strip().lower())
+        self.wildcard = False
+        extra = getattr(s, "allowed_hosts", None)
+        if extra:
+            for h in extra.split(","):
+                h = h.strip().lower()
+                if h == "*":
+                    self.wildcard = True
+                elif h:
+                    allow.add(h)
+        self.allow = allow
+
+    @staticmethod
+    def _hostname(raw: str) -> str:
+        raw = (raw or "").strip()
+        if raw.startswith("["):                      # [ipv6](:port)
+            return raw[1:raw.index("]")].lower() if "]" in raw else raw[1:].lower()
+        if raw.count(":") == 1:                       # host:port
+            raw = raw.rsplit(":", 1)[0]
+        return raw.strip().lower().rstrip(".")
+
+    def _allowed(self, raw_host: str) -> bool:
+        if self.wildcard:
+            return True
+        host = self._hostname(raw_host)
+        if not host:
+            return False
+        if host in self.allow:
+            return True
+        try:
+            self._ipaddress.ip_address(host)          # any IP literal
+            return True
+        except ValueError:
+            pass
+        return host.endswith(self.LOCAL_SUFFIXES)
+
+    async def dispatch(self, request, call_next):
+        # /health must answer regardless (container/Caddy health probes may use
+        # a bare IP or service name).
+        if request.url.path == "/health":
+            return await call_next(request)
+        if not self._allowed(request.headers.get("host", "")):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=400,
+                content={"detail": (
+                    "Host header not allowed. If you reach this toolkit through a "
+                    "public domain or reverse proxy, set DOMAIN or ALLOWED_HOSTS "
+                    "to include that hostname."
+                )},
+            )
+        return await call_next(request)
+
+
 # Add authentication middleware (must be added before routes)
 app.add_middleware(AuthMiddleware)
+
+# Anti-rebinding is added LAST so it is the OUTERMOST middleware and refuses a
+# forged Host before auth or any route sees it (Starlette runs the last-added
+# middleware first on the request path).
+app.add_middleware(RebindingProtectionMiddleware)
 
 # Include authentication router
 app.include_router(auth_router)

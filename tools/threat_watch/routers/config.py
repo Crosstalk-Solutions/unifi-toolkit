@@ -11,6 +11,7 @@ from shared.database import get_db_session
 from shared.models.unifi_config import UniFiConfig
 from shared.crypto import encrypt_password, decrypt_password, encrypt_api_key, decrypt_api_key
 from shared.unifi_client import UniFiClient
+from shared.url_validator import validate_controller_url
 from tools.threat_watch.models import SuccessResponse
 
 router = APIRouter(prefix="/api/config", tags=["configuration"])
@@ -74,6 +75,11 @@ async def save_unifi_config(
     """
     Save UniFi controller configuration
     """
+    # Reject SSRF-prone controller URLs (non-http(s) schemes, embedded creds).
+    url_ok, url_err = validate_controller_url(config.controller_url)
+    if not url_ok:
+        raise HTTPException(status_code=400, detail=url_err)
+
     if not config.password and not config.api_key:
         raise HTTPException(
             status_code=400,

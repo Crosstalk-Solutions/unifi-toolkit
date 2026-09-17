@@ -12,6 +12,7 @@ from shared.database import get_db_session
 from shared.models.unifi_config import UniFiConfig
 from shared.crypto import encrypt_password, decrypt_password, encrypt_api_key, decrypt_api_key
 from shared.unifi_client import UniFiClient
+from shared.url_validator import validate_controller_url
 
 router = APIRouter(prefix="/api/config", tags=["configuration"])
 
@@ -93,6 +94,13 @@ async def save_unifi_config(
     from shared.unifi_session import invalidate_shared_client
 
     try:
+        # Reject controller URLs that could be used for SSRF (non-http(s)
+        # schemes, embedded credentials). Private IPs are allowed — that is
+        # where a controller legitimately lives.
+        url_ok, url_err = validate_controller_url(config.controller_url)
+        if not url_ok:
+            raise HTTPException(status_code=400, detail=url_err)
+
         # Validate that either password or API key is provided
         if not config.password and not config.api_key:
             raise HTTPException(
@@ -208,6 +216,12 @@ async def test_unifi_credentials(config: UniFiConfigCreate):
     Test UniFi credentials WITHOUT saving them first.
     Use this to validate credentials before saving.
     """
+    # Reject SSRF-prone controller URLs (non-http(s) schemes, embedded
+    # credentials) before we connect. Private IPs remain allowed.
+    url_ok, url_err = validate_controller_url(config.controller_url)
+    if not url_ok:
+        return UniFiConnectionTest(connected=False, error=url_err)
+
     # Validate that either password or API key is provided
     if not config.password and not config.api_key:
         return UniFiConnectionTest(
