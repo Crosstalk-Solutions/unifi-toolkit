@@ -14,7 +14,7 @@ aiohttp>=3.10.0
 starlette>=0.47.2
 bcrypt>=4.0.0
 python-multipart>=0.0.6
-itsdangerous>=2.1.0
+itsdangerous>=2.2.0
 
 # Security: Minimum versions to address known CVEs
 urllib3>=2.6.0      # GHSA-gm62-xv2j-4w53, GHSA-2xpw-w6gg-jr37
