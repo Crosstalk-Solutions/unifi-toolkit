@@ -1,0 +1,29 @@
+name: Tests
+
+# Gates every pull request (and pushes to main) on the pytest suite, so a
+# regression like the stale House Arrest policy tests can't land unnoticed
+# again. Runs on the same Python the Docker image ships (3.12).
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: python -m pytest

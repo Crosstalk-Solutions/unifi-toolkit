@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from shared.url_validator import validate_webhook_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +70,13 @@ async def deliver_webhook(
         signal_strength: Signal strength in dBm (for connected/roamed events)
         offline_duration: Duration in seconds the device was offline (for connected events)
     """
+    # Re-validate at delivery, not just at save. A URL that resolved to a public
+    # host when saved can be repointed at an internal service afterwards (DNS
+    # rebinding / TOCTOU); this check re-resolves and blocks private/reserved IPs.
+    url_ok, url_err = validate_webhook_url(webhook_url)
+    if not url_ok:
+        logger.error(f"Refusing to deliver webhook — URL failed validation: {url_err}")
+        return False
     try:
         # Format message based on webhook type
         if webhook_type == 'slack':
@@ -354,6 +363,12 @@ async def deliver_threat_webhook(
         category: Threat category
         is_test: Whether this is a test notification
     """
+    # Re-validate at delivery (see deliver_webhook) — re-resolves DNS and blocks
+    # private/reserved IPs so a saved URL can't be rebound at an internal target.
+    url_ok, url_err = validate_webhook_url(webhook_url)
+    if not url_ok:
+        logger.error(f"Refusing to deliver threat webhook — URL failed validation: {url_err}")
+        return False
     try:
         # Format message based on webhook type
         if webhook_type == 'slack':

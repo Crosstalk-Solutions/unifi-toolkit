@@ -83,3 +83,6 @@ docker-compose.override.yml
 /docs/ROADMAP.md
 CLAUDE.md
 .claude/
+
+# Playwright MCP session artifacts
+.playwright-mcp/

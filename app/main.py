@@ -23,6 +23,7 @@ from tools.threat_watch.main import create_app as create_threat_watch_app
 from tools.threat_watch.scheduler import start_scheduler as start_threat_scheduler, stop_scheduler as stop_threat_scheduler
 from tools.network_pulse.main import create_app as create_pulse_app
 from tools.network_pulse.scheduler import start_scheduler as start_pulse_scheduler, stop_scheduler as stop_pulse_scheduler
+from tools.house_arrest.main import create_app as create_arrest_app
 
 # Import authentication router and middleware
 from app.routers.auth import router as auth_router, AuthMiddleware, is_auth_enabled, verify_session
@@ -168,7 +169,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="UI Toolkit",
     description="Comprehensive toolkit for UniFi network management and monitoring",
-    version="1.11.2",
+    version="1.13.0",
     lifespan=lifespan
 )
 
@@ -184,8 +185,96 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+
+class RebindingProtectionMiddleware(BaseHTTPMiddleware):
+    """
+    Reject requests whose Host header we don't recognise, to defeat DNS
+    rebinding.
+
+    In the default (local) deployment there is no auth, and the app binds
+    0.0.0.0. Without this check, a web page the user merely visits could rebind
+    its own hostname to this box's LAN IP and drive the firewall-rewriting
+    endpoints from the victim's browser. The rebound request still carries the
+    attacker's own Host header, so refusing any Host that isn't a private-side
+    identity blocks it while leaving every legitimate access path working:
+
+      * any IP literal (direct LAN access by address)
+      * localhost / loopback
+      * a local-network name suffix (.local/.lan/.internal/.home[.arpa])
+      * the configured reverse-proxy DOMAIN
+      * anything explicitly listed in ALLOWED_HOSTS ("*" disables the check)
+
+    Runs in every mode — the exposure exists with or without auth.
+    """
+    import ipaddress as _ipaddress
+    LOCAL_SUFFIXES = (".local", ".lan", ".internal", ".home", ".home.arpa")
+
+    def __init__(self, app):
+        super().__init__(app)
+        s = get_settings()
+        allow = {"localhost"}
+        if s.domain:
+            allow.add(s.domain.strip().lower())
+        self.wildcard = False
+        extra = getattr(s, "allowed_hosts", None)
+        if extra:
+            for h in extra.split(","):
+                h = h.strip().lower()
+                if h == "*":
+                    self.wildcard = True
+                elif h:
+                    allow.add(h)
+        self.allow = allow
+
+    @staticmethod
+    def _hostname(raw: str) -> str:
+        raw = (raw or "").strip()
+        if raw.startswith("["):                      # [ipv6](:port)
+            return raw[1:raw.index("]")].lower() if "]" in raw else raw[1:].lower()
+        if raw.count(":") == 1:                       # host:port
+            raw = raw.rsplit(":", 1)[0]
+        return raw.strip().lower().rstrip(".")
+
+    def _allowed(self, raw_host: str) -> bool:
+        if self.wildcard:
+            return True
+        host = self._hostname(raw_host)
+        if not host:
+            return False
+        if host in self.allow:
+            return True
+        try:
+            self._ipaddress.ip_address(host)          # any IP literal
+            return True
+        except ValueError:
+            pass
+        return host.endswith(self.LOCAL_SUFFIXES)
+
+    async def dispatch(self, request, call_next):
+        # /health must answer regardless (container/Caddy health probes may use
+        # a bare IP or service name).
+        if request.url.path == "/health":
+            return await call_next(request)
+        if not self._allowed(request.headers.get("host", "")):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=400,
+                content={"detail": (
+                    "Host header not allowed. If you reach this toolkit through a "
+                    "public domain or reverse proxy, set DOMAIN or ALLOWED_HOSTS "
+                    "to include that hostname."
+                )},
+            )
+        return await call_next(request)
+
+
 # Add authentication middleware (must be added before routes)
 app.add_middleware(AuthMiddleware)
+
+# Anti-rebinding is added LAST so it is the OUTERMOST middleware and refuses a
+# forged Host before auth or any route sees it (Starlette runs the last-added
+# middleware first on the request path).
+app.add_middleware(RebindingProtectionMiddleware)
 
 # Include authentication router
 app.include_router(auth_router)
@@ -205,6 +294,10 @@ app.mount("/threats", threat_watch_app)
 pulse_app = create_pulse_app()
 app.mount("/pulse", pulse_app)
 
+# Mount House Arrest sub-application
+arrest_app = create_arrest_app()
+app.mount("/arrest", arrest_app)
+
 # Mount main app static files (for dashboard)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
@@ -218,16 +311,18 @@ async def root(request: Request):
     from tools.wifi_stalker import __version__ as stalker_version
     from tools.threat_watch import __version__ as threat_watch_version
     from tools.network_pulse import __version__ as pulse_version
+    from tools.house_arrest import __version__ as arrest_version
 
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "auth_enabled": is_auth_enabled(),
             "app_version": app_version,
             "stalker_version": stalker_version,
             "threat_watch_version": threat_watch_version,
-            "pulse_version": pulse_version
+            "pulse_version": pulse_version,
+            "arrest_version": arrest_version
         }
     )
 
@@ -241,6 +336,7 @@ async def health_check():
     from tools.wifi_stalker import __version__ as stalker_version
     from tools.threat_watch import __version__ as threat_watch_version
     from tools.network_pulse import __version__ as pulse_version
+    from tools.house_arrest import __version__ as arrest_version
 
     return {
         "status": "healthy",
@@ -248,7 +344,8 @@ async def health_check():
         "tools": {
             "wifi_stalker": stalker_version,
             "threat_watch": threat_watch_version,
-            "network_pulse": pulse_version
+            "network_pulse": pulse_version,
+            "house_arrest": arrest_version
         }
     }
 
@@ -267,6 +364,7 @@ async def get_debug_info():
     from tools.wifi_stalker import __version__ as stalker_version
     from tools.threat_watch import __version__ as threat_watch_version
     from tools.network_pulse import __version__ as pulse_version
+    from tools.house_arrest import __version__ as arrest_version
     from shared import cache
 
     settings = get_settings()
@@ -285,7 +383,8 @@ async def get_debug_info():
         "tool_versions": {
             "wifi_stalker": stalker_version,
             "threat_watch": threat_watch_version,
-            "network_pulse": pulse_version
+            "network_pulse": pulse_version,
+            "house_arrest": arrest_version
         },
         "deployment": {
             "type": settings.deployment_type,

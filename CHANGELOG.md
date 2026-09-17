@@ -2,6 +2,50 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.13.0] - unreleased
+
+### Added
+- **House Arrest** - New tool for locking a device or a whole network down using UniFi's zone-based firewall. Three tabs: Networks (isolation and a status matrix), DNS Lockdown, and Devices.
+  - **Device lockdown** - Per-device by MAC, so wired and wireless are covered identically. Three presets (Full lockdown, Internet only, LAN only), always previewed before applying, and release removes exactly the policies it created and refuses anything else. Verified end to end against a real device.
+  - **Blocked traffic view** - Shows what each lockdown actually stopped, attributed to our own policy by id, so another rule's blocks are never counted as ours.
+  - **Network isolation** - Uses UniFi's own `network_isolation_enabled` / `internet_access_enabled` settings rather than parallel rules, so this tool and the UniFi UI can never disagree.
+  - **Isolation matrix** - Networks against security settings, each intersection explaining itself on hover. The DNS column compares each advertised resolver against the network's own subnet, because a resolver inside the network cannot be filtered by the gateway.
+  - **DNS Lockdown** - Force chosen networks onto approved resolvers and block DNS to anywhere else, optionally including DNS-over-TLS. Rule order decides whether this works at all, so the stored order is verified after applying and the whole set rolled back if the allow rule did not land ahead of the blocks.
+  - Known limits are shown next to the claims they qualify rather than left to be discovered: same-VLAN traffic cannot be filtered by any firewall policy, DNS survives a lockdown when the resolver is on the device's own subnet, established connections continue, and DNS-over-HTTPS is not covered.
+- **Multi-select device picker (House Arrest)** - The Devices-tab picker is now a searchable combo box: filter by name, IP, or MAC (separator-insensitive), filter by VLAN, and select several devices to lock down together under a single policy. Each row shows the device's IP, MAC tail, and network so identically-named devices (e.g. three "Samsung"s) are distinguishable, and any device already under arrest is greyed out.
+- **Mechanism diagrams (House Arrest)** - Inline flat-vector diagrams for DNS Lockdown and for each network-isolation preset, showing exactly what the mode allows and blocks — including the same-VLAN peer-traffic blind spot no firewall policy can close.
+
+### Removed
+- **The "Quarantine + VLAN move" preset.** It moved the device with UniFi's per-client virtual-network override, and on a wired client that mechanism was measured half-applying: the device obtained a DHCP lease on the target VLAN and then sat with no working L2 at all — ARP to its own gateway and to same-VLAN peers failed — while the controller and the UniFi UI reported contradictory locations for it. A quarantine whose outcome the platform cannot report coherently cannot be verified, so the preset is gone. The UI now says it plainly: a device that truly needs quarantining gets a dedicated VLAN assigned natively in UniFi (its switch port's network, or a dedicated Wi-Fi network), which House Arrest can then isolate and DNS-lock reliably. Release still recognises pre-removal quarantine policies and clears their VLAN override.
+
+### Fixed
+- **Quarantine release could silently strand a device (House Arrest).** A duplicate `preset_from_policy` definition shadowed the real one and returned the preset's display label instead of its key, so `requires_network()` never recognised a quarantine and the device's VLAN override was left in place on release — leaving the device parked in the quarantine VLAN after an apparently successful release. Removed the duplicate; the arrest-row chip now maps the key to its label at the router.
+- Repaired the House Arrest policy test suite (12 tests left red by the earlier DNS resolver-split refactor) and hardened `dns_order_is_safe` to require a block as well as an allow, so an allow-only set is never reported as a safe lockdown.
+
+### Security
+- **Anti-DNS-rebinding Host check.** New middleware rejects requests whose Host header is not an IP literal, localhost, a local-network suffix (`.local`/`.lan`/`.internal`/`.home[.arpa]`), the configured `DOMAIN`, or listed in `ALLOWED_HOSTS`. This stops a web page the user merely visits from rebinding its own hostname to the toolkit's LAN IP and driving the firewall-rewriting endpoints from the victim's browser. Runs in every mode; `/health` is exempt.
+- **CSRF coverage for House Arrest.** `/arrest/api/` was missing from the CSRF prefix list, so its state-changing requests skipped the `X-Requested-With` check the other tools enforce. Added.
+- **Controller-URL SSRF validation.** Save and test endpoints across the dashboard, Wi-Fi Stalker, and Threat Watch reject non-http(s) schemes and embedded credentials. Private IPs stay allowed — a controller legitimately lives there.
+- **Webhook SSRF hardening.** Webhook URLs are re-validated at delivery, not only at save, so a saved URL cannot be repointed at an internal service before the next send.
+- Escaped the controller-supplied gateway name before interpolating it into the dashboard (XSS).
+- Raised `aiohttp` (`>=3.10.11`, CVE-2024-52304) and `python-multipart` (`>=0.0.18`, CVE-2024-53981) floors.
+
+### CI / Build
+- Added a **Tests** workflow that runs the pytest suite on every pull request and on pushes to `main`.
+- **Decoupled `:latest` from `main`.** A push to `main` now publishes a moving `:edge` image (a staging channel); `:latest` and the semver tags move only when a `vX.Y.Z` tag is pushed, so releasing is a deliberate step rather than a side effect of merging.
+
+### Documentation
+- `docs/house-arrest-design.md` records the design and every measured API behaviour, including corrections to earlier wrong assumptions so they are not rediscovered.
+- CLAUDE.md gains the UniFi API quirks found while building this.
+
+## [1.12.0] - 2026-09-16
+
+### Fixed
+- **A fresh `pip install -r requirements.txt` produced a broken app.** `fastapi>=0.115.6` caps starlette below the `starlette>=0.47.2` on the next line, so pip resolved to a much newer fastapi and pulled starlette 1.x — which removed the `TemplateResponse(name, context)` signature and returned 500 on every template route, the main dashboard included. All 9 call sites now use the request-first signature, which works on starlette 0.29+ and on 1.x, so no upper bound is needed. Verified by installing from `requirements.txt` into a clean environment and loading every template route on both starlette 1.6.0 and 0.41.3.
+
+### Documentation
+- CLAUDE.md gains a note that `requirements.txt` previously produced a broken app on a fresh install.
+
 ## [1.11.2] - 2026-03-18
 
 ### Fixed

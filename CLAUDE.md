@@ -27,6 +27,7 @@ tools/
 ├── wifi_stalker/        # Client tracking tool
 ├── threat_watch/        # IDS/IPS monitoring
 ├── network_pulse/       # Network health dashboard (Alpine.js frontend)
+├── house_arrest/        # Per-device + per-network lockdown via zone-based firewall
 ```
 
 ## Key Patterns
@@ -44,6 +45,38 @@ Version is maintained in THREE files — keep them in sync:
 - WAN detection is dynamic via `startswith('wan')` — supports N WANs
 - **Signal strength:** UniFi API returns separate `rssi` and `signal` fields — use `signal` (matches console display) with `rssi` fallback
 - **v2 traffic-flows payload:** The v2 endpoint supports a filtered payload format with `pageNumber`/`pageSize`/`timestampFrom`/`timestampTo` and a `policy_type` array for server-side filtering (e.g., `["INTRUSION_PREVENTION"]` for IPS-only events). The old `limit`/`offset`/`timeRange` format returns ALL flows unfiltered. Auto-detection via `_v2_uses_new_payload` flag handles both formats.
+
+### House Arrest (`tools/house_arrest/`)
+- Locks a device or a whole network down using zone-based firewall policies
+- **`docs/house-arrest-design.md` is the source of truth** — it records every
+  measured API behaviour and the corrections to earlier wrong assumptions. Read
+  it before changing lockdown behaviour rather than re-deriving from the API.
+- Core rule: the tool must never claim protection it is not delivering. Health
+  checks, precedence warnings, blocked-traffic attribution and the measured
+  caveat list all exist to enforce that.
+- Every policy carries `[HouseArrest]` in its `description`; release deletes
+  exactly those and refuses anything else. Sub-markers `[Network]` and `[DNS]`
+  distinguish the policy kinds.
+- Network isolation uses UniFi's native `network_isolation_enabled` /
+  `internet_access_enabled` flags, NOT parallel policies, so the tool and the
+  UniFi UI can never disagree.
+- **Same-VLAN peer traffic is the tool's permanent blind spot** and the UI says so
+  at full size on the Devices tab, not in a footnote. It never passes the gateway,
+  so no firewall policy sees it. Only a dedicated VLAN assigned natively in
+  UniFi (which removes the peers) or per-SSID Client Isolation addresses it.
+  Do not let any copy imply otherwise. The Quarantine preset that moved devices
+  itself was REMOVED 2026-09-17 — see the quirk below on the wired
+  virtual-network override half-applying.
+- **Never stack a lockdown on itself.** `dns_locked_network_ids()` and
+  `arrested_macs()` guard both apply paths; the DNS picker also greys out networks
+  that already have one. This was a real bug — a 5-rule lockdown got applied twice.
+- **Editability of an inspection-matrix cell is decided server-side**, per cell, via
+  `EDITABLE_COLUMNS` plus a per-cell `editable` flag. The UI must never offer a
+  switch the controller will ignore.
+- Scenario infographics are one image per `(preset, inbound)` pair — six files
+  (quarantine's two were deleted with the preset). If a preset changes, regenerate
+  both of its images or the picture starts contradicting the verdict list. The
+  network-isolation diagrams follow the same rule (one per isolation preset).
 
 ### Schema Repair (`run.py → _repair_schema()`)
 - Runs on every startup after Alembic migrations
@@ -89,6 +122,25 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 - Extra WANs stored in `NetworkHealth.extra_wans` dict
 
 ## Completed Work
+
+### v1.13.0 (branch `feat/house-arrest`, PR #122)
+- Fix DNS lockdown false rollback — ordering is per zone pair, not site-wide
+- Fix public resolvers silently killing DNS — one ALLOW per zone pair that holds one
+- Fix blocked-attempt under-reporting — paginate `traffic-flows`, and stop discarding
+  flows blocked by a since-replaced policy (one device was under-reported by 47%)
+- Separate ephemeral-port UDP return traffic from real connection attempts; ICMP
+  sweeps and any TCP/service-port probe always show
+- Correct "You reaching in to it" → "Other devices reaching in to it"; `allow_inbound`
+  is not scoped to one person
+- Add Wi-Fi client isolation (`l2_isolation`), DHCP name server writes, duplicate
+  guards, per-arrest preset chips, the current-DNS table on the DNS tab
+- Warn when DHCP advertises a resolver the lockdown is about to block
+- Dashboard: explicit 3-column grid, House Arrest ↔ Threat Watch swapped, info cards
+  moved into the grid so it is two clean rows
+- Correct the mDNS "unwritable" finding: it IS writable via v2
+  `global/config/network`. The legacy `setting/mdns` routes discard the fields
+  silently. Removed the on-screen text claiming the controller ignores the change.
+  Column stays read-only because the control is site-level, not per-network.
 
 ### v1.11.2
 - Fix Network Pulse chart panels not resizing responsively (#96) — `min-width: 0` on `.chart-card` and `overflow: hidden` on `.chart-container` fix CSS Grid min-width:auto gotcha that prevented canvas-based chart cards from shrinking on narrow viewports
@@ -196,6 +248,23 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 - Dynamic multi-WAN support for 3+ WAN interfaces (#59)
 - Version sync across all three version files
 
+## Known Environment Issues
+
+- **`shared/unifi_client.get_clients()` returns a dict keyed by MAC, not a list.**
+  Iterating it directly yields MAC strings, so `st.get(...)` either raises or
+  silently counts nothing. Iterate `.values()`.
+- **`run.py` does not enable auto-reload.** Jinja templates and static files are
+  picked up on refresh, but any Python change needs the process restarted before
+  it takes effect.
+
+- **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
+  "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.
+  The old form was removed in starlette 1.0 and 500s every template route with
+  `TypeError: unhashable type: 'dict'`. The new form works on 0.29+ and on 1.x.
+  (Fixed in v1.12.0 — `requirements.txt` previously paired `fastapi>=0.115.6` with
+  `starlette>=0.47.2`, which fastapi caps below, so pip jumped to a much newer
+  fastapi and pulled starlette 1.x. A fresh install produced a dead app.)
+
 ## Troubleshooting UniFi API
 
 ### Reverse-Engineering Undocumented Endpoints
@@ -210,6 +279,87 @@ The UniFi v2 API is largely undocumented by Ubiquiti. When an endpoint isn't beh
 This is how we discovered the v2 `traffic-flows` filtered payload format (`policy_type`, `timestampFrom`/`timestampTo`, `pageNumber`/`pageSize`) — the console sends a completely different payload than what was publicly known.
 
 ### Known API Quirks
+
+- **A 200 that echoes back an UNCHANGED document means the endpoint recognised
+  none of the fields you sent** — wrong endpoint or wrong field names, not slow
+  provisioning. This cost a session on mDNS: the v2 and legacy endpoints hold the
+  same data under different field names (`mdns_enabled_for_network_ids` vs
+  `enabled_for_network_ids`), and the legacy one accepts and discards the other's
+  spelling. When a write "succeeds" and nothing changes, diff the field names
+  against what a GET on that same endpoint returns before assuming a controller bug.
+- **When an API route is a mystery, watch the console do it.** Chrome DevTools, or
+  a fetch/XHR interceptor, on the real UniFi UI. Note the console often sends
+  several requests per save and only one carries the change.
 - The legacy `stat/ips/event` endpoint returns 0 on Network 10.x+ — effectively deprecated
 - Express in AP-only mode reports `type: "udm"` (not `uap` or `ux`) with `device_mode_override: "mesh"` and `model: "UX"` — detect via `device_mode_override` field
 - The `rssi` and `signal` fields are separate values; the console displays `signal`
+- **The stored firewall policy `index` is not the one you send.** Indexes sent as
+  10004/10005 came back as 10000/10003, colliding with an existing rule. Relative
+  creation order was preserved in a later test. Verify stored indexes; never assume placement.
+- **Policy ordering — and the `index` counter — is scoped to a (source zone,
+  destination zone) PAIR, not the site.** Measured: two *enabled* policies both at
+  index 10000, one Internal→Internal and one Internal→External. If ordering were
+  site-wide that collision could not exist. Never compare indexes across zone pairs;
+  a rule only competes with rules in its own pair. `PUT
+  /v2/api/site/{site}/firewall-policies/batch-reorder` exists and requires
+  `sourceZoneId` + `destinationZoneId`, which confirms the same thing.
+- **A resolver must be allowed in the zone pair it is reached through.** An ALLOW in
+  the Internal pair does nothing about a BLOCK in the Internal→External pair, so a
+  public resolver (1.1.1.1) needs its own allow on the External side or the network
+  loses DNS entirely — with every index check passing.
+- **v2 `traffic-flows` returns BLOCKED flows only.** An active, unlocked client
+  returns zero rows even with no `action` filter. It is the firewall log, not
+  netflow — there is no "what is this device talking to" data unless a policy is
+  already stopping it. `stat/stadpi` / `stat/sitedpi` return empty unless the user
+  has enabled Traffic Identification, and blocked flows carry an empty `domains[]`.
+- **`traffic-flows` paginates.** The response carries `has_next` and
+  `total_element_count`; reading page 0 only truncated one device's 24h history by
+  more than 20%.
+- **mDNS is writable, but only via v2 `global/config/network`.** `PUT
+  /proxy/network/v2/api/site/{site}/global/config/network` with
+  `{"mdns_enabled_for": "some", "mdns_enabled_for_network_ids": [...]}` works
+  (measured: write + restore round trip, API-key auth, no CSRF needed). A partial
+  payload is enough. The legacy `rest/setting/mdns` / `set/setting/mdns` routes use
+  the field names `enabled_for` / `enabled_for_network_ids` and silently discard
+  them, returning 200 with the unchanged list - that field-name mismatch was the
+  cause of the long-standing "toggle does nothing". `mdns_enabled` on a network
+  document is still a read-only projection. Note mDNS is a **site-level** control
+  (one shared VLAN list), not per-network, so any per-network UI writes shared
+  state. A browser-session PUT returns 403 without a CSRF token; the toolkit's
+  API key is unaffected.
+- **`l2_isolation` on a WLAN (`rest/wlanconf`) IS writable** and is the only control
+  found that reaches same-VLAN peer traffic. Verified True→False→restored on an SSID
+  with no clients.
+- **`dhcpd_dns_1..4` are plain strings** gated by `dhcpd_dns_enabled`, writable via
+  the same read-modify-PUT as the boolean network flags — but verification must
+  compare values, not truthiness, or `'8.8.8.8'` and `'1.1.1.1'` look equal.
+- **UPnP has a site-wide master switch** (`rest/setting/usg` → `upnp_enabled`). While
+  it is off, a network's `upnp_lan_enabled` does nothing.
+- **`create_allow_respond` cannot be set on a policy you create when source and
+  destination share a zone** — `FirewallPolicyCreateRespondTrafficPolicyNotAllowed`.
+  UniFi's own isolation rules use it; custom ones cannot. Use connection-state
+  scoping instead: `connection_state_type: ALL | RESPOND_ONLY | CUSTOM`,
+  `connection_states: NEW | RELATED | INVALID | ESTABLISHED`.
+- **A saved per-client VLAN override is not a completed move.** A wired client keeps
+  its VLAN and DHCP lease until it reconnects — measured unchanged for 150s+.
+  Verify the client's actual network, not the write.
+- **The per-client virtual-network override can HALF-APPLY on a wired client
+  (measured 2026-09-17, why the Quarantine preset was removed).** After a reboot
+  the wired Pi obtained a DHCP lease on the target VLAN (192.168.107.177) but had
+  no working L2 at all: ARP to its own gateway and to a same-VLAN peer both failed
+  ("destination host unreachable"), while `stat/sta` kept reporting the OLD
+  network/IP (Default/192.168.200.234) and the UniFi UI showed network=IoT-VLAN with
+  the old IP simultaneously. Do not build features on this override for wired
+  clients; move wired devices by changing the switch port's network instead.
+- **`stat/sta` and the Integration API can both report the wrong network for a client.**
+  A device on 192.168.107.129/IoT-VLAN was reported as "Default" with a null IP by both.
+  Traffic-flow data carried the correct source IP, network and subnet.
+- **Controller changes provision asynchronously.** Verify writes by polling with a
+  retry; a single immediate re-read reports false failures.
+- **UniFi DNS policies (`integration/v1/.../dns/policies`) are site-wide.** No scoping
+  field exists in the schema, so they cannot express per-device or per-VLAN behaviour.
+- Integration API base is `/proxy/network/integration/v1`, the site id there is a
+  **UUID** (not `default`), and the existing toolkit API key authenticates against it.
+- Blocked traffic is queryable via v2 `traffic-flows` with `action: ["blocked"]`
+  (lowercase enum; `BLOCK`/`BLOCKED` are rejected) and `source_mac`. Each flow's
+  `policies[]` names the exact policy that blocked it, so blocks can be attributed by id.

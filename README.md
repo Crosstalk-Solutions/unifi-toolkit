@@ -50,9 +50,6 @@ Real-time network monitoring dashboard.
 
 <img width="1895" height="957" alt="image" src="https://github.com/user-attachments/assets/ca6f0df5-8657-4c2a-ad16-8807aa21bcac" />
 
-### UI Product Selector *(External)*
-Build the perfect UniFi network at [uiproductselector.com](https://uiproductselector.com)
-
 ---
 
 ## Quick Start

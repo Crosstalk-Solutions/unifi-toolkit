@@ -367,11 +367,30 @@ body {
 }
 
 /* Tools Grid */
+/* Three across, so four tools plus the two info cards fill exactly two rows.
+   auto-fit previously reflowed the fourth tool onto a row of its own and left
+   the info cards and the Rogue Support banner stranded far down the page. */
 .tools-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    grid-template-columns: repeat(3, 1fr);
     gap: 2rem;
     margin-bottom: 1.5rem;
+    align-items: stretch;
+}
+
+/* The info cards ride in the same grid as the tools, so they need the same
+   footprint — but they are reference material, not tools, so they stay
+   visually lighter rather than gaining an icon and a button. */
+.info-card-grid.info-in-grid {
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+}
+.info-card-grid.info-in-grid h3 { font-size: 1.25rem; }
+.info-card-grid.info-in-grid > :last-child { margin-bottom: 0; }
+
+@media (max-width: 1200px) {
+    .tools-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 .tool-card {
@@ -608,13 +627,6 @@ body {
 }
 
 /* Info Cards Row */
-.info-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-    margin-bottom: 1.5rem;
-}
-
 .info-card-grid {
     background: var(--surface);
     border-radius: 12px;
@@ -875,11 +887,6 @@ body {
     }
 
     .tools-grid {
-        grid-template-columns: 1fr;
-        gap: 1.5rem;
-    }
-
-    .info-row {
         grid-template-columns: 1fr;
         gap: 1.5rem;
     }

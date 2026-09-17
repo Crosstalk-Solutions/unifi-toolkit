@@ -171,3 +171,32 @@ def is_safe_webhook_url(url: str) -> bool:
     """
     is_valid, _ = validate_webhook_url(url)
     return is_valid
+
+
+def validate_controller_url(url: str) -> Tuple[bool, str]:
+    """
+    Validate a user-supplied UniFi controller URL before we connect to it.
+
+    Unlike webhook URLs, a controller legitimately lives on a private IP, so we
+    do NOT block private ranges here. We only close the SSRF vectors that have
+    no business in a controller URL:
+
+    1. Scheme must be http or https (blocks file://, gopher://, etc.).
+    2. No embedded credentials (userinfo before the host).
+    3. A host must actually be present.
+
+    Returns (is_valid, error_message); error_message is "" when valid.
+    """
+    if not url or not url.strip():
+        return False, "Controller URL is required"
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return False, "Invalid controller URL"
+    if parsed.scheme not in ("http", "https"):
+        return False, "Controller URL must use http or https"
+    if parsed.username or parsed.password or "@" in (parsed.netloc or ""):
+        return False, "Controller URL must not contain embedded credentials"
+    if not parsed.hostname:
+        return False, "Controller URL must include a host"
+    return True, ""

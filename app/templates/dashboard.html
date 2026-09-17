@@ -347,25 +347,24 @@
                     </div>
                 </div>
 
-                <!-- Threat Watch Tool -->
-                <div class="tool-card" id="threat-watch-card">
-                    <div class="tool-icon">🛡️</div>
-                    <h2>Threat Watch</h2>
+                <div class="tool-card">
+                    <div class="tool-icon">🔒</div>
+                    <h2>House Arrest</h2>
                     <p class="tool-description">
-                        Monitor IDS/IPS events in real-time, view blocked threats and top attackers,
-                        and analyze security trends across your UniFi network.
+                        Lock a device down so it stays connected but can't reach the internet
+                        or talk to anything else — with exceptions you choose. Audits whether
+                        your VLANs are actually isolated.
                     </p>
                     <div class="tool-features">
-                        <span class="feature-badge">IDS/IPS Events</span>
-                        <span class="feature-badge">Top Attackers</span>
-                        <span class="feature-badge">Geo Lookup</span>
+                        <span class="feature-badge">Device Lockdown</span>
+                        <span class="feature-badge">Firewall Policies</span>
+                        <span class="feature-badge">Isolation Audit</span>
                     </div>
-                    <div class="tool-status" id="threat-watch-status" style="display: none;"></div>
                     <div class="tool-bottom">
                         <div class="tool-actions">
-                            <a href="/threats/" class="btn btn-primary" id="threat-watch-btn">Open Threat Watch</a>
+                            <a href="/arrest/" class="btn btn-primary">Open House Arrest</a>
                         </div>
-                        <div class="tool-version">v{{ threat_watch_version }}</div>
+                        <div class="tool-version">v{{ arrest_version }}</div>
                     </div>
                 </div>
 
@@ -390,10 +389,30 @@
                     </div>
                 </div>
 
-            </div>
 
-            <div class="info-row">
-                <div class="info-card-grid">
+                <!-- Threat Watch Tool -->
+                <div class="tool-card" id="threat-watch-card">
+                    <div class="tool-icon">🛡️</div>
+                    <h2>Threat Watch</h2>
+                    <p class="tool-description">
+                        Monitor IDS/IPS events in real-time, view blocked threats and top attackers,
+                        and analyze security trends across your UniFi network.
+                    </p>
+                    <div class="tool-features">
+                        <span class="feature-badge">IDS/IPS Events</span>
+                        <span class="feature-badge">Top Attackers</span>
+                        <span class="feature-badge">Geo Lookup</span>
+                    </div>
+                    <div class="tool-status" id="threat-watch-status" style="display: none;"></div>
+                    <div class="tool-bottom">
+                        <div class="tool-actions">
+                            <a href="/threats/" class="btn btn-primary" id="threat-watch-btn">Open Threat Watch</a>
+                        </div>
+                        <div class="tool-version">v{{ threat_watch_version }}</div>
+                    </div>
+                </div>
+
+                <div class="info-card-grid info-in-grid">
                     <h3>About UI Toolkit</h3>
                     <p>
                         UI Toolkit is a comprehensive collection of tools designed to enhance
@@ -407,7 +426,7 @@
                     </p>
                 </div>
 
-                <div class="info-card-grid">
+                <div class="info-card-grid info-in-grid">
                     <h3>Getting Started</h3>
                     <ol>
                         <li>Select a tool from the grid above</li>
@@ -452,6 +471,14 @@
     </div>
 
     <script>
+        // Escape a string for safe interpolation into innerHTML. Used for any
+        // controller-supplied value (gateway/model names) that lands in markup.
+        function escapeHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
         // Theme toggle functionality
         (function() {
             const themeToggle = document.getElementById('theme-toggle');
@@ -1128,6 +1155,13 @@
                         return;
                     }
 
+                    // The gateway name comes from the controller and is
+                    // interpolated into innerHTML in more than one branch below,
+                    // so escape it once here — a stray "<" in a device/model
+                    // name must never become markup.
+                    const gatewayName = data.gateway_name || 'your gateway';
+                    const safeGatewayName = escapeHtml(gatewayName);
+
                     if (!data.has_gateway) {
                         // No gateway found - Threat Watch unavailable
                         threatWatchCard.classList.add('tool-unavailable');
@@ -1137,7 +1171,6 @@
                         threatWatchStatus.innerHTML = '⚠️ <strong>No UniFi Gateway found.</strong> IDS/IPS requires a gateway (UDM, UCG, UXG, USG).';
                     } else if (!data.supports_ids_ips) {
                         // Gateway found but doesn't support IDS/IPS
-                        const gatewayName = data.gateway_name || 'your gateway';
                         const isLegacyController = gatewayName.includes('Legacy Controller');
                         threatWatchCard.classList.add('tool-unavailable');
                         threatWatchBtn.classList.add('disabled');
@@ -1146,7 +1179,7 @@
                         if (isLegacyController) {
                             threatWatchStatus.innerHTML = `⚠️ <strong>IDS/IPS API not available.</strong> Legacy controllers don't expose these endpoints.`;
                         } else {
-                            threatWatchStatus.innerHTML = `⚠️ <strong>${gatewayName}</strong> doesn't support IDS/IPS.`;
+                            threatWatchStatus.innerHTML = `⚠️ <strong>${safeGatewayName}</strong> doesn't support IDS/IPS.`;
                         }
                     } else {
                         // Gateway with IDS/IPS found - Threat Watch available
@@ -1159,7 +1192,7 @@
                         if (data.ips_enabled === false) {
                             // IDS/IPS is disabled - show warning with "Check Again" link
                             threatWatchStatus.style.display = 'block';
-                            threatWatchStatus.innerHTML = `ℹ️ <strong>IDS/IPS is disabled</strong> on ${data.gateway_name}.<span class="check-again" onclick="window.recheckGateway()">I enabled it - check again</span>`;
+                            threatWatchStatus.innerHTML = `ℹ️ <strong>IDS/IPS is disabled</strong> on ${safeGatewayName}.<span class="check-again" onclick="window.recheckGateway()">I enabled it - check again</span>`;
                         } else {
                             // IDS/IPS is enabled - no notification needed on dashboard
                             threatWatchStatus.style.display = 'none';

@@ -1,4 +1,4 @@
 """
 UI Toolkit - Main Application Package
 """
-__version__ = "1.11.2"
+__version__ = "1.13.0"
