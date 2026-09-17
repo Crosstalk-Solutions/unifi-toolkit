@@ -434,7 +434,7 @@ function houseArrest() {
                 const res = await fetch('api/networks');
                 if (res.ok) this.networks = await res.json();
             } catch (e) {
-                /* quarantine stays unavailable rather than silently wrong */
+                /* Networks-tab selectors stay empty rather than silently wrong */
             }
         },
 
@@ -783,33 +783,19 @@ function houseArrest() {
         },
 
         pathNote() {
-            const p = this.currentPreset();
-            if (p && p.requires_network) {
-                const n = this.networks.find(x => x.id === this.networkId);
-                const where = n ? n.name + ' (VLAN ' + n.vlan + ')' : 'the network you pick';
-                return 'Moving the device to ' + where + ' does not stop it talking to ' +
-                       'whatever else lives there — that traffic never passes the gateway. ' +
-                       'Pick a network with isolation on if it should be alone.';
-            }
             return 'Devices on the same VLAN talk to each other without passing the ' +
                    'gateway, so no firewall policy can separate them. UniFi can do it ' +
                    'at the switch, via Device Isolation on the network — but that ' +
-                   'applies to every device on that VLAN, not just this one. To ' +
-                   'change it for this device alone, use Quarantine and move it.';
+                   'applies to every device on that VLAN, not just this one. For one ' +
+                   'device alone, give it a dedicated VLAN in UniFi itself (its switch ' +
+                   'port or a dedicated Wi-Fi network), then lock that VLAN down here.';
         },
 
         canReview() {
-            if (!this.selectedMacs.length) return false;
-            const p = this.currentPreset();
-            if (p && p.requires_network && !this.networkId) return false;
-            return true;
+            return this.selectedMacs.length > 0;
         },
 
         reviewHint() {
-            const p = this.currentPreset();
-            if (p && p.requires_network && !this.networkId) {
-                return 'Choose a VLAN to move the device into first.';
-            }
             return 'Review first — nothing reaches your gateway until you apply.';
         },
 
@@ -915,10 +901,6 @@ function houseArrest() {
                 rows.forEach(r => lines.push(r.label + ' — blocked'));
                 if (!rows.length) lines.push('Nothing blocked by this preset');
             }
-            if (p && p.requires_network) {
-                const n = this.networks.find(x => x.id === this.networkId);
-                if (n) lines.push('Moved to ' + n.name + ' (VLAN ' + n.vlan + ')');
-            }
             (this.preview || []).forEach(pol => {
                 lines.push('Policy "' + pol.name + '" at index ' + pol.index);
             });
@@ -973,13 +955,11 @@ function houseArrest() {
                 if (data.error) {
                     this.message = { kind: 'danger', text: data.error };
                 } else {
-                    this.message = data.move_note
-                        ? { kind: 'warn', text: this.label + ' — ' + data.move_note }
-                        : {
-                            kind: 'ok',
-                            text: this.label + ' is under house arrest — ' +
-                                  data.created.length + ' policies written to your gateway.'
-                          };
+                    this.message = {
+                        kind: 'ok',
+                        text: this.label + ' is under house arrest — ' +
+                              data.created.length + ' policies written to your gateway.'
+                    };
                     this.preview = null;
                     this.selectedMacs = [];
                     this.labelTouched = false;

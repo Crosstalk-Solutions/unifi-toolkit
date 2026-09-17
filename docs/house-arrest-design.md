@@ -145,8 +145,9 @@ internet" and are now shown as caveats next to that claim in the UI:
   sit on the device's own VLAN, so queries never reach the gateway and cannot be
   filtered. Those resolvers forward upstream, so a locked-down device still
   resolved `github.com` successfully. A determined device retains a data path
-  out over DNS. Moving the resolver off the device's VLAN, or using Quarantine,
-  is the answer where that matters.
+  out over DNS. Moving the resolver off the device's VLAN — or giving the
+  device a dedicated VLAN natively in UniFi (see the 2026-09-17 quarantine
+  removal below) — is the answer where that matters.
 
 ### Verified behaviour per preset
 
@@ -250,8 +251,10 @@ and never touches `predefined: true`.
 - **Internet only** — device reaches WAN, nothing on the LAN.
 - **LAN only** — device reaches local resources, no internet. The common case for a
   camera or an IoT device that shouldn't phone home.
-- **Quarantine + VLAN move** — as Full lockdown, plus `virtual_network_override_id`
-  into an existing VLAN. Never creates a VLAN.
+- **Quarantine + VLAN move** — REMOVED 2026-09-17, see the dated section below.
+  Was: as Full lockdown, plus `virtual_network_override_id` into an existing
+  VLAN. Release-side recognition of pre-removal quarantine policies is kept
+  forever so their overrides still get cleared.
 
 **Exceptions**, added on top of any preset: destination IP + port or port group, using
 `create_allow_respond` so the reply path works without opening the reverse direction.
@@ -264,6 +267,53 @@ of the whole thing — whether the predefined allow-all at index `2147483647` is
 nominally isolated VLAN reachable anyway.
 
 ---
+
+## MEASURED 2026-09-17: the wired override HALF-APPLIES — Quarantine preset removed
+
+The 2026-09-16 finding below ("override written but device unmoved until
+reconnect") turned out to be the benign half of the problem. After the device
+DID reconnect (reboot), the same wired Pi landed in a state strictly worse than
+either "moved" or "not moved":
+
+| Observation | Value |
+|---|---|
+| Pi's own console (`eth0`) | **192.168.107.177** — a real DHCP lease on the target VLAN (IDIoT/107) |
+| Pi -> its own gateway 192.168.107.1 | **"destination host unreachable"** — ARP fails |
+| Pi -> same-VLAN peer 192.168.107.99 | **"destination host unreachable"** — ARP fails |
+| `stat/sta` | still reported **Default / 192.168.200.234** |
+| UniFi UI | showed **network = IDIoT, IP = 192.168.200.234** — contradicting itself |
+
+So DHCP (broadcast) got through on the target VLAN at least once, but
+steady-state the client had no working L2 there at all — an address it could
+not use, and no IPv4 connectivity anywhere. Firewall policies cannot cause
+this (they are L3 at the gateway and cannot block ARP on the local segment);
+this is the `virtual_network_override` mechanism itself misbehaving for a
+wired client. The exact locus (switch MAC-based VLAN assignment flapping) is
+inferred, not pinned down — and deliberately not worth pinning down, because:
+
+**Decision: the Quarantine preset is removed.** Two principles decide it:
+
+1. *Never claim protection the tool is not delivering.* The platform reported
+   two different locations for the device at once; a quarantine whose outcome
+   the controller cannot state coherently cannot be verified by us.
+2. *Use UniFi's native mechanisms so the tool and the UniFi UI never
+   disagree.* The per-client override was the one mechanism in the tool that
+   fought the platform, and in two days of live testing it produced a
+   stranding bug, a false `pending_move`, and this half-connected state.
+
+What replaces it: the blind-spot box now tells the user to give the device a
+dedicated VLAN **natively in UniFi** (the switch port's network for wired, a
+dedicated Wi-Fi network for wireless) and then isolate/DNS-lock that VLAN
+here — the operations this tool performs reliably. Kept on the release side:
+`preset_from_policy` still recognises the "Quarantine + VLAN move" label and
+`requires_network` still returns True for it, so releasing a pre-removal
+quarantine clears the override instead of stranding the device. The apply
+side (`_confirm_moved`, the move block in the lockdown endpoint, the VLAN
+picker) is gone; quarantine's two scenario images were deleted with it.
+
+Related fix kept from the same investigation: the arrest rows now prefer the
+OBSERVED (traffic-flow) location over `stat/sta`, since flow data carried the
+device's true address (107.177) while `stat/sta` repeated the stale one.
 
 ## MEASURED 2026-09-16: writing the VLAN override does not move the device
 
@@ -471,8 +521,9 @@ provisioning rather than to policies.
 telemetry domains (ads, Nielsen/GfK broadcast measurement, app-store mirrors).
 That is domain curation, a different product from House Arrest's traffic-path
 lockdown. Noted as a possible future feature, not adopted here. Its advice to
-"put the TV in an IoT VLAN with default-deny toward other segments" is what
-Quarantine already does.
+"put the TV in an IoT VLAN with default-deny toward other segments" is now
+done by assigning the TV a dedicated VLAN natively in UniFi and isolating it
+here (the Quarantine preset that did the move itself was removed 2026-09-17).
 
 ## MEASURED 2026-09-16: firewall policy ordering is PER ZONE PAIR
 
@@ -828,10 +879,11 @@ gateway, and with an important gap:
   column stays read-only only because the control is site-level, which is a
   presentation problem rather than an API one.
 
-**What this means for the tool's advice.** Quarantine into an isolated VLAN
-remains the right answer for a TV, and for the right reason: it is the only
-preset that changes which peers exist rather than trying to filter traffic the
-gateway never sees. Worth stating plainly in any user-facing writing: House
+**What this means for the tool's advice.** A dedicated, isolated VLAN remains
+the right answer for a TV, and for the right reason: it changes which peers
+exist rather than trying to filter traffic the gateway never sees. (Since the
+2026-09-17 removal, the VLAN assignment itself happens natively in UniFi; the
+tool then isolates and DNS-locks that VLAN.) Worth stating plainly in any user-facing writing: House
 Arrest can stop a TV phoning home and can stop it reaching other VLANs, but it
 cannot stop it profiling devices sitting next to it on the same VLAN. Only
 per-network Device Isolation or per-SSID Client Isolation does that.
@@ -928,8 +980,8 @@ Two changes, shipped together on purpose.
 footnote. "Devices on its own VLAN: still reachable" was technically present
 and practically invisible, which let the page imply a completeness it does not
 have. It now states what no rule on that page can stop, and names the only two
-things that do: a VLAN of the device's own (Quarantine), or Client Isolation on
-its SSID.
+things that do: a dedicated VLAN of the device's own (assigned natively in
+UniFi), or Client Isolation on its SSID.
 
 One deliberate omission: the callout does NOT name the device's VLAN. The first
 version did, and printed **"Default"** for a Roku measured to be on IDIoT —
@@ -1024,9 +1076,10 @@ The Devices tab draws each preset as a picture beside the verdict list, in
    spokes — Internet, Other networks, Same VLAN, You — in the same fixed
    positions, so switching presets changes only the colours. Solid green is
    allowed, red dashed with an X is blocked, amber with a relocation glyph is
-   `moved` (quarantine only, where the bottom group is redrawn as "New VLAN"
-   inside a dashed amber pen because relocating changes *which* peers exist
-   rather than cutting peer traffic).
+   `moved` (historical: only the removed quarantine preset used it, redrawing
+   the bottom group as "New VLAN" in a dashed amber pen because relocating
+   changes *which* peers exist rather than cutting peer traffic; no current
+   image uses the amber state).
 
 **If you add or change a preset, regenerate its two images.** A preset with no
 matching file renders a broken image; worse, a preset whose effects changed but

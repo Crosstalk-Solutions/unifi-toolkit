@@ -62,17 +62,21 @@ Version is maintained in THREE files — keep them in sync:
   UniFi UI can never disagree.
 - **Same-VLAN peer traffic is the tool's permanent blind spot** and the UI says so
   at full size on the Devices tab, not in a footnote. It never passes the gateway,
-  so no firewall policy sees it. Only Quarantine (which removes the peers) or
-  per-SSID Client Isolation addresses it. Do not let any copy imply otherwise.
+  so no firewall policy sees it. Only a dedicated VLAN assigned natively in
+  UniFi (which removes the peers) or per-SSID Client Isolation addresses it.
+  Do not let any copy imply otherwise. The Quarantine preset that moved devices
+  itself was REMOVED 2026-09-17 — see the quirk below on the wired
+  virtual-network override half-applying.
 - **Never stack a lockdown on itself.** `dns_locked_network_ids()` and
   `arrested_macs()` guard both apply paths; the DNS picker also greys out networks
   that already have one. This was a real bug — a 5-rule lockdown got applied twice.
 - **Editability of an inspection-matrix cell is decided server-side**, per cell, via
   `EDITABLE_COLUMNS` plus a per-cell `editable` flag. The UI must never offer a
   switch the controller will ignore.
-- Scenario infographics are one image per `(preset, inbound)` pair — eight files. If
-  a preset changes, regenerate both of its images or the picture starts contradicting
-  the verdict list.
+- Scenario infographics are one image per `(preset, inbound)` pair — six files
+  (quarantine's two were deleted with the preset). If a preset changes, regenerate
+  both of its images or the picture starts contradicting the verdict list. The
+  network-isolation diagrams follow the same rule (one per isolation preset).
 
 ### Schema Repair (`run.py → _repair_schema()`)
 - Runs on every startup after Alembic migrations
@@ -339,6 +343,14 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
 - **A saved per-client VLAN override is not a completed move.** A wired client keeps
   its VLAN and DHCP lease until it reconnects — measured unchanged for 150s+.
   Verify the client's actual network, not the write.
+- **The per-client virtual-network override can HALF-APPLY on a wired client
+  (measured 2026-09-17, why the Quarantine preset was removed).** After a reboot
+  the wired Pi obtained a DHCP lease on the target VLAN (192.168.107.177) but had
+  no working L2 at all: ARP to its own gateway and to a same-VLAN peer both failed
+  ("destination host unreachable"), while `stat/sta` kept reporting the OLD
+  network/IP (Default/192.168.200.234) and the UniFi UI showed network=IDIoT with
+  the old IP simultaneously. Do not build features on this override for wired
+  clients; move wired devices by changing the switch port's network instead.
 - **`stat/sta` and the Integration API can both report the wrong network for a client.**
   A device on 192.168.107.129/IDIoT was reported as "Default" with a null IP by both.
   Traffic-flow data carried the correct source IP, network and subnet.

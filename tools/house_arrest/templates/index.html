@@ -806,21 +806,13 @@
             </template>
         </div>
 
-        <div class="vlan-picker" x-show="currentPreset() && currentPreset().requires_network">
-            <label for="network">Move it to which VLAN?</label>
-            <select id="network" x-model="networkId" @change="preview = null">
-                <option value="">Select a network…</option>
-                <template x-for="n in networks" :key="n.id">
-                    <option :value="n.id"
-                            x-text="n.name + ' — VLAN ' + n.vlan + (n.isolation_enabled ? ' (isolated)' : '')"></option>
-                </template>
-            </select>
-            <div class="hint">
-                Existing networks only — House Arrest never creates a VLAN. A network
-                marked <em>isolated</em> also keeps the device away from whatever else
-                lives there.
-            </div>
-        </div>
+        <!-- The Quarantine + VLAN move preset used to put its VLAN picker here.
+             Removed 2026-09-17: the per-client VLAN override was measured
+             half-applying on a wired device (a lease on the target VLAN with no
+             working L2 underneath), a state neither this tool nor the UniFi UI
+             could report honestly. A device that needs true quarantining gets a
+             dedicated VLAN assigned natively in UniFi — see the blind-spot box
+             below. -->
 
         <!-- The mechanism, drawn. A preset name alone doesn't tell you what
              happens to traffic; this does, and it keeps the same-VLAN caveat
@@ -924,10 +916,15 @@
                 <p class="blindspot-fix">Two things actually stop it:</p>
                 <ul>
                     <li>
-                        <strong>Give it a VLAN of its own</strong> — the
-                        <em>Quarantine + VLAN move</em> preset, pointed at a network
-                        nothing else lives on. It does not filter peer traffic; it
-                        removes the peers.
+                        <strong>Give it a dedicated VLAN of its own, in UniFi
+                        itself</strong> — assign the device's switch port (wired)
+                        or a dedicated Wi-Fi network (wireless) to a VLAN nothing
+                        else lives on. That doesn't filter peer traffic; it
+                        removes the peers. Then lock that VLAN down from the
+                        Networks and DNS tabs here. House Arrest deliberately
+                        doesn't move devices between VLANs itself — a per-client
+                        move can leave a device half-connected, which is worse
+                        than either state.
                     </li>
                     <li>
                         <strong>Turn on Client Isolation for its Wi-Fi network</strong>,

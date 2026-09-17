@@ -171,16 +171,23 @@ async def get_state():
             for summary in grouped.values():
                 summary.blocked_count = totals.get(summary.label, 0)
                 for mac in summary.macs:
+                    # Observed (traffic-flow) location first, stat/sta second.
+                    # Measured 2026-09-17: stat/sta reported a device on
+                    # Default/192.168.200.234 while its own console — and its
+                    # blocked-flow source addresses — showed IDIoT/.107.177.
+                    # Flow data carries the address the device actually sends
+                    # from; stat/sta is the API the design doc already flags
+                    # as misreporting networks.
+                    if mac in seen:
+                        summary.ip = seen[mac]["ip"]
+                        summary.network = seen[mac]["network"]
+                        summary.location_source = "observed"
+                        break
                     live = (active_now.get(mac) or {})
                     if live.get("ip"):
                         summary.ip = live.get("ip")
                         summary.network = live.get("network")
                         summary.location_source = "live"
-                        break
-                    if mac in seen:
-                        summary.ip = seen[mac]["ip"]
-                        summary.network = seen[mac]["network"]
-                        summary.location_source = "observed"
                         break
         except Exception as e:
             logger.warning(f"Could not fetch blocked flows: {e}")
@@ -780,7 +787,7 @@ async def dns_release(label: Optional[str] = None):
 @router.get("/networks", response_model=List[NetworkInfo])
 async def list_networks():
     """
-    Networks that can be used as a quarantine destination.
+    Networks, for the Networks-tab selectors and the DNS lockdown picker.
 
     WANs are excluded, and so is any network without a VLAN id — House Arrest
     moves a device into an existing VLAN and never creates one.
@@ -937,14 +944,11 @@ async def lockdown(req: LockdownRequest):
         return LockdownResponse(dry_run=req.dry_run, error=err)
 
     if req.preset not in P.PRESETS:
+        # This also refuses the removed Quarantine preset — PRESETS is the
+        # offered list, and quarantine was taken out of it (see policies.py).
         raise HTTPException(status_code=400, detail=f"Unknown preset: {req.preset}")
     if not req.macs:
         raise HTTPException(status_code=400, detail="At least one MAC is required")
-    if P.requires_network(req.preset) and not req.network_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"{P.PRESET_LABELS[req.preset]} needs a target network",
-        )
 
     try:
         zones = await client.get_firewall_zones()
@@ -1010,80 +1014,13 @@ async def lockdown(req: LockdownRequest):
             )
         created.append(result)
 
-    # Presets that relocate the device do it after the policies are in place.
-    # set_client_network() verifies the override by re-reading the client, so a
-    # move that silently didn't take is reported as a failure rather than shown
-    # as a completed quarantine.
-    moved_to = None
-    move_note = None
-    if P.requires_network(req.preset):
-        for mac in req.macs:
-            if not await client.set_client_network(mac, req.network_id):
-                await roll_back()
-                return LockdownResponse(
-                    dry_run=False, created=[],
-                    error=(
-                        f"Policies were created but the VLAN override for {mac} "
-                        f"could not be written, so the whole lockdown was rolled "
-                        f"back. Nothing was left half-applied."
-                    ),
-                )
-        moved_to = req.network_id
-
-        # Writing the override is NOT the same as the device moving.
-        #
-        # Measured 2026-09-16 on a wired client: the override was written and
-        # read back correctly, and the device stayed on its original VLAN and
-        # IP for 150s with its session never dropping. A wired client keeps its
-        # current VLAN and DHCP lease until it reconnects.
-        #
-        # So the move is confirmed by watching the client's actual network, not
-        # by trusting the write. The override is left in place either way —
-        # it takes effect on the next reconnect — but the caller is told
-        # plainly that the device has not moved yet.
-        move_note = await _confirm_moved(client, req.macs, req.network_id)
-
-    return LockdownResponse(
-        dry_run=False, created=created, moved_to=moved_to, move_note=move_note,
-    )
-
-
-async def _confirm_moved(client, macs: List[str], network_id: str) -> Optional[str]:
-    """
-    Watch for the device actually landing on the target network.
-
-    Returns None once every target has moved, or a human-readable note saying
-    what still has not. Deliberately short: a wired device usually will not
-    move until it reconnects, and blocking the request for minutes to watch
-    something that needs physical action helps nobody.
-    """
-    import asyncio
-
-    waited = 0.0
-    pending = [m.lower() for m in macs]
-    while waited < 15.0:
-        try:
-            active = await client.get_clients()
-        except Exception:
-            break
-        pending = [
-            m for m in pending
-            if (active.get(m) or {}).get("network_id") != network_id
-        ]
-        if not pending:
-            return None
-        await asyncio.sleep(3.0)
-        waited += 3.0
-
-    if not pending:
-        return None
-    return (
-        "The VLAN override is saved, but "
-        + ("this device has" if len(pending) == 1 else "these devices have")
-        + " not moved yet. A connected device keeps its current VLAN and IP "
-        "address until it reconnects — unplug and replug it, or reboot it, to "
-        "complete the move. The firewall rules are already in force."
-    )
+    # No offered preset relocates the device any more. The Quarantine preset's
+    # VLAN move (per-client virtual_network_override) was removed 2026-09-17
+    # after it was measured half-applying on a wired client — a lease on the
+    # target VLAN but no working L2 (ARP failures to gateway and peers), with
+    # the controller reporting contradictory locations. Release still clears
+    # any pre-removal override (see release()); only the apply side is gone.
+    return LockdownResponse(dry_run=False, created=created)
 
 
 @router.post("/release", response_model=ReleaseResponse)

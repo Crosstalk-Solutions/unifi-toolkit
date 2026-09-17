@@ -34,9 +34,24 @@ PREDEFINED_ALLOW_ALL_INDEX = 2147483647
 FULL_LOCKDOWN = "full_lockdown"
 INTERNET_ONLY = "internet_only"
 LAN_ONLY = "lan_only"
+# REMOVED from the offered presets 2026-09-17, kept for release-side
+# recognition only. Quarantine moved the device via the per-client
+# `virtual_network_override`, and on a wired client that mechanism was measured
+# to half-apply: the Pi obtained a DHCP lease on the target VLAN, then sat with
+# no working L2 at all — ARP to its own gateway and to same-VLAN peers failed
+# ("destination host unreachable") — while stat/sta and the UniFi UI reported
+# contradictory locations for it. A quarantine whose outcome the platform
+# cannot even report coherently cannot be verified, so the tool no longer
+# offers it. A device that truly needs quarantining belongs in a dedicated
+# VLAN assigned natively in UniFi (switch port network / Wi-Fi network), which
+# this tool can then isolate and DNS-lock reliably.
 QUARANTINE = "quarantine"
 
-PRESETS = (FULL_LOCKDOWN, INTERNET_ONLY, LAN_ONLY, QUARANTINE)
+# The presets the tool OFFERS. Quarantine stays out of this tuple but keeps its
+# PRESET_LABELS / PRESET_EFFECTS entries so preset_from_policy() still
+# recognises a pre-removal quarantine and release still clears its VLAN
+# override instead of stranding the device.
+PRESETS = (FULL_LOCKDOWN, INTERNET_ONLY, LAN_ONLY)
 
 PRESET_LABELS = {
     FULL_LOCKDOWN: "Full lockdown",
@@ -59,9 +74,10 @@ PRESET_LABELS = {
 # per-client, so they are out of scope for a per-device tool — but the UI must
 # not claim the traffic is unblockable in general.
 #
-# Quarantine is "moved": relocating the device changes WHICH peers it has, it
-# does not cut peer traffic. Claiming otherwise would be the exact lie this
-# tool exists to avoid.
+# Quarantine (legacy, release-side only — see the note on the constant) is
+# "moved": relocating the device changes WHICH peers it has, it does not cut
+# peer traffic. Claiming otherwise would be the exact lie this tool exists to
+# avoid.
 PRESET_EFFECTS = {
     FULL_LOCKDOWN: {
         "internet": "block",

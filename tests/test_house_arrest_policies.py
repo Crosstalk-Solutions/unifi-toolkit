@@ -320,14 +320,43 @@ class TestQuarantineTruthfulness:
         assert P.requires_network(P.QUARANTINE) is True
         assert P.requires_network(P.FULL_LOCKDOWN) is False
 
+    def test_quarantine_is_recognised_but_no_longer_offered(self):
+        """
+        Removed from the offered presets 2026-09-17: the per-client VLAN
+        override was measured half-applying on a wired client (a DHCP lease on
+        the target VLAN with no working L2 — ARP to the gateway and to
+        same-VLAN peers failed), while the controller reported contradictory
+        locations. A quarantine the platform cannot report coherently cannot
+        be verified, so the tool no longer offers it.
+
+        Recognition must survive the removal: release still has to identify a
+        pre-removal quarantine policy and clear its VLAN override, or the
+        device is left stranded in the quarantine VLAN.
+        """
+        assert P.QUARANTINE not in P.PRESETS
+        assert P.QUARANTINE not in [p["value"] for p in P.preset_catalog()]
+        # Release-side recognition stays intact.
+        assert P.PRESET_LABELS[P.QUARANTINE] == "Quarantine + VLAN move"
+        assert P.requires_network(P.QUARANTINE) is True
+
 
 class TestPresetFromPolicy:
     def test_round_trips_through_the_description(self):
         pols = P.build_lockdown(
-            P.QUARANTINE, [MAC], "Cam", CLIENT_ZONE, EXTERNAL_ZONE,
+            P.FULL_LOCKDOWN, [MAC], "Cam", CLIENT_ZONE, EXTERNAL_ZONE,
             P.next_free_index([], 2),
         )
-        assert P.preset_from_policy(pols[0]) == P.QUARANTINE
+        assert P.preset_from_policy(pols[0]) == P.FULL_LOCKDOWN
+
+    def test_legacy_quarantine_description_is_still_recognised(self):
+        """
+        Quarantine can no longer be built or applied, but a policy created
+        before its removal still carries the old label — and release depends on
+        recovering the key from it to clear the device's VLAN override.
+        """
+        legacy = {"description": P.describe(
+            P.PRESET_LABELS[P.QUARANTINE] + " for Cam")}
+        assert P.preset_from_policy(legacy) == P.QUARANTINE
 
     def test_foreign_policy_yields_nothing(self):
         assert P.preset_from_policy({"description": "hand-made"}) is None
