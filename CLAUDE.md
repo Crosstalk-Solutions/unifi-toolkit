@@ -60,6 +60,19 @@ Version is maintained in THREE files — keep them in sync:
 - Network isolation uses UniFi's native `network_isolation_enabled` /
   `internet_access_enabled` flags, NOT parallel policies, so the tool and the
   UniFi UI can never disagree.
+- **Same-VLAN peer traffic is the tool's permanent blind spot** and the UI says so
+  at full size on the Devices tab, not in a footnote. It never passes the gateway,
+  so no firewall policy sees it. Only Quarantine (which removes the peers) or
+  per-SSID Client Isolation addresses it. Do not let any copy imply otherwise.
+- **Never stack a lockdown on itself.** `dns_locked_network_ids()` and
+  `arrested_macs()` guard both apply paths; the DNS picker also greys out networks
+  that already have one. This was a real bug — a 5-rule lockdown got applied twice.
+- **Editability of an inspection-matrix cell is decided server-side**, per cell, via
+  `EDITABLE_COLUMNS` plus a per-cell `editable` flag. The UI must never offer a
+  switch the controller will ignore.
+- Scenario infographics are one image per `(preset, inbound)` pair — eight files. If
+  a preset changes, regenerate both of its images or the picture starts contradicting
+  the verdict list.
 
 ### Schema Repair (`run.py → _repair_schema()`)
 - Runs on every startup after Alembic migrations
@@ -105,6 +118,21 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 - Extra WANs stored in `NetworkHealth.extra_wans` dict
 
 ## Completed Work
+
+### v1.13.0 (branch `feat/house-arrest`, PR #122)
+- Fix DNS lockdown false rollback — ordering is per zone pair, not site-wide
+- Fix public resolvers silently killing DNS — one ALLOW per zone pair that holds one
+- Fix blocked-attempt under-reporting — paginate `traffic-flows`, and stop discarding
+  flows blocked by a since-replaced policy (one device was under-reported by 47%)
+- Separate ephemeral-port UDP return traffic from real connection attempts; ICMP
+  sweeps and any TCP/service-port probe always show
+- Correct "You reaching in to it" → "Other devices reaching in to it"; `allow_inbound`
+  is not scoped to one person
+- Add Wi-Fi client isolation (`l2_isolation`), DHCP name server writes, duplicate
+  guards, per-arrest preset chips, the current-DNS table on the DNS tab
+- Warn when DHCP advertises a resolver the lockdown is about to block
+- Dashboard: explicit 3-column grid, House Arrest ↔ Threat Watch swapped, info cards
+  moved into the grid so it is two clean rows
 
 ### v1.11.2
 - Fix Network Pulse chart panels not resizing responsively (#96) — `min-width: 0` on `.chart-card` and `overflow: hidden` on `.chart-container` fix CSS Grid min-width:auto gotcha that prevented canvas-based chart cards from shrinking on narrow viewports
@@ -242,6 +270,39 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
 - **The stored firewall policy `index` is not the one you send.** Indexes sent as
   10004/10005 came back as 10000/10003, colliding with an existing rule. Relative
   creation order was preserved in a later test. Verify stored indexes; never assume placement.
+- **Policy ordering — and the `index` counter — is scoped to a (source zone,
+  destination zone) PAIR, not the site.** Measured: two *enabled* policies both at
+  index 10000, one Internal→Internal and one Internal→External. If ordering were
+  site-wide that collision could not exist. Never compare indexes across zone pairs;
+  a rule only competes with rules in its own pair. `PUT
+  /v2/api/site/{site}/firewall-policies/batch-reorder` exists and requires
+  `sourceZoneId` + `destinationZoneId`, which confirms the same thing.
+- **A resolver must be allowed in the zone pair it is reached through.** An ALLOW in
+  the Internal pair does nothing about a BLOCK in the Internal→External pair, so a
+  public resolver (1.1.1.1) needs its own allow on the External side or the network
+  loses DNS entirely — with every index check passing.
+- **v2 `traffic-flows` returns BLOCKED flows only.** An active, unlocked client
+  returns zero rows even with no `action` filter. It is the firewall log, not
+  netflow — there is no "what is this device talking to" data unless a policy is
+  already stopping it. `stat/stadpi` / `stat/sitedpi` return empty unless the user
+  has enabled Traffic Identification, and blocked flows carry an empty `domains[]`.
+- **`traffic-flows` paginates.** The response carries `has_next` and
+  `total_element_count`; reading page 0 only truncated one device's 24h history by
+  more than 20%.
+- **`mdns_enabled` on a network document is a READ-ONLY projection.** Writing it
+  returns `200 {"meta":{"rc":"ok"}}` and changes nothing (re-read at 0s/2s/5s). The
+  real control is the site-level `mdns` setting's `enabled_for_network_ids`, but
+  `PUT`/`POST` to `rest/setting/mdns[/{id}]` and `set/setting/mdns[/{id}]` were all
+  accepted and ignored, echoing the unchanged list. Unsolved — capture what the
+  console sends via DevTools before trying again.
+- **`l2_isolation` on a WLAN (`rest/wlanconf`) IS writable** and is the only control
+  found that reaches same-VLAN peer traffic. Verified True→False→restored on an SSID
+  with no clients.
+- **`dhcpd_dns_1..4` are plain strings** gated by `dhcpd_dns_enabled`, writable via
+  the same read-modify-PUT as the boolean network flags — but verification must
+  compare values, not truthiness, or `'8.8.8.8'` and `'1.1.1.1'` look equal.
+- **UPnP has a site-wide master switch** (`rest/setting/usg` → `upnp_enabled`). While
+  it is off, a network's `upnp_lan_enabled` does nothing.
 - **`create_allow_respond` cannot be set on a policy you create when source and
   destination share a zone** — `FirewallPolicyCreateRespondTrafficPolicyNotAllowed`.
   UniFi's own isolation rules use it; custom ones cannot. Use connection-state
