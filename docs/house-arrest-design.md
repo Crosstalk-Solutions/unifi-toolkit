@@ -3,7 +3,9 @@
 **Status:** implemented and verified end to end (`tools/house_arrest/`, mounted at `/arrest`)
 **Last updated:** 2026-09-15
 **API research:** complete (probed live against UCG-Fiber, UniFi OS)
-**End-to-end tested:** yes — against a wired Raspberry Pi (`testclient`, dc:a6:32:08:36:42) on 2026-09-15
+**Anonymization:** device/VLAN names, MAC tails and controller object ids in the
+measured examples are genericized; the measurements themselves are verbatim.
+**End-to-end tested:** yes — against a wired Raspberry Pi (`testclient`, dc:a6:32:xx:xx:xx) on 2026-09-15
 
 ## What it is
 
@@ -48,7 +50,7 @@ The client write path already exists in this repo as `set_client_name()` —
 ```json
 "source": {
   "matching_target": "CLIENT",
-  "client_macs": ["ba:66:5c:5c:2b:36"],
+  "client_macs": ["aa:bb:cc:dd:ee:01"],
   "zone_id": "<internal zone id>"
 }
 ```
@@ -107,7 +109,7 @@ never hardcode them.
 **[Measured 2026-09-15, live test]** The original note said House Arrest writes
 policies "at `index: 10000+`" as though it chose the position. It does not.
 Indexes sent as **10004/10005 were stored as 10000/10003**, colliding with an
-existing user policy (`Madelena to n8n` at 10000). The controller assigns the
+existing user policy (`Alice to n8n` at 10000). The controller assigns the
 stored index itself.
 
 Consequences:
@@ -200,7 +202,7 @@ against the live client list killed it:
   711, 406, 348 and 345 days. They are ten different devices, each holding a stable
   private address for one to two years. iOS privacy MACs are per-network and persistent.
 - The classifier's own disproof test failed: it sorted `homeassistant` (a static VM MAC)
-  as rotating and `Pixel-8` as static — both backwards.
+  as rotating and `a phone` as static — both backwards.
 
 What the data *does* support: rotation risk is not uniform. Apple Watches churn
 (lifespans of 1.3–5.6 days across ten addresses); iPhones and iPads largely do not.
@@ -277,11 +279,11 @@ either "moved" or "not moved":
 
 | Observation | Value |
 |---|---|
-| Pi's own console (`eth0`) | **192.168.107.177** — a real DHCP lease on the target VLAN (IDIoT/107) |
+| Pi's own console (`eth0`) | **192.168.107.177** — a real DHCP lease on the target VLAN (IoT/107) |
 | Pi -> its own gateway 192.168.107.1 | **"destination host unreachable"** — ARP fails |
 | Pi -> same-VLAN peer 192.168.107.99 | **"destination host unreachable"** — ARP fails |
 | `stat/sta` | still reported **Default / 192.168.200.234** |
-| UniFi UI | showed **network = IDIoT, IP = 192.168.200.234** — contradicting itself |
+| UniFi UI | showed **network = IoT, IP = 192.168.200.234** — contradicting itself |
 
 So DHCP (broadcast) got through on the target VLAN at least once, but
 steady-state the client had no working L2 there at all — an address it could
@@ -326,7 +328,7 @@ already carries every VLAN and no tagging change was needed.
 
 | Step | Result |
 |---|---|
-| `set_client_network(pi, IDIoT)` | returned **True** — override written and read back correctly |
+| `set_client_network(pi, IoT)` | returned **True** — override written and read back correctly |
 | Client network after 15s … 150s | **still Default / 192.168.200.234**, unchanged |
 | SSH session throughout | never dropped |
 | Revert | clean; device unaffected |
@@ -449,7 +451,7 @@ as the health check — never claim protection that is not being delivered.
 ### Improved: the audit now reports zone membership
 
 **[Measured]** Zones on this console carry `network_ids`, and **Default,
-Guests, IDIoT and OpenClaw all sit in the Internal zone** — which is exactly
+Guest, IoT and Media VLANs all sit in the Internal zone** — which is exactly
 why a device on 192.168.200.x could reach 192.168.107.x in the baseline probe.
 
 Separate VLANs are not separate security boundaries; traffic inside a zone is
@@ -534,11 +536,11 @@ and the incomplete version caused a real bug.
 **The measurement.** Dumping every custom policy with its zone pair:
 
 ```
-  10000 ALLOW  Internal -> Internal    Madelena to n8n
+  10000 ALLOW  Internal -> Internal    Alice to n8n
   10000 BLOCK  Internal -> External    House Arrest: testclient - no internet
-  10001 ALLOW  Internal -> Internal    SSH to Madelena
+  10001 ALLOW  Internal -> Internal    SSH to Alice
   10002 ALLOW  Internal -> Internal    TEST ANY to Elgato2
-  10003 BLOCK  Internal -> Internal    House Arrest: MasterBedRokuUltra - no LAN
+  10003 BLOCK  Internal -> Internal    House Arrest: Roku2 - no LAN
   10004 BLOCK  Internal -> Internal    House Arrest: testclient - no LAN
 ```
 
@@ -648,7 +650,7 @@ total was 249 flows / 788 attempts. Now paginated, with a `max_pages` ceiling.
 
 **Bug 2: flows blocked by a replaced policy were silently dropped.** Two
 policies existed with the identical name
-`House Arrest: MasterBedRokuUltra - no LAN` but different ids:
+`House Arrest: Roku2 - no LAN` but different ids:
 
 ```
   6aaad4a7c0c0564963fb0b2b   519 attempts   (live, owned by the tool)
@@ -734,7 +736,7 @@ The underlying control is the site-level setting:
 
 ```json
 {"key": "mdns", "enabled_for": "some", "mode": "all",
- "enabled_for_network_ids": ["66311ae3...", "6633b432...", "6633bca6...", "699b7a01..."]}
+ "enabled_for_network_ids": ["<network-id-1>", "<network-id-2>", "<network-id-3>", "<network-id-4>"]}
 ```
 
 Removing a network id from `enabled_for_network_ids` was attempted four ways.
@@ -779,9 +781,9 @@ document does not need to be echoed back.
 `X-API-KEY` auth (no session cookie, **no CSRF token required**):
 
 ```
-GET  200  ids=4  openclaw=YES
-PUT  200  ->  re-read 200  ids=3  openclaw=no     WRITE WORKED
-restore PUT 200  ->  ids=4  openclaw=YES          RESTORED CORRECTLY
+GET  200  ids=4  media-vlan=YES
+PUT  200  ->  re-read 200  ids=3  media-vlan=no     WRITE WORKED
+restore PUT 200  ->  ids=4  media-vlan=YES          RESTORED CORRECTLY
 ```
 
 A PUT from an authenticated *browser* session returns **403 Forbidden** without a
@@ -984,7 +986,7 @@ things that do: a dedicated VLAN of the device's own (assigned natively in
 UniFi), or Client Isolation on its SSID.
 
 One deliberate omission: the callout does NOT name the device's VLAN. The first
-version did, and printed **"Default"** for a Roku measured to be on IDIoT —
+version did, and printed **"Default"** for a Roku measured to be on IoT —
 straight into the documented `stat/sta` wrong-network quirk. A callout whose
 entire job is honesty must not print a fact it cannot stand behind, so it says
 "its own VLAN" and stops there.
@@ -1018,13 +1020,13 @@ VLAN**, which is the central LG behaviour. Current site state:
 | SSID | l2_isolation | clients |
 |---|---|---|
 | Sherwood_forest | False | 8 |
-| IDIoT | False | 31 |
+| IoT | False | 31 |
 | Sherwood_guest | True | 0 |
 | Elgato | False | 3 |
 
 Limits to state plainly wherever this is offered: it is **wireless only**, it
 applies to **every client on that SSID**, and it breaks casting, AirPlay and
-local printing for all of them. The IDIoT SSID carrying 31 clients with
+local printing for all of them. The IoT SSID carrying 31 clients with
 isolation off is the realistic version of that trade-off.
 
 ### There is NO per-network Device Isolation field  [Measured]

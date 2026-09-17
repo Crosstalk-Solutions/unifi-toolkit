@@ -348,11 +348,11 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
   the wired Pi obtained a DHCP lease on the target VLAN (192.168.107.177) but had
   no working L2 at all: ARP to its own gateway and to a same-VLAN peer both failed
   ("destination host unreachable"), while `stat/sta` kept reporting the OLD
-  network/IP (Default/192.168.200.234) and the UniFi UI showed network=IDIoT with
+  network/IP (Default/192.168.200.234) and the UniFi UI showed network=IoT-VLAN with
   the old IP simultaneously. Do not build features on this override for wired
   clients; move wired devices by changing the switch port's network instead.
 - **`stat/sta` and the Integration API can both report the wrong network for a client.**
-  A device on 192.168.107.129/IDIoT was reported as "Default" with a null IP by both.
+  A device on 192.168.107.129/IoT-VLAN was reported as "Default" with a null IP by both.
   Traffic-flow data carried the correct source IP, network and subnet.
 - **Controller changes provision asynchronously.** Verify writes by polling with a
   retry; a single immediate re-read reports false failures.
