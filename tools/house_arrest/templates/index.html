@@ -294,12 +294,25 @@
         <div class="isolate-block">
             <div class="subsection is-first">
             <h3>Isolate a network</h3>
-            <p class="card-note">
-                Uses UniFi's own per-network settings, the same switches as
-                Settings -> Networks -> the network. The controller generates the
-                firewall rules, so this page and the UniFi UI always agree.
-                Applies to every device on the network, now and in future.
-            </p>
+
+            <!-- Explanation and the live preset preview, inline. The picture is
+                 preset-aware (one image per level) so it always matches the
+                 verdict — internet and other-VLAN paths swap between allowed and
+                 blocked, and the green self-loop keeps the same-VLAN peer caveat
+                 in plain sight. It updates as the Level below is changed. -->
+            <div class="intro-split">
+                <p class="card-note">
+                    Uses UniFi's own per-network settings, the same switches as
+                    Settings -> Networks -> the network. The controller generates the
+                    firewall rules, so this page and the UniFi UI always agree.
+                    Applies to every device on the network, now and in future.
+                </p>
+                <figure class="mechanism-figure iso-figure" x-show="isoPreset">
+                    <img :src="isoImage()" :alt="isoImageAlt()"
+                         width="800" height="446" decoding="async">
+                    <figcaption x-text="isoSummary()"></figcaption>
+                </figure>
+            </div>
 
             <div class="field-row">
                 <div>
@@ -454,11 +467,23 @@
         <div class="card-head">
             <h2>DNS Lockdown</h2>
         </div>
-        <p class="card-note">
-            Name the resolvers you trust, pick the networks that must use them,
-            and everything else answering DNS gets blocked. Devices that
-            hardcode their own DNS server stop being able to use it.
-        </p>
+        <!-- The mechanism, drawn, inline beside the explanation. DNS lockdown is
+             abstract — the diagram shows exactly what survives (the approved
+             resolver on 53) and what is cut (every other resolver, DoT on 853,
+             and an app's hardcoded DNS). -->
+        <div class="intro-split">
+            <p class="card-note">
+                Name the resolvers you trust, pick the networks that must use them,
+                and everything else answering DNS gets blocked. Devices that
+                hardcode their own DNS server stop being able to use it.
+            </p>
+            <figure class="mechanism-figure dns-figure">
+                <img src="/arrest/static/images/dns-lockdown.png?v={{ version }}"
+                     width="620" height="492" decoding="async"
+                     alt="Devices on a locked network can reach the approved DNS resolver on port 53, while any other DNS server, encrypted DNS on port 853, and DNS hardcoded inside an app are all blocked.">
+                <figcaption>Approved resolver stays reachable; every other path to DNS is cut.</figcaption>
+            </figure>
+        </div>
 
         <template x-if="state.dns_lockdowns && state.dns_lockdowns.length">
             <div style="margin-bottom:1.5rem">
@@ -689,19 +714,80 @@
 
         <div class="field-row">
             <div>
-                <label for="device">Device</label>
-                <select id="device" x-model="selectedMac" @change="onDeviceChange()">
-                    <option value="">Select a device…</option>
-                    <template x-for="c in clients" :key="c.mac">
-                        <option :value="c.mac"
-                                x-text="(c.name || c.mac) + (c.online ? '' : ' — offline')"></option>
-                    </template>
-                </select>
-                <div class="hint">Everything your controller knows about, online first.</div>
+                <label for="device-search">Devices</label>
+                <!-- A combo box, not a plain select: with dozens of clients —
+                     including three called "Samsung" — a bare name list is not
+                     enough to pick the right one. Search matches name, IP and
+                     MAC; every row shows IP, the MAC tail and the network so
+                     twins can be told apart; and checkboxes let one lockdown
+                     cover several devices (one policy holds many client_macs —
+                     measured 2026-09-16). -->
+                <div class="combo" @click.outside="pickerOpen = false">
+                    <div class="combo-control" :class="{ 'is-open': pickerOpen }" @click="$refs.deviceSearch.focus()">
+                        <template x-for="c in selectedClients()" :key="'chip-' + c.mac">
+                            <span class="chip">
+                                <span x-text="c.name || c.mac"></span>
+                                <button type="button" class="chip-x" @click.stop="removeDevice(c.mac)"
+                                        :aria-label="'Remove ' + (c.name || c.mac)">&times;</button>
+                            </span>
+                        </template>
+                        <input id="device-search" type="text" class="combo-input" autocomplete="off"
+                               x-ref="deviceSearch" x-model="deviceSearch"
+                               role="combobox" :aria-expanded="pickerOpen" aria-controls="device-listbox"
+                               aria-autocomplete="list" aria-describedby="device-search-hint"
+                               @focus="pickerOpen = true"
+                               @input="pickerOpen = true"
+                               @keydown.escape="pickerOpen = false"
+                               @keydown.enter.prevent="toggleFirstMatch()"
+                               @keydown.backspace="if (!deviceSearch) removeLastDevice()">
+                    </div>
+                    <div class="combo-panel" x-show="pickerOpen" x-cloak
+                         id="device-listbox" role="listbox" aria-multiselectable="true">
+                        <div class="combo-filter">
+                            <label class="small muted" for="device-net-filter">Network</label>
+                            <select id="device-net-filter" x-model="deviceFilter">
+                                <option value="">All networks</option>
+                                <template x-for="n in clientNetworks()" :key="n">
+                                    <option :value="n" x-text="n"></option>
+                                </template>
+                            </select>
+                            <span class="muted small combo-count"
+                                  x-text="filteredClients().length + ' of ' + clients.length + ' devices'"></span>
+                        </div>
+                        <div class="combo-options">
+                            <template x-for="c in filteredClients()" :key="'opt-' + c.mac">
+                                <div class="combo-option" role="option"
+                                     :aria-selected="selectedMacs.includes(c.mac) ? 'true' : 'false'"
+                                     :aria-disabled="isArrested(c.mac) ? 'true' : 'false'"
+                                     :class="{ 'is-selected': selectedMacs.includes(c.mac), 'is-offline': !c.online, 'is-disabled': isArrested(c.mac) }"
+                                     @click="isArrested(c.mac) || toggleDevice(c.mac)">
+                                    <input type="checkbox" tabindex="-1"
+                                           :checked="selectedMacs.includes(c.mac)"
+                                           :disabled="isArrested(c.mac)">
+                                    <span class="combo-name" x-text="c.name || c.mac"></span>
+                                    <span class="combo-meta">
+                                        <span class="mono" x-show="c.ip" x-text="c.ip"></span>
+                                        <span class="mono muted" x-text="'…' + c.mac.slice(-5)"></span>
+                                        <span class="vlan-chip" x-show="c.network" x-text="c.network"></span>
+                                        <span class="offline-chip" x-show="!c.online">offline</span>
+                                        <span class="arrested-chip" x-show="isArrested(c.mac)">already locked down</span>
+                                    </span>
+                                </div>
+                            </template>
+                            <p class="hint" x-show="!filteredClients().length" style="padding: 0.5rem 0.75rem;">
+                                No devices match that search.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="hint" id="device-search-hint">
+                    Type a name, IP, or MAC to filter. Pick more than one to lock
+                    them down together under a single label.
+                </div>
             </div>
             <div>
                 <label for="label">Name this lockdown</label>
-                <input id="label" type="text" x-model="label">
+                <input id="label" type="text" x-model="label" @input="labelTouched = true">
                 <div class="hint">Appears in the UniFi policy name.</div>
             </div>
         </div>
@@ -828,8 +914,9 @@
             <div class="blindspot">
                 <h4>What no firewall rule here can stop</h4>
                 <p>
-                    <strong x-text="selectedClient() ? (selectedClient().name || selectedClient().mac) : 'This device'"></strong>
-                    can still see and profile everything sharing its own VLAN —
+                    <strong x-text="selectedNames() || 'This device'"></strong>
+                    can still see and profile everything sharing
+                    <span x-text="selectedMacs.length > 1 ? 'their own VLANs' : 'its own VLAN'"></span> —
                     discovery traffic between neighbours never passes the gateway,
                     so no policy on this page ever sees it. A smart TV doing this
                     is what the recent LG reporting describes.
@@ -859,12 +946,12 @@
             </ul>
         </div>
 
-        <template x-if="selectedClient() && selectedClient().locally_administered">
+        <template x-if="randomizedClients().length">
             <div class="notice warn">
-                <strong x-text="selectedClient().name || selectedClient().mac"></strong>
-                uses a private (randomized) MAC address. If it changes, the rule
-                stops matching — House Arrest will flag that here rather than keep
-                telling you the device is locked down.
+                <strong x-text="randomizedClients().map(c => c.name || c.mac).join(' and ')"></strong>
+                <span x-text="randomizedClients().length === 1 ? 'uses a private (randomized) MAC address. If it changes,' : 'use private (randomized) MAC addresses. If one changes,'"></span>
+                the rule stops matching — House Arrest will flag that here rather
+                than keep telling you the device is locked down.
             </div>
         </template>
 
@@ -875,7 +962,7 @@
         <label class="inline-check">
             <input type="checkbox" x-model="allowInbound" @change="preview = null">
             <span>
-                <strong>Let other devices still reach this device</strong>
+                <strong x-text="selectedMacs.length > 1 ? 'Let other devices still reach these devices' : 'Let other devices still reach this device'"></strong>
                 <span class="hint" style="margin-top:0.15rem">
                     It can't start connections out, but it can still answer when
                     something contacts it — so a camera or smart bulb stays usable.
@@ -893,7 +980,7 @@
             <button class="btn btn-primary" @click="apply()" :disabled="!preview || applying">
                 <span x-text="applying ? 'Applying…' : 'Apply lockdown'"></span>
             </button>
-            <span class="muted small" x-show="!preview && selectedMac" x-text="reviewHint()"></span>
+            <span class="muted small" x-show="!preview && selectedMacs.length" x-text="reviewHint()"></span>
         </div>
 
         <!-- Review reads as a summary, with the raw payload available for the

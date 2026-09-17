@@ -1038,10 +1038,26 @@ Images were generated with Gemini (Nano Banana) and are flat-vector art on a
 white ground in both themes, framed in their own white card. They are cropped,
 resized to 900px wide and palette-quantised (~40 KB each).
 
+Two more diagram families were added in the same style:
+
+- **DNS Lockdown** — one static diagram (`dns-lockdown.png`) on the DNS tab,
+  showing the approved resolver reachable on 53 while every other resolver, DoT
+  on 853, and an app's hardcoded DNS are cut. It is preset-independent, so a
+  single image is correct.
+- **Network isolation** — one image per network preset
+  (`isolation-<preset>.png`: `isolate_networks`, `no_internet`,
+  `full_isolation`), swapped by `isoImage()` off `isoPreset`, exactly like the
+  device scenario images. The internet and other-VLAN paths flip between allowed
+  and blocked per preset, and every variant keeps the green same-VLAN peer loop
+  visible so the picture never implies peer traffic is filtered. **If a network
+  preset's effects change, regenerate its image too.**
+
 ## Open items before building
 
-1. **[Inferred]** Whether `client_macs` accepts multiple MACs in one policy in practice,
-   not just by schema shape. Test with two devices before designing multi-select UI.
+1. **[Measured 2026-09-16]** `client_macs` DOES accept multiple MACs in one
+   policy in practice — created and read back a disabled two-MAC BLOCK policy on
+   the live UCG-Fiber (Roku + testclient), both MACs echoed and stored. The
+   device picker's multi-select relies on this.
 2. **[Inferred]** Behavior when a policy references a MAC that is no longer a known
    client — silently inert, or an API error on write? Decides how revert handles a
    device that vanished.

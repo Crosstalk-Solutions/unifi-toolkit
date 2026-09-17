@@ -637,8 +637,12 @@ def dns_order_is_safe(created: List[Dict]) -> bool:
         slot[action].append(idx)
 
     # No allow anywhere means nothing was created, or every resolver was
-    # dropped. Either way it is not a safe state to walk away from.
+    # dropped. And no block anywhere means nothing is actually being shut —
+    # an allow-only set is not a lockdown at all. Either way it is not a safe
+    # state to walk away from. (A real lockdown always carries both.)
     if not any(slot["ALLOW"] for slot in by_pair.values()):
+        return False
+    if not any(slot["BLOCK"] for slot in by_pair.values()):
         return False
 
     for slot in by_pair.values():
@@ -1717,30 +1721,6 @@ def check_breakage(ours: List[Dict], known: Dict[str, str]) -> List[Dict]:
             "suggestion": suggestion,
         })
     return results
-
-
-def preset_from_policy(policy: Dict) -> str:
-    """
-    Recover the preset NAME from a policy we created.
-
-    Descriptions read "[HouseArrest] <preset> for <label>", so the preset is
-    everything before the last " for ". Returned as the human label the preset
-    grid shows ("Full lockdown", "Internet only", ...) rather than the internal
-    key, because this goes straight on screen.
-
-    Returns "" when it cannot be read — the caller shows nothing rather than
-    guessing at a lockdown level, since naming the wrong one would misdescribe
-    what is actually being enforced.
-    """
-    desc = (policy.get("description") or "")
-    desc = desc.replace(MARKER, "").replace(NETWORK_MARKER, "")
-    desc = desc.replace(DNS_MARKER, "").strip()
-    if " for " not in desc:
-        return ""
-    candidate = desc.rsplit(" for ", 1)[0].strip()
-    # Only report it if it is genuinely one of our preset names.
-    known = set(PRESET_LABELS.values())
-    return candidate if candidate in known else ""
 
 
 def _label_from_policy(policy: Dict) -> str:

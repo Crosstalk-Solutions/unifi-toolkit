@@ -549,8 +549,11 @@ class TestDnsLockdown:
     RESOLVERS = ["192.168.200.50", "192.168.200.51"]
 
     def _build(self, block_dot=False):
+        # All test resolvers are LAN-side, so they go in lan_resolvers with an
+        # empty wan_resolvers. dns_policy_count()'s defaults (LAN allow, no WAN
+        # allow) match: two blocks + one allow (+ two more for DoT).
         return P.build_dns_lockdown(
-            self.NETS, "IDIoT", self.RESOLVERS, CLIENT_ZONE,
+            self.NETS, "IDIoT", self.RESOLVERS, [],
             CLIENT_ZONE, EXTERNAL_ZONE,
             P.next_free_index([], P.dns_policy_count(block_dot)),
             block_dot=block_dot,
@@ -599,15 +602,15 @@ class TestDnsLockdown:
 
     def test_requires_networks_and_resolvers(self):
         with pytest.raises(ValueError):
-            P.build_dns_lockdown([], "x", self.RESOLVERS, CLIENT_ZONE,
+            P.build_dns_lockdown([], "x", self.RESOLVERS, [],
                                  CLIENT_ZONE, EXTERNAL_ZONE, [1, 2, 3])
         with pytest.raises(ValueError):
-            P.build_dns_lockdown(self.NETS, "x", [], CLIENT_ZONE,
+            P.build_dns_lockdown(self.NETS, "x", [], [],
                                  CLIENT_ZONE, EXTERNAL_ZONE, [1, 2, 3])
 
     def test_too_few_indexes_rejected(self):
         with pytest.raises(ValueError):
-            P.build_dns_lockdown(self.NETS, "x", self.RESOLVERS, CLIENT_ZONE,
+            P.build_dns_lockdown(self.NETS, "x", self.RESOLVERS, [],
                                  CLIENT_ZONE, EXTERNAL_ZONE, [1])
 
     def test_doh_limitation_is_disclosed(self):

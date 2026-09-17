@@ -143,7 +143,10 @@ async def get_state():
         # Which lockdown this is. Read off the first policy that declares it;
         # every policy in a set carries the same preset.
         if not summary.preset:
-            summary.preset = P.preset_from_policy(pol) or None
+            # preset_from_policy returns the internal key; show the friendly
+            # label the preset grid uses.
+            key = P.preset_from_policy(pol)
+            summary.preset = P.PRESET_LABELS.get(key) if key else None
         h = health_by_id.get(pid)
         if h and h["status"] != P.OK:
             summary.status = h["status"]
@@ -266,8 +269,21 @@ async def list_clients(online_only: bool = False):
     try:
         known_clients = await client.get_known_clients()
         active = await client.get_clients()
+        networks = await client.get_networks()
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+    # A client sitting on a genuine WAN network (purpose == "wan") cannot be put
+    # under a per-device LAN lockdown — a firewall rule against the WAN uplink
+    # does nothing — so it has no place in the picker. Match WANs by id and by
+    # name, the same way list_networks() excludes them as quarantine targets.
+    # NOTE: purpose is the authority, not the name. A user-named "Comcast WAN"
+    # can actually be a purpose "vlan-only" transit segment; its (nameless,
+    # IP-less) transit MACs are left in the list rather than guessed at from the
+    # word "WAN", because filtering nameless+IP-less entries wholesale would also
+    # hide every legitimately offline, MAC-only device.
+    wan_ids = {n.get("_id") for n in networks if n.get("purpose") == "wan" and n.get("_id")}
+    wan_names = {n.get("name") for n in networks if n.get("purpose") == "wan" and n.get("name")}
 
     out = []
     for c in known_clients or []:
@@ -277,6 +293,8 @@ async def list_clients(online_only: bool = False):
         live = active.get(mac) or {}
         online = bool(live)
         if online_only and not online:
+            continue
+        if live.get("network_id") in wan_ids or live.get("network") in wan_names:
             continue
         out.append(ClientInfo(
             mac=mac,

@@ -55,7 +55,11 @@ function houseArrest() {
 
         // lockdown form
         preset: '',
-        selectedMac: '',
+        selectedMacs: [],
+        deviceSearch: '',
+        deviceFilter: '',
+        pickerOpen: false,
+        labelTouched: false,
         label: '',
         networkId: '',
         allowInbound: true,
@@ -125,13 +129,26 @@ function houseArrest() {
             return p ? p.caveats : [];
         },
 
+        // Preset-keyed isolation diagram. One image per network preset so the
+        // picture never contradicts the verdict the way a single static graphic
+        // would — the same rule the device tab's scenario images follow.
+        isoImage() {
+            if (!this.isoPreset) return '';
+            return '/arrest/static/images/isolation-' + this.isoPreset + '.png' +
+                (this.assetVersion ? '?v=' + this.assetVersion : '');
+        },
+        isoImageAlt() {
+            const p = this.currentNetworkPreset();
+            return p ? ('Network isolation — ' + p.label + '. ' + p.effects.summary) : '';
+        },
+
         async isoDryRun() {
             this.message = null;
             this.isoPreviewing = true;
             try {
                 const res = await fetch('api/isolate', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     body: JSON.stringify({
                         preset: this.isoPreset,
                         network_id: this.isoNetworkId,
@@ -157,7 +174,7 @@ function houseArrest() {
             try {
                 const res = await fetch('api/isolate', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     body: JSON.stringify({
                         preset: this.isoPreset,
                         network_id: this.isoNetworkId,
@@ -204,7 +221,7 @@ function houseArrest() {
             this.message = null;
             const res = await fetch('api/release-network', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify({
                     preset: 'full_isolation', network_id: networkId, dry_run: false
                 })
@@ -220,7 +237,7 @@ function houseArrest() {
             this.message = null;
             const res = await fetch('api/release', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify({ kind: 'network', dry_run: false })
             });
             const data = await res.json();
@@ -245,7 +262,7 @@ function houseArrest() {
             try {
                 const res = await fetch('api/dns-lockdown', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     body: JSON.stringify({
                         network_ids: this.dnsNetworks,
                         resolver_ips: this.dnsResolverList(),
@@ -277,7 +294,7 @@ function houseArrest() {
             try {
                 const res = await fetch('api/dns-lockdown', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     body: JSON.stringify({
                         network_ids: this.dnsNetworks,
                         resolver_ips: this.dnsResolverList(),
@@ -341,7 +358,7 @@ function houseArrest() {
 
         async dnsRelease(label) {
             this.message = null;
-            const res = await fetch('api/dns-release?label=' + encodeURIComponent(label), { method: 'POST' });
+            const res = await fetch('api/dns-release?label=' + encodeURIComponent(label), { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
             const data = await res.json();
             this.message = data.error
                 ? { kind: 'danger', text: data.error }
@@ -499,7 +516,7 @@ function houseArrest() {
             try {
                 const res = await fetch('api/wlan-isolation', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     body: JSON.stringify({
                         wlan_id: this.wlanToggle.id,
                         enabled: this.wlanToggle.next,
@@ -599,7 +616,7 @@ function houseArrest() {
         async dhcpPreviewFor(dryRun) {
             const res = await fetch('api/dhcp-dns', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify({
                     network_ids: this.dnsNetworks,
                     resolver_ips: this.dnsResolverList(),
@@ -683,7 +700,7 @@ function houseArrest() {
             try {
                 const res = await fetch('api/network-setting', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     body: JSON.stringify({
                         network_id: this.toggle.networkId,
                         column: this.toggle.column,
@@ -782,7 +799,7 @@ function houseArrest() {
         },
 
         canReview() {
-            if (!this.selectedMac) return false;
+            if (!this.selectedMacs.length) return false;
             const p = this.currentPreset();
             if (p && p.requires_network && !this.networkId) return false;
             return true;
@@ -798,15 +815,90 @@ function houseArrest() {
 
         // ---- form ----
 
-        selectedClient() {
-            return this.clients.find(c => c.mac === this.selectedMac) || null;
+        selectedClients() {
+            return this.selectedMacs
+                .map(m => this.clients.find(c => c.mac === m))
+                .filter(Boolean);
         },
 
-        onDeviceChange() {
-            const c = this.selectedClient();
+        selectedNames() {
+            const names = this.selectedClients().map(c => c.name || c.mac);
+            if (names.length <= 2) return names.join(' and ');
+            return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+        },
+
+        randomizedClients() {
+            return this.selectedClients().filter(c => c.locally_administered);
+        },
+
+        // MACs already under an active arrest. Selecting one again would just
+        // bounce off the server's duplicate guard, so the picker greys them
+        // out and says why instead of letting the request fail later.
+        isArrested(mac) {
+            return this.state.arrests.some(a => (a.macs || []).includes(mac));
+        },
+
+        clientNetworks() {
+            const names = new Set();
+            this.clients.forEach(c => { if (c.network) names.add(c.network); });
+            return Array.from(names).sort((a, b) => a.localeCompare(b));
+        },
+
+        filteredClients() {
+            const q = this.deviceSearch.trim().toLowerCase();
+            // The MAC fallback only runs when the query actually looks like a
+            // MAC fragment. Without the gate, the hex letters hiding in a name
+            // search ("testclient" contains "ece") match unrelated MAC tails —
+            // measured: it selected the wrong device on Enter.
+            const looksLikeMac = /^[0-9a-f]{2}([:\-. ]?[0-9a-f]{1,2})*$/.test(q);
+            const qMac = looksLikeMac ? q.replace(/[^0-9a-f]/g, '') : '';
+            return this.clients.filter(c => {
+                if (this.deviceFilter && c.network !== this.deviceFilter) return false;
+                if (!q) return true;
+                if ((c.name || '').toLowerCase().includes(q)) return true;
+                if ((c.ip || '').includes(q)) return true;
+                // Separators are ignored, so "a690" still finds b8:a1:75:28:a6:90.
+                if (qMac && c.mac.replace(/[^0-9a-f]/g, '').includes(qMac)) return true;
+                return false;
+            });
+        },
+
+        toggleDevice(mac) {
+            const i = this.selectedMacs.indexOf(mac);
+            if (i >= 0) this.selectedMacs.splice(i, 1);
+            else this.selectedMacs.push(mac);
+            this.deviceSearch = '';
             this.preview = null;
             this.message = null;
-            if (c) this.label = c.name || c.mac;
+            this.autoLabel();
+            // Keep typing where the user expects: picking a row moves focus to
+            // the row, so a second search would otherwise go nowhere.
+            if (this.$refs.deviceSearch) this.$refs.deviceSearch.focus();
+        },
+
+        removeDevice(mac) {
+            this.selectedMacs = this.selectedMacs.filter(m => m !== mac);
+            this.preview = null;
+            this.autoLabel();
+        },
+
+        removeLastDevice() {
+            if (this.selectedMacs.length) this.removeDevice(this.selectedMacs[this.selectedMacs.length - 1]);
+        },
+
+        toggleFirstMatch() {
+            const first = this.filteredClients().find(c => !this.isArrested(c.mac));
+            if (first) this.toggleDevice(first.mac);
+        },
+
+        // Keep the label in step with the selection until the user edits it
+        // themselves — then it is theirs and we stop touching it.
+        autoLabel() {
+            if (this.labelTouched && this.label) return;
+            const cs = this.selectedClients();
+            if (cs.length === 0) { this.label = ''; this.labelTouched = false; return; }
+            const first = cs[0].name || cs[0].mac;
+            this.label = cs.length === 1 ? first : first + ' + ' + (cs.length - 1) + ' more';
         },
 
         reviewTitle() {
@@ -839,10 +931,10 @@ function houseArrest() {
             try {
                 const res = await fetch('api/lockdown', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     body: JSON.stringify({
                         preset: this.preset,
-                        macs: [this.selectedMac],
+                        macs: this.selectedMacs,
                         label: this.label,
                         network_id: this.networkId || null,
                         allow_inbound: this.allowInbound,
@@ -867,10 +959,10 @@ function houseArrest() {
             try {
                 const res = await fetch('api/lockdown', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                     body: JSON.stringify({
                         preset: this.preset,
-                        macs: [this.selectedMac],
+                        macs: this.selectedMacs,
                         label: this.label,
                         network_id: this.networkId || null,
                         allow_inbound: this.allowInbound,
@@ -889,7 +981,8 @@ function houseArrest() {
                                   data.created.length + ' policies written to your gateway.'
                           };
                     this.preview = null;
-                    this.selectedMac = '';
+                    this.selectedMacs = [];
+                    this.labelTouched = false;
                     this.label = '';
                     this.networkId = '';
                     await this.refresh(true);
@@ -903,7 +996,7 @@ function houseArrest() {
             this.message = null;
             const res = await fetch('api/release', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify({ label: labelToRelease, kind: 'device', dry_run: false })
             });
             const data = await res.json();

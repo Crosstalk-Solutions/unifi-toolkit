@@ -1176,3 +1176,171 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
    duplicate guard on the server never has to fire as an error. */
 .net-option.is-taken { opacity: 0.55; cursor: not-allowed; }
 .net-option.is-taken .hint { display: block; margin: 0.1rem 0 0 1.6rem; }
+
+/* ---- Device combo picker ---- */
+/* A select can't show IP/MAC/network per row or take more than one value;
+   this is the same visual language as the inputs above, opened into a panel. */
+[x-cloak] { display: none !important; }
+
+.combo { position: relative; }
+
+.combo-control {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+    width: 100%;
+    min-height: 2.75rem;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--surface);
+    cursor: text;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.combo-control:focus-within, .combo-control.is-open {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 20%, transparent);
+}
+.combo-control .combo-input {
+    flex: 1 1 8rem;
+    min-width: 6rem;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-family: inherit;
+    padding: 0.25rem 0.25rem;
+}
+.combo-control .combo-input:focus { outline: none; box-shadow: none; }
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary-color) 12%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--primary-color) 35%, transparent);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+.chip-x {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0.1rem 0.3rem;
+    border-radius: 999px;
+    cursor: pointer;
+}
+.chip-x:hover { color: var(--danger-color); background: color-mix(in srgb, var(--danger-color) 12%, transparent); }
+
+.combo-panel {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+}
+.combo-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--surface-sunken);
+}
+.combo-filter select { width: auto; flex: 0 1 14rem; padding: 0.3rem 0.5rem; font-size: 0.85rem; }
+.combo-count { margin-left: auto; white-space: nowrap; }
+
+.combo-options { max-height: 310px; overflow-y: auto; }
+
+.combo-option {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent);
+}
+.combo-option:last-child { border-bottom: none; }
+.combo-option:hover { background: var(--surface-sunken); }
+.combo-option.is-selected { background: color-mix(in srgb, var(--primary-color) 8%, var(--surface)); }
+.combo-option.is-offline .combo-name { color: var(--text-secondary); }
+.combo-option.is-disabled { opacity: 0.55; cursor: not-allowed; }
+.combo-option input[type="checkbox"] { pointer-events: none; }
+
+.combo-name {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.combo-meta {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.offline-chip, .arrested-chip {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+.arrested-chip {
+    border-color: color-mix(in srgb, var(--warning-color) 50%, transparent);
+    color: var(--warning-color);
+}
+
+/* Mechanism diagrams sit inline beside their explanation rather than as a big
+   centered island with dead space on either side. The row is left-aligned and
+   width-capped so the text and diagram stay paired instead of drifting apart on
+   a wide card. */
+.intro-split {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    margin-bottom: 1.25rem;
+    max-width: 940px;
+}
+.intro-split .card-note { margin: 0; flex: 1 1 auto; max-width: none; }
+
+.mechanism-figure {
+    margin: 0;
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: #ffffff;
+}
+.mechanism-figure img { display: block; width: 100%; height: auto; border-radius: 6px; }
+.mechanism-figure figcaption {
+    margin-top: 0.4rem;
+    text-align: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #374151;
+}
+
+/* DNS diagram (near-square) rides in the intro split, right of the text. */
+.dns-figure { flex: 0 0 360px; max-width: 360px; }
+
+/* Isolation diagram is wide-and-short — sits right of its explanation too. */
+.iso-figure { flex: 0 0 440px; max-width: 440px; }
+
+@media (max-width: 760px) {
+    .intro-split { flex-direction: column; align-items: stretch; gap: 1rem; max-width: 480px; }
+    .dns-figure, .iso-figure { flex-basis: auto; max-width: 100%; align-self: center; }
+}
