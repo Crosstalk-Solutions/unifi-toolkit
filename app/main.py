@@ -327,6 +327,16 @@ async def root(request: Request):
     )
 
 
+@app.get("/rogue-support", response_class=HTMLResponse)
+async def rogue_support(request: Request):
+    """
+    Rogue Support promo page — the header's "Get Help With Your Network"
+    button lands here. Self-contained brand page; the outbound links carry
+    UTM tags so signups from the toolkit are attributable.
+    """
+    return templates.TemplateResponse(request, "rogue_support.html", {})
+
+
 @app.get("/health")
 async def health_check():
     """

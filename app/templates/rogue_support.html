@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rogue Support — Get Help With Your Network</title>
+    <link rel="icon" type="image/png" href="/static/images/rogue-support-icon.png">
+    <!-- Display face, with a heavy system fallback so an offline LAN install
+         still renders with intent instead of a naked default. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Rogue Support promo page.
+         *
+         * This page deliberately commits to ONE look, the Rogue Support brand
+         * (near-black, the shared Crosstalk/RS orange, the hooded mascot),
+         * rather than following the toolkit's light/dark toggle. It is a brand
+         * page, not a tool page, and it should feel like stepping into RS
+         * territory for a moment. */
+        :root {
+            --rs-orange: #F15A29;
+            --rs-red: #D7282F;
+            --rs-ink: #101216;
+            --rs-ink-2: #16191f;
+            --rs-panel: #1c2029;
+            --rs-line: #2a2f3b;
+            --rs-text: #eef0f4;
+            --rs-text-dim: #9aa1ad;
+            --display: 'Archivo Black', 'Arial Black', Impact, sans-serif;
+            --body: 'Archivo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+
+        body {
+            margin: 0;
+            background: var(--rs-ink);
+            color: var(--rs-text);
+            font-family: var(--body);
+            line-height: 1.6;
+            /* Faint diagonal grain so the dark ground reads as material, not void. */
+            background-image:
+                radial-gradient(ellipse 80% 50% at 70% -10%, rgba(241, 90, 41, 0.08), transparent 60%),
+                repeating-linear-gradient(-45deg, transparent 0 34px, rgba(255, 255, 255, 0.012) 34px 35px);
+        }
+
+        .wrap { max-width: 1060px; margin: 0 auto; padding: 0 1.5rem; }
+
+        /* ---------- top bar ---------- */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1.1rem 0;
+            border-bottom: 1px solid var(--rs-line);
+        }
+        .back {
+            color: var(--rs-text-dim);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.15s;
+        }
+        .back:hover { color: var(--rs-text); }
+        .topbar img { height: 34px; display: block; }
+
+        /* ---------- hero ---------- */
+        .hero {
+            display: grid;
+            grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+            gap: 3rem;
+            align-items: center;
+            padding: 4.5rem 0 3.5rem;
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--rs-orange);
+            margin: 0 0 1.1rem;
+        }
+        .eyebrow::before {
+            content: "";
+            width: 26px; height: 2px;
+            background: var(--rs-orange);
+        }
+
+        h1 {
+            font-family: var(--display);
+            font-size: clamp(2.2rem, 5vw, 3.4rem);
+            line-height: 1.04;
+            letter-spacing: -0.01em;
+            margin: 0 0 1.25rem;
+            text-wrap: balance;
+        }
+        h1 .accent { color: var(--rs-orange); }
+
+        .lede {
+            font-size: 1.08rem;
+            color: var(--rs-text-dim);
+            max-width: 46ch;
+            margin: 0 0 1.75rem;
+        }
+        .lede strong { color: var(--rs-text); font-weight: 600; }
+
+        .cta-row { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+
+        .cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            background: var(--rs-orange);
+            color: #fff;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 1.02rem;
+            padding: 0.9rem 1.6rem;
+            border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(241, 90, 41, 0.35);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s;
+        }
+        .cta:hover {
+            background: #ff6a35;
+            transform: translateY(-2px);
+            box-shadow: 0 12px 30px rgba(241, 90, 41, 0.45);
+        }
+        .cta svg { width: 18px; height: 18px; }
+
+        .promo-chip {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 0.45rem;
+            border: 1px dashed rgba(241, 90, 41, 0.55);
+            border-radius: 8px;
+            padding: 0.55rem 0.9rem;
+            font-size: 0.9rem;
+            color: var(--rs-text-dim);
+            background: rgba(241, 90, 41, 0.06);
+        }
+        .promo-chip strong { color: var(--rs-orange); font-size: 1rem; }
+
+        /* Mascot panel: the teardrop badge shape from the logo, echoed as
+           rings behind the character. */
+        .hero-art {
+            position: relative;
+            display: grid;
+            place-items: center;
+            min-height: 340px;
+        }
+        .hero-art .rings {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+        }
+        .hero-art .rings span {
+            position: absolute;
+            border-radius: 50%;
+            border: 1px solid rgba(241, 90, 41, 0.25);
+        }
+        .hero-art .rings span:nth-child(1) { width: 300px; height: 300px; }
+        .hero-art .rings span:nth-child(2) { width: 390px; height: 390px; border-color: rgba(241, 90, 41, 0.12); }
+        .hero-art .rings span:nth-child(3) { width: 480px; height: 480px; border-color: rgba(241, 90, 41, 0.06); }
+        .hero-art img {
+            position: relative;
+            width: min(240px, 60%);
+            filter: drop-shadow(0 18px 40px rgba(0, 0, 0, 0.55));
+            animation: float 7s ease-in-out infinite;
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+            50% { transform: translateY(-12px) rotate(1deg); }
+        }
+
+        /* ---------- staggered load ---------- */
+        .reveal { opacity: 0; transform: translateY(14px); animation: reveal 0.55s ease forwards; }
+        .reveal.d1 { animation-delay: 0.05s; }
+        .reveal.d2 { animation-delay: 0.15s; }
+        .reveal.d3 { animation-delay: 0.25s; }
+        .reveal.d4 { animation-delay: 0.35s; }
+        @keyframes reveal { to { opacity: 1; transform: none; } }
+        @media (prefers-reduced-motion: reduce) {
+            .reveal { opacity: 1; transform: none; animation: none; }
+            .hero-art img { animation: none; }
+        }
+
+        /* ---------- sections ---------- */
+        section { padding: 2.75rem 0; }
+        .section-head {
+            font-family: var(--display);
+            font-size: 1.45rem;
+            margin: 0 0 1.5rem;
+            letter-spacing: 0.005em;
+        }
+        .section-head .tick { color: var(--rs-orange); }
+
+        .help-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.9rem;
+        }
+        .help-card {
+            background: var(--rs-panel);
+            border: 1px solid var(--rs-line);
+            border-radius: 12px;
+            padding: 1.1rem 1.2rem;
+            transition: border-color 0.15s, transform 0.15s;
+        }
+        .help-card:hover { border-color: rgba(241, 90, 41, 0.5); transform: translateY(-2px); }
+        .help-card h3 { margin: 0 0 0.3rem; font-size: 1rem; font-weight: 700; }
+        .help-card p { margin: 0; font-size: 0.9rem; color: var(--rs-text-dim); }
+
+        /* ---------- how it works ---------- */
+        .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem; counter-reset: step; }
+        .step {
+            position: relative;
+            background: var(--rs-ink-2);
+            border: 1px solid var(--rs-line);
+            border-radius: 12px;
+            padding: 1.4rem 1.2rem 1.2rem;
+        }
+        .step::before {
+            counter-increment: step;
+            content: counter(step);
+            font-family: var(--display);
+            font-size: 2.6rem;
+            line-height: 1;
+            color: rgba(241, 90, 41, 0.28);
+            position: absolute;
+            top: 0.6rem;
+            right: 0.9rem;
+        }
+        .step h3 { margin: 0 0 0.35rem; font-size: 1rem; }
+        .step p { margin: 0; font-size: 0.9rem; color: var(--rs-text-dim); }
+
+        /* ---------- honesty strip ---------- */
+        .straight {
+            border-left: 3px solid var(--rs-orange);
+            background: var(--rs-ink-2);
+            border-radius: 0 12px 12px 0;
+            padding: 1.4rem 1.6rem;
+            max-width: 720px;
+        }
+        .straight p { margin: 0; font-size: 1.02rem; }
+        .straight p + p { margin-top: 0.7rem; color: var(--rs-text-dim); font-size: 0.94rem; }
+
+        /* ---------- final CTA ---------- */
+        .finale {
+            text-align: center;
+            padding: 4rem 0 4.5rem;
+        }
+        .finale h2 {
+            font-family: var(--display);
+            font-size: clamp(1.7rem, 3.6vw, 2.4rem);
+            margin: 0 0 0.75rem;
+        }
+        .finale .code {
+            font-size: 1.05rem;
+            color: var(--rs-text-dim);
+            margin: 0 0 1.75rem;
+        }
+        .finale .code strong {
+            color: var(--rs-orange);
+            font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+            letter-spacing: 0.06em;
+            background: rgba(241, 90, 41, 0.1);
+            border: 1px solid rgba(241, 90, 41, 0.4);
+            border-radius: 6px;
+            padding: 0.15rem 0.5rem;
+        }
+
+        footer {
+            border-top: 1px solid var(--rs-line);
+            padding: 1.4rem 0 2.2rem;
+            font-size: 0.8rem;
+            color: var(--rs-text-dim);
+        }
+        footer a { color: var(--rs-text-dim); }
+
+        @media (max-width: 820px) {
+            .hero { grid-template-columns: 1fr; padding-top: 2.5rem; text-align: center; }
+            .eyebrow::before { display: none; }
+            .lede { margin-inline: auto; }
+            .cta-row { justify-content: center; }
+            .hero-art { order: -1; min-height: 260px; }
+            .hero-art .rings span:nth-child(3) { display: none; }
+            .help-grid, .steps { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="wrap">
+    <div class="topbar">
+        <a class="back" href="/">&larr; Back to Dashboard</a>
+        <img src="/static/images/rogue-support-logo-white.png" alt="Rogue Support">
+    </div>
+
+    <div class="hero">
+        <div>
+            <p class="eyebrow reveal d1">From the folks behind Crosstalk Solutions</p>
+            <h1 class="reveal d1">Stuck on your network? <span class="accent">Get a real expert on it.</span></h1>
+            <p class="lede reveal d2">
+                Rogue Support is on-demand networking help for your home or home
+                office. <strong>$120 an hour, billed in 6-minute increments</strong>,
+                so a 20-minute fix costs you a 20-minute fix. Real network
+                engineers, remote sessions, any brand of gear.
+            </p>
+            <div class="cta-row reveal d3">
+                <a class="cta" href="https://www.rogue.support/?utm_source=unifi_toolkit&amp;utm_medium=app&amp;utm_campaign=toolkit_promo" target="_blank" rel="noopener noreferrer">
+                    Get Help With Your Network
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M5 12h14M13 6l6 6-6 6"/>
+                    </svg>
+                </a>
+                <span class="promo-chip"><strong>25% off</strong> your first engagement with code <strong style="font-family:ui-monospace,Consolas,monospace">TOOLKIT25</strong></span>
+            </div>
+        </div>
+        <div class="hero-art reveal d2" aria-hidden="true">
+            <div class="rings"><span></span><span></span><span></span></div>
+            <img src="/static/images/rogue-support-icon.png" alt="">
+        </div>
+    </div>
+
+    <section>
+        <h2 class="section-head"><span class="tick">/</span> What we actually help with</h2>
+        <div class="help-grid">
+            <div class="help-card">
+                <h3>UniFi setup and cleanup</h3>
+                <p>New deployments, half-finished ones, and the "it worked until I touched it" kind.</p>
+            </div>
+            <div class="help-card">
+                <h3>VLANs and IoT isolation</h3>
+                <p>Segment your cameras, TVs, and smart gear so they can do their job and nothing else.</p>
+            </div>
+            <div class="help-card">
+                <h3>Wi-Fi coverage and roaming</h3>
+                <p>AP placement, channel planning, and fixing that one room where video calls always die.</p>
+            </div>
+            <div class="help-card">
+                <h3>VPN and remote access</h3>
+                <p>WireGuard, Teleport, site-to-site. Reach your network from anywhere without opening it to everyone.</p>
+            </div>
+            <div class="help-card">
+                <h3>Network design</h3>
+                <p>Planning a rewire, a rack, or a whole new build? Get the design right before you buy.</p>
+            </div>
+            <div class="help-card">
+                <h3>Any mix of equipment</h3>
+                <p>We are not brand-locked. UniFi, Omada, MikroTik, pfSense, or the pile of gear you already own.</p>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="section-head"><span class="tick">/</span> How it works</h2>
+        <div class="steps">
+            <div class="step">
+                <h3>Tell us what's going on</h3>
+                <p>Book at rogue.support and describe the problem in plain English. No ticket-speak required.</p>
+            </div>
+            <div class="step">
+                <h3>Get matched with a tech</h3>
+                <p>A vetted network engineer picks up your case. These are the same folks who do this professionally all day.</p>
+            </div>
+            <div class="step">
+                <h3>Fix it together</h3>
+                <p>Remote session, screen share, or a call. You watch the whole thing, and you learn how it works along the way.</p>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <div class="straight">
+            <p>
+                The billing is the honest part: 6-minute increments, and you only
+                pay for time a tech is actually working on your network. Vendor
+                support won't help you design VLANs. We will.
+            </p>
+            <p>
+                And if what you need is bigger than a session, we'll tell you
+                that too, instead of running the clock.
+            </p>
+        </div>
+    </section>
+
+    <div class="finale">
+        <h2>Ready when you are.</h2>
+        <p class="code">Mention code <strong>TOOLKIT25</strong> for 25% off your first engagement.</p>
+        <a class="cta" href="https://www.rogue.support/?utm_source=unifi_toolkit&amp;utm_medium=app&amp;utm_campaign=toolkit_promo" target="_blank" rel="noopener noreferrer">
+            Get Help With Your Network
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12h14M13 6l6 6-6 6"/>
+            </svg>
+        </a>
+    </div>
+
+    <footer>
+        Rogue Support is a Crosstalk Solutions service. 25% discount applies to
+        your first engagement only. The UniFi Toolkit is free and stays free;
+        this page is how it pays the electric bill.
+        &nbsp;&middot;&nbsp; <a href="https://www.rogue.support/" target="_blank" rel="noopener noreferrer">rogue.support</a>
+    </footer>
+</div>
+
+</body>
+</html>
