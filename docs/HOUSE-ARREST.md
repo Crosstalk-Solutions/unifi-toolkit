@@ -136,18 +136,6 @@ The **blocked traffic view** shows what each lockdown actually stopped in
 the last 24 hours, attributed to House Arrest's own rules by ID. Another
 rule's blocks are never counted.
 
-### Why there is no "move it to another VLAN" preset
-
-An earlier beta had a Quarantine preset that moved the device to a VLAN
-using UniFi's per-client network override. On wired clients that override
-was measured half-applying: the device got an address on the new VLAN but
-had no working connectivity at all, while the controller reported two
-different locations for it. Since the outcome couldn't even be reported
-coherently, it couldn't be verified either, so the preset was removed. If a
-device needs its own VLAN, assign it natively in UniFi (the switch port's
-network, or a dedicated Wi-Fi network), then lock that VLAN down from the
-Networks and DNS tabs.
-
 ## Known limitations
 
 These were all measured on real hardware, and each one is stated in the UI
