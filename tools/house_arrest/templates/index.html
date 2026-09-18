@@ -487,6 +487,21 @@
             </span>
         </label>
 
+        <!-- The permanent gap, stated up front rather than only in the
+             post-review caveats: DoH is indistinguishable from ordinary HTTPS
+             at this layer, so no rule this tab writes can touch it. Same
+             honesty treatment as the Devices tab's same-VLAN blindspot. -->
+        <ul class="caveats">
+            <li>
+                <strong>DNS-over-HTTPS is the one thing this tab cannot stop.</strong>
+                DoH is ordinary HTTPS on port 443, so no firewall rule here can
+                tell it apart from normal web traffic. A browser or device with
+                "secure DNS" switched on can resolve names right past this
+                lockdown. Turn secure DNS off in the browser or app itself, or
+                cut the device's internet entirely from the Devices tab.
+            </li>
+        </ul>
+
         <div class="actions">
             <button class="btn btn-secondary" @click="dnsDryRun()"
                     :disabled="!dnsReady() || dnsPreviewing">

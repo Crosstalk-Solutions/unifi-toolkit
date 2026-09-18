@@ -89,6 +89,33 @@ Options and safeguards:
   Stacking a second lockdown on top of the first is refused rather than
   silently doubled up.
 
+### What DNS Lockdown cannot stop: DNS-over-HTTPS
+
+DoH is DNS wrapped in ordinary HTTPS on port 443. At the firewall it is
+indistinguishable from any other web traffic, so there is no rule this tool
+(or any port-based firewall) can write that blocks DoH without blocking the
+web itself. A browser with "secure DNS" turned on, or a device with a DoH
+resolver built in, can resolve names right past a DNS lockdown.
+
+Blocking DoH by destination is a losing game: it means maintaining a list of
+every DoH provider's addresses, the list is never complete, and popular
+providers share addresses with regular web services. House Arrest does not
+pretend to do this.
+
+What actually works:
+
+- Turn off secure DNS in the browser or app itself (Chrome, Edge, and
+  Firefox all have a setting for it).
+- For a device you don't trust to behave, don't fight its resolver. Use a
+  Devices-tab preset that cuts its internet access entirely, and open
+  specific exceptions if it needs them.
+- Some resolvers and firewalls handle Firefox specifically through its
+  canary domain (`use-application-dns.net`); that only affects Firefox, and
+  only when Firefox chooses to honor it.
+
+The UI states this limitation on the DNS Lockdown tab itself, so nobody has
+to find it here first.
+
 ## Devices tab
 
 Select one or more devices (searchable by name, IP, or MAC, and several
@@ -133,8 +160,9 @@ next to the feature it qualifies. Collected here:
 - **Connections already open keep running** when a lockdown is applied. The
   gateway's connection tracking lets established sessions finish. New
   connections are blocked immediately.
-- **DNS-over-HTTPS (port 443) is not covered** by DNS Lockdown. At this
-  layer it looks like any other HTTPS traffic.
+- **DNS-over-HTTPS (port 443) is not covered** by DNS Lockdown, and cannot
+  be. At this layer it looks like any other HTTPS traffic. See the DoH
+  section under DNS Lockdown above for what actually works.
 - **A resolver on the device's own subnet can't be blocked.** Queries to it
   never cross the gateway.
 - **The gateway itself stays reachable.** DHCP and the gateway's own
