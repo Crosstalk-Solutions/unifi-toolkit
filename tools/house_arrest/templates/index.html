@@ -137,11 +137,9 @@
             </button>
         </div>
         <p class="card-note">
-            An audit of your VLANs you can act on: cells marked &#x270E; change
-            that setting right here, everything else explains itself on hover.
-            A network can look isolated in the UniFi UI and still be wide open,
-            because the predefined allow-all rule sits beneath everything and
-            lets traffic through.
+            An easy-to-read audit of your VLANs: cells marked with &#x270E; can
+            be modified in this interface. Hover over individual items for
+            pop-up descriptions.
         </p>
 
         <div x-show="inspection && inspection.loading">
@@ -309,11 +307,10 @@
             <div class="subsection wifi-isolation is-first">
                 <h3>Wi-Fi client isolation</h3>
                 <p class="card-note">
-                    Stops devices on an SSID reaching <em>each other</em>. This is
-                    the only setting here that touches traffic between neighbours
-                    on the same VLAN — firewall policies never see it, so no
-                    per-device lockdown can do this job. Wireless clients only;
-                    wired devices are unaffected.
+                    Stops devices on a Wi-Fi SSID from reaching each other. This
+                    is the only setting that can affect traffic between
+                    neighbours on the same VLAN. Wireless clients only; wired
+                    devices are unaffected.
                 </p>
 
                 <p class="hint" x-show="wlansLoading">Reading SSIDs…</p>
