@@ -1,4 +1,9 @@
-fastapi>=0.115.6
+# Pinned pair: unpinned fastapi resolved to 0.141/starlette 1.6 at image
+# build time on 2026-09-17, which removed the old TemplateResponse signature
+# and 500'd every page (#123). The calls are fixed to the request-first form
+# too, but a patch release ships the combination that is known to work.
+fastapi>=0.115.6,<0.116
+starlette>=0.40.0,<0.42
 uvicorn[standard]>=0.32.0
 sqlalchemy>=2.0.36
 greenlet>=3.0.0
@@ -11,7 +16,6 @@ pydantic-settings>=2.6.1
 jinja2>=3.1.6
 cryptography>=44.0.1
 aiohttp>=3.10.0
-starlette>=0.47.2
 bcrypt>=4.0.0
 python-multipart>=0.0.32
 itsdangerous>=2.2.0

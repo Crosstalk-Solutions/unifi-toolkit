@@ -169,10 +169,10 @@ def create_app() -> FastAPI:
             gateway_error = "Configuration error"
 
         return templates.TemplateResponse(
+            request,
             "index.html",
             {
-                "request": request,
-                "version": __version__,
+"version": __version__,
                 "supports_ids_ips": supports_ids_ips,
                 "gateway_info": gateway_info,
                 "ips_settings": ips_settings,

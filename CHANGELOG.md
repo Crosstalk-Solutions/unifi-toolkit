@@ -2,6 +2,11 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.11.3] - 2026-09-18
+
+### Fixed
+- **Every page returned Internal Server Error on images built after 2026-09-17 (#123).** The `:latest` image was rebuilt with unpinned framework dependencies, which resolved to fastapi 0.141 / starlette 1.6 -- and starlette 1.0 removed the old `TemplateResponse` call form this codebase still used, so every template route failed with `TypeError: unhashable type: 'dict'`. All eight call sites now use the request-first form (which works on both old and new starlette), and the fastapi/starlette pair is pinned to the known-good range. The Docker release workflow now also only moves `:latest` on a version tag, never on a push to main.
+
 ## [1.11.2] - 2026-03-18
 
 ### Fixed
