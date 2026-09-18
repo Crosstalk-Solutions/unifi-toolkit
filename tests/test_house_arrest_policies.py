@@ -647,3 +647,27 @@ class TestDnsLockdown:
 
     def test_same_network_resolver_limitation_is_disclosed(self):
         assert any("OWN network" in c for c in P.DNS_CAVEATS)
+
+
+class TestMdnsScope:
+    """The site-wide mDNS scope list, as the matrix toggle edits it."""
+
+    NETWORKS = [
+        {"_id": "n1", "name": "Default"},
+        {"_id": "n2", "name": "IoT"},
+        {"_id": "wan", "name": "WAN", "purpose": "wan"},
+    ]
+
+    def test_some_returns_the_stored_list(self):
+        cfg = {"mdns_enabled_for": "some",
+               "mdns_enabled_for_network_ids": ["n1", "n2"]}
+        assert P.mdns_effective_ids(cfg, self.NETWORKS) == ["n1", "n2"]
+
+    def test_all_expands_to_every_lan_network(self):
+        cfg = {"mdns_enabled_for": "all"}
+        assert P.mdns_effective_ids(cfg, self.NETWORKS) == ["n1", "n2"]
+
+    def test_none_and_missing_read_as_empty(self):
+        assert P.mdns_effective_ids({"mdns_enabled_for": "none"}, self.NETWORKS) == []
+        assert P.mdns_effective_ids(None, self.NETWORKS) == []
+        assert P.mdns_effective_ids({}, self.NETWORKS) == []

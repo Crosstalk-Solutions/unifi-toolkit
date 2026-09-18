@@ -459,14 +459,49 @@ async def set_network_setting(req: NetworkSettingRequest):
     provisions asynchronously and a single immediate re-read reports false
     failures.
     """
+    client, err = await _client_or_error()
+    if err:
+        raise HTTPException(status_code=503, detail=err)
+
+    # mDNS is not a per-network field — it is ONE site-wide list (the Gateway
+    # mDNS Proxy scope), and the per-network `mdns_enabled` is a read-only
+    # projection of it. So this toggle edits that shared list: read the
+    # current scope, add or remove this one network, write the whole list
+    # back through the v2 route (the only one that actually applies it).
+    if req.column == "mdns":
+        config = await client.get_global_network_config()
+        if config is None:
+            raise HTTPException(
+                status_code=502,
+                detail=("Could not read the site-wide mDNS scope from the "
+                        "controller, so nothing was changed."),
+            )
+        try:
+            networks = await client.get_networks()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        current = P.mdns_effective_ids(config, networks)
+        wanted = [i for i in current if i != req.network_id]
+        if req.value:
+            wanted.append(req.network_id)
+        if sorted(wanted) == sorted(current):
+            return {"ok": True, "field": "mdns_enabled_for_network_ids",
+                    "value": req.value}
+        ok = await client.set_mdns_networks(wanted)
+        if not ok:
+            raise HTTPException(
+                status_code=502,
+                detail=("The controller did not apply the mDNS scope change. "
+                        "Nothing was changed as far as we can confirm — check "
+                        "Settings -> Networks -> Gateway mDNS Proxy."),
+            )
+        return {"ok": True, "field": "mdns_enabled_for_network_ids",
+                "value": req.value}
+
     spec = P.editable_column(req.column)
     if spec is None:
         raise HTTPException(
             status_code=400, detail=f"{req.column!r} is not an editable setting")
-
-    client, err = await _client_or_error()
-    if err:
-        raise HTTPException(status_code=503, detail=err)
 
     field = spec["field"]
     ok = await client.set_network_flags(req.network_id, **{field: req.value})
