@@ -316,7 +316,7 @@ Login with the credentials you configured during setup.
 2. Click the **Settings cog (⚙️)** in the dashboard header
 3. Enter your UniFi controller details:
 
-**Controller URL** (must be a local IP or hostname — `unifi.ui.com` cloud access is not supported):
+**Controller URL** (must be a local IP or hostname; `unifi.ui.com` cloud access is not supported):
    - `https://192.168.1.1` (no port needed for UniFi OS devices)
 
 > **Note:** UI Toolkit requires **UniFi OS** (UDM, UCG, Cloud Key Gen2+). Standalone/self-hosted controllers (the Java-based controller software) are not supported as of v1.11.0. If you're on a standalone controller, v1.10.3 is the last compatible version.
@@ -338,7 +338,7 @@ After configuring, click **Test Connection** to verify connectivity.
 - **Wi-Fi Stalker**: Track specific devices by MAC address
 - **Threat Watch**: Monitor IDS/IPS security events
 - **Network Pulse**: Real-time network monitoring dashboard
-- **House Arrest**: Lock devices or whole networks down with UniFi's zone-based firewall — see [HOUSE-ARREST.md](HOUSE-ARREST.md). Requires UniFi Network 9.0+ (zone-based firewall).
+- **House Arrest**: Lock devices or whole networks down with UniFi's zone-based firewall. Requires UniFi Network 9.0+ (zone-based firewall). See [HOUSE-ARREST.md](HOUSE-ARREST.md).
 
 ---
 
@@ -397,7 +397,7 @@ docker compose --profile production restart
 
 | Docker tag | What it is |
 |---|---|
-| `:latest` | The release channel. Moves only when a version is tagged and released — this is what most installs should run. |
+| `:latest` | The release channel, and what most installs should run. It moves only when a version is tagged and released. |
 | `:edge` | The beta/staging channel, rebuilt on **every** merge to `main`. Newest features first, but it can break, and there is no changelog entry until the changes ship in a release. |
 
 ### Running the beta (`:edge`) channel
@@ -411,10 +411,10 @@ before its release):
    - **Synology Container Manager / Unraid:** edit the container/template and
      change the image tag to `crosstalksolutions/unifi-toolkit:edge`, then
      re-pull and recreate the container.
-2. To update the beta later, just re-pull the same tag — `:edge` moves with
+2. To update the beta later, just re-pull the same tag. `:edge` moves with
    every merge.
 3. To leave the beta, switch the tag back to `:latest` and re-pull. Note
-   that downgrading across schema changes is not supported — if a beta
+   that downgrading across schema changes is not supported. If a beta
    migration has run against your database, stay on `:edge` until the next
    release catches up.
 
@@ -532,7 +532,7 @@ curl -k https://192.168.1.1/
 ```
 
 **Common issues:**
-- **Not on UniFi OS** — Standalone/self-hosted controllers are not supported (v1.11.0+). v1.10.3 is the last compatible version.
+- **Not on UniFi OS.** Standalone/self-hosted controllers are not supported (v1.11.0+). v1.10.3 is the last compatible version.
 - Wrong controller URL
 - Firewall blocking access
 - Invalid credentials

@@ -41,7 +41,7 @@ Monitor IDS/IPS security events from your UniFi gateway.
 <img width="1359" height="468" alt="image" src="https://github.com/user-attachments/assets/7bfec7f7-bdf6-4ae2-af0e-143dcd982d4a" />
 
 ### House Arrest
-Lock a device or a whole network down using UniFi's zone-based firewall — reversible in one click, and honest about exactly what is and is not being blocked.
+Lock a device or a whole network down using UniFi's zone-based firewall. Reversible in one click, and honest about exactly what is and is not being blocked.
 - **Networks** - Editable audit matrix of your VLANs: firewall zone, network isolation, internet access, mDNS, and DHCP DNS at a glance, with per-SSID Wi-Fi client isolation
 - **DNS Lockdown** - Force chosen networks onto approved DNS resolvers and block everything else answering DNS (optionally DNS-over-TLS too)
 - **Devices** - Per-device lockdown presets by MAC: Full lockdown, Internet only, or LAN only, with multi-device selection
@@ -68,7 +68,7 @@ Real-time network monitoring dashboard.
 ### Requirements
 - **Docker** (recommended) or Python 3.9+
 - **Ubuntu 22.04/24.04** (or other Linux)
-- **UniFi OS** controller (UDM, UCG, Cloud Key Gen2+) — standalone/self-hosted controllers are not supported as of v1.11.0
+- **UniFi OS** controller (UDM, UCG, Cloud Key Gen2+). Standalone/self-hosted controllers are not supported as of v1.11.0
 
 ### Local Deployment (LAN Only)
 
@@ -137,7 +137,7 @@ Access at **https://your-domain.com**
 | Reset password | `./reset_password.sh` |
 | Update | `./upgrade.sh` |
 
-Images are published to both GHCR (`ghcr.io/crosstalk-solutions/unifi-toolkit`) and Docker Hub (`crosstalksolutions/unifi-toolkit`) — they are identical. `:latest` is the release channel and only moves on tagged releases; `:edge` is the beta/staging channel, rebuilt on every merge. See [Running the beta channel](docs/INSTALLATION.md#running-the-beta-edge-channel).
+Images are published to both GHCR (`ghcr.io/crosstalk-solutions/unifi-toolkit`) and Docker Hub (`crosstalksolutions/unifi-toolkit`), and they are identical. `:latest` is the release channel and only moves on tagged releases. `:edge` is the beta channel, rebuilt on every merge. See [Running the beta channel](docs/INSTALLATION.md#running-the-beta-edge-channel).
 
 ---
 
@@ -183,13 +183,13 @@ cp .env.example .env
 #### UniFi Controller Settings
 
 UniFi controller credentials are configured **through the web UI** after first
-launch (the gear icon on the dashboard) — they are stored encrypted in the
+launch (the gear icon on the dashboard). They are stored encrypted in the
 database, not read from environment variables.
 
 | Setting (web UI) | Description |
 |----------|-------------|
 | Controller URL | Local controller IP/hostname (e.g., `https://192.168.1.1`) |
-| API key | Recommended — generate in UniFi OS Settings → Admins |
+| API key | Recommended. Generate in UniFi OS Settings → Admins |
 | Username / password | Fallback if not using an API key |
 | Site ID | Site ID from URL, not friendly name (default: `default`). For multi-site, use ID from `/manage/site/{id}/...` |
 | Verify SSL | Off by default (self-signed controller certificates) |
@@ -201,7 +201,7 @@ database, not read from environment variables.
 | Variable | Description |
 |----------|-------------|
 | `STALKER_REFRESH_INTERVAL` | Device refresh interval in seconds (default: `60`) |
-| `ALLOWED_HOSTS` | Extra hostnames allowed to reach the toolkit (comma separated). The toolkit rejects requests whose Host header is not an IP, `localhost`, a `.local`-style name, or your `DOMAIN` — this protects against DNS-rebinding. If you access it through a Tailscale name or reverse-proxy alias, add that name here. |
+| `ALLOWED_HOSTS` | Extra hostnames allowed to reach the toolkit (comma separated). The toolkit rejects requests whose Host header is not an IP, `localhost`, a `.local`-style name, or your `DOMAIN`, which protects against DNS-rebinding. If you access it through a Tailscale name or reverse-proxy alias, add that name here. |
 
 Every secret-carrying variable also accepts a `_FILE` variant (e.g. `ENCRYPTION_KEY_FILE=/run/secrets/key`) for Docker Swarm / Kubernetes secrets mounted as files.
 
@@ -244,10 +244,10 @@ Never expose UniFi controllers via port forwarding
 ## Troubleshooting
 
 ### Can't connect to UniFi controller
-- **UniFi OS required** — standalone/self-hosted controllers are not supported (v1.11.0+). If you're running the Java-based controller software, v1.10.3 is the last compatible version.
-- **Stable (GA) firmware only** — Early Access firmware changes APIs without notice and is not supported. If a tool suddenly gets errors or empty data, check your firmware channel first (your firmware version is in Debug Info).
+- **UniFi OS required.** Standalone/self-hosted controllers are not supported (v1.11.0+). If you're running the Java-based controller software, v1.10.3 is the last compatible version.
+- **Stable (GA) firmware only.** Early Access firmware changes APIs without notice and is not supported. If a tool suddenly gets errors or empty data, check your firmware channel first (your firmware version is in Debug Info).
 - Set `UNIFI_VERIFY_SSL=false` for self-signed certificates
-- API key auth is recommended — generate in UniFi OS Settings → Admins
+- API key auth is recommended. Generate in UniFi OS Settings → Admins
 - Verify network connectivity to controller
 
 ### Device not showing as online
@@ -265,7 +265,7 @@ Never expose UniFi controllers via port forwarding
 - Use `./reset_password.sh` if you forgot your password
 
 ### Requests rejected when using a hostname
-- The toolkit only answers requests addressed to an IP, `localhost`, a `.local`-style name, or your configured `DOMAIN` (anti-DNS-rebinding protection). Add other names — a Tailscale MagicDNS name, a reverse-proxy alias — to `ALLOWED_HOSTS` in `.env`.
+- The toolkit only answers requests addressed to an IP, `localhost`, a `.local`-style name, or your configured `DOMAIN` (anti-DNS-rebinding protection). Add other names, like a Tailscale MagicDNS name or a reverse-proxy alias, to `ALLOWED_HOSTS` in `.env`.
 
 ### Docker issues
 - Verify `.env` exists and contains `ENCRYPTION_KEY`
