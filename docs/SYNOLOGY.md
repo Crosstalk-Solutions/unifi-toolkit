@@ -364,7 +364,6 @@ We recommend Docker Hub (Method A) for Synology users because it provides the be
 |----------|-------------|---------|
 | `LOG_LEVEL` | Logging verbosity | `INFO` |
 | `STALKER_REFRESH_INTERVAL` | Device check interval (seconds) | `60` |
-| `UNIFI_VERIFY_SSL` | Verify controller SSL cert | `false` |
 
 ### Complete .env Example
 
@@ -373,7 +372,6 @@ ENCRYPTION_KEY=your-44-character-key-here
 DEPLOYMENT_TYPE=local
 LOG_LEVEL=INFO
 STALKER_REFRESH_INTERVAL=60
-UNIFI_VERIFY_SSL=false
 ```
 
 ---

@@ -40,6 +40,17 @@ Monitor IDS/IPS security events from your UniFi gateway.
 
 <img width="1359" height="468" alt="image" src="https://github.com/user-attachments/assets/7bfec7f7-bdf6-4ae2-af0e-143dcd982d4a" />
 
+### House Arrest
+Lock a device or a whole network down using UniFi's zone-based firewall — reversible in one click, and honest about exactly what is and is not being blocked.
+- **Networks** - Editable audit matrix of your VLANs: firewall zone, network isolation, internet access, mDNS, and DHCP DNS at a glance, with per-SSID Wi-Fi client isolation
+- **DNS Lockdown** - Force chosen networks onto approved DNS resolvers and block everything else answering DNS (optionally DNS-over-TLS too)
+- **Devices** - Per-device lockdown presets by MAC: Full lockdown, Internet only, or LAN only, with multi-device selection
+- **Blocked traffic view** - See what each lockdown actually stopped, attributed to its own rules by ID
+- Every change is previewed before applying, every rule carries a marker so release can only ever delete its own rules, and a lockdown that stops enforcing (MAC changed, rule disabled in UniFi) is flagged instead of shown green
+- **Requires the zone-based firewall** (UniFi Network 9.0+ on a UniFi OS console)
+
+See [docs/HOUSE-ARREST.md](docs/HOUSE-ARREST.md) for the full guide, including measured limitations.
+
 ### Network Pulse
 Real-time network monitoring dashboard.
 - Gateway status (model, firmware, uptime, WAN)
@@ -110,6 +121,7 @@ Access at **https://your-domain.com**
 | [QNAP Guide](https://github.com/Crosstalk-Solutions/unifi-toolkit/issues/29) | QNAP Container Station setup (community) |
 | [Unraid Guide](docs/UNRAID.md) | Unraid Community apps Setup |
 | [QUICKSTART.md](docs/QUICKSTART.md) | 5-minute quick start reference |
+| [HOUSE-ARREST.md](docs/HOUSE-ARREST.md) | House Arrest guide: lockdowns, DNS control, and measured limitations |
 
 ---
 
@@ -124,6 +136,8 @@ Access at **https://your-domain.com**
 | Restart | `docker compose restart` |
 | Reset password | `./reset_password.sh` |
 | Update | `./upgrade.sh` |
+
+Images are published to both GHCR (`ghcr.io/crosstalk-solutions/unifi-toolkit`) and Docker Hub (`crosstalksolutions/unifi-toolkit`) — they are identical. `:latest` is the release channel and only moves on tagged releases; `:edge` is the beta/staging channel, rebuilt on every merge. See [Running the beta channel](docs/INSTALLATION.md#running-the-beta-edge-channel).
 
 ---
 
@@ -168,24 +182,28 @@ cp .env.example .env
 
 #### UniFi Controller Settings
 
-Configure via `.env` or the web UI (web UI takes precedence):
+UniFi controller credentials are configured **through the web UI** after first
+launch (the gear icon on the dashboard) — they are stored encrypted in the
+database, not read from environment variables.
 
-| Variable | Description |
+| Setting (web UI) | Description |
 |----------|-------------|
-| `UNIFI_CONTROLLER_URL` | Local controller IP/hostname (e.g., `https://192.168.1.1`) |
-| `UNIFI_API_KEY` | API key (recommended — generate in UniFi OS Settings → Admins) |
-| `UNIFI_USERNAME` | Username (fallback if not using API key) |
-| `UNIFI_PASSWORD` | Password (fallback if not using API key) |
-| `UNIFI_SITE_ID` | Site ID from URL, not friendly name (default: `default`). For multi-site, use ID from `/manage/site/{id}/...` |
-| `UNIFI_VERIFY_SSL` | SSL verification (default: `false`) |
+| Controller URL | Local controller IP/hostname (e.g., `https://192.168.1.1`) |
+| API key | Recommended — generate in UniFi OS Settings → Admins |
+| Username / password | Fallback if not using an API key |
+| Site ID | Site ID from URL, not friendly name (default: `default`). For multi-site, use ID from `/manage/site/{id}/...` |
+| Verify SSL | Off by default (self-signed controller certificates) |
 
 > **Note:** Use your controller's local IP address (e.g., `https://192.168.1.1`). Cloud access via `unifi.ui.com` is not supported.
 
-#### Tool Settings
+#### Other Settings
 
 | Variable | Description |
 |----------|-------------|
 | `STALKER_REFRESH_INTERVAL` | Device refresh interval in seconds (default: `60`) |
+| `ALLOWED_HOSTS` | Extra hostnames allowed to reach the toolkit (comma separated). The toolkit rejects requests whose Host header is not an IP, `localhost`, a `.local`-style name, or your `DOMAIN` — this protects against DNS-rebinding. If you access it through a Tailscale name or reverse-proxy alias, add that name here. |
+
+Every secret-carrying variable also accepts a `_FILE` variant (e.g. `ENCRYPTION_KEY_FILE=/run/secrets/key`) for Docker Swarm / Kubernetes secrets mounted as files.
 
 ---
 
@@ -227,6 +245,7 @@ Never expose UniFi controllers via port forwarding
 
 ### Can't connect to UniFi controller
 - **UniFi OS required** — standalone/self-hosted controllers are not supported (v1.11.0+). If you're running the Java-based controller software, v1.10.3 is the last compatible version.
+- **Stable (GA) firmware only** — Early Access firmware changes APIs without notice and is not supported. If a tool suddenly gets errors or empty data, check your firmware channel first (your firmware version is in Debug Info).
 - Set `UNIFI_VERIFY_SSL=false` for self-signed certificates
 - API key auth is recommended — generate in UniFi OS Settings → Admins
 - Verify network connectivity to controller
@@ -244,6 +263,9 @@ Never expose UniFi controllers via port forwarding
 ### Rate limited on login
 - Wait 5 minutes for lockout to expire
 - Use `./reset_password.sh` if you forgot your password
+
+### Requests rejected when using a hostname
+- The toolkit only answers requests addressed to an IP, `localhost`, a `.local`-style name, or your configured `DOMAIN` (anti-DNS-rebinding protection). Add other names — a Tailscale MagicDNS name, a reverse-proxy alias — to `ALLOWED_HOSTS` in `.env`.
 
 ### Docker issues
 - Verify `.env` exists and contains `ENCRYPTION_KEY`
@@ -287,7 +309,8 @@ unifi-toolkit/
 ├── tools/                 # Individual tools
 │   ├── wifi_stalker/      # Wi-Fi Stalker tool
 │   ├── threat_watch/      # Threat Watch tool
-│   └── network_pulse/     # Network Pulse tool
+│   ├── network_pulse/     # Network Pulse tool
+│   └── house_arrest/      # House Arrest tool
 ├── shared/                # Shared infrastructure
 │   ├── config.py          # Settings management
 │   ├── database.py        # SQLAlchemy setup
@@ -330,6 +353,7 @@ pytest tests/ --cov=shared --cov=app -v
 - `tests/test_cache.py` - In-memory caching with TTL expiration (19 tests)
 - `tests/test_config.py` - Pydantic settings and environment variables (13 tests)
 - `tests/test_crypto.py` - Fernet encryption for credentials (14 tests)
+- `tests/test_house_arrest_policies.py` - House Arrest policy builders, zone resolution, safety checks (199 tests)
 
 ---
 

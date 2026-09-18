@@ -338,6 +338,7 @@ After configuring, click **Test Connection** to verify connectivity.
 - **Wi-Fi Stalker**: Track specific devices by MAC address
 - **Threat Watch**: Monitor IDS/IPS security events
 - **Network Pulse**: Real-time network monitoring dashboard
+- **House Arrest**: Lock devices or whole networks down with UniFi's zone-based firewall — see [HOUSE-ARREST.md](HOUSE-ARREST.md). Requires UniFi Network 9.0+ (zone-based firewall).
 
 ---
 
@@ -391,6 +392,34 @@ docker compose --profile production restart
 ---
 
 ## Updating
+
+### Release channels
+
+| Docker tag | What it is |
+|---|---|
+| `:latest` | The release channel. Moves only when a version is tagged and released — this is what most installs should run. |
+| `:edge` | The beta/staging channel, rebuilt on **every** merge to `main`. Newest features first, but it can break, and there is no changelog entry until the changes ship in a release. |
+
+### Running the beta (`:edge`) channel
+
+If you have been invited to test pre-release features (like House Arrest
+before its release):
+
+1. Point your install at the `:edge` tag:
+   - **docker-compose:** edit `docker-compose.yml` and change the image tag
+     from `:latest` to `:edge`, then `docker compose pull && docker compose up -d`.
+   - **Synology Container Manager / Unraid:** edit the container/template and
+     change the image tag to `crosstalksolutions/unifi-toolkit:edge`, then
+     re-pull and recreate the container.
+2. To update the beta later, just re-pull the same tag — `:edge` moves with
+   every merge.
+3. To leave the beta, switch the tag back to `:latest` and re-pull. Note
+   that downgrading across schema changes is not supported — if a beta
+   migration has run against your database, stay on `:edge` until the next
+   release catches up.
+
+When reporting a beta issue, say you are on `:edge` and include the Debug
+Info from the dashboard footer.
 
 ### Upgrade Script (Recommended)
 

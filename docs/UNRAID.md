@@ -27,7 +27,7 @@ The easiest way to install UI Toolkit on Unraid:
 3. Enter UniFi controller details
 4. Click **Test Connection**
 5. Save configuration
-6. Start using tools (Wi-Fi Stalker, Threat Watch, Network Pulse)
+6. Start using tools (Wi-Fi Stalker, Threat Watch, Network Pulse, House Arrest)
 
 ---
 
