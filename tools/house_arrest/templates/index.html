@@ -990,6 +990,11 @@
                         <li x-text="line"></li>
                     </template>
                 </ul>
+                <ul class="caveats" x-show="previewCaveats.length">
+                    <template x-for="(c, i) in previewCaveats" :key="i">
+                        <li x-text="c"></li>
+                    </template>
+                </ul>
                 <p class="small muted" style="margin:0">
                     Removable at any time from the list below — House Arrest only
                     ever deletes policies it created.

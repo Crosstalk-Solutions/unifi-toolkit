@@ -1128,3 +1128,57 @@ Two more diagram families were added in the same style:
   against the current GA release before release, not against EA.
 - The `index` collision case: what happens if the user already has a custom policy at
   the index the tool wants.
+
+## MEASURED 2026-09-17: zone_key and firewall_zone_id — the custom/renamed-zone fix
+
+**The brittleness.** `_zone_ids()` matched zones by display name ("internal" /
+"external", case-folded). Both bench consoles use the default names, so every
+test passed — but a user who renames a zone, or whose networks sit in a custom
+zone, would get policies written into zone pairs their traffic never crosses.
+Since policy ordering (and matching) is scoped to the (source zone,
+destination zone) pair, that is silent non-protection: every index check
+passes, the health check sees the policies present, and nothing is enforced.
+
+**[Measured] on the home UCG-Fiber (read-only dump of `/firewall/zone` and
+`rest/networkconf`):**
+
+- Every default zone document carries a stable **`zone_key`**: `internal`,
+  `external`, `gateway`, `vpn`, `hotspot`, `dmz` — plus `default_zone: true`
+  and a `network_ids` membership list. The display `name` is a separate field,
+  which is what the user renames; `zone_key` is the reliable handle.
+- Every LAN network document carries **`firewall_zone_id`** pointing at its
+  zone's `_id` (a WAN-failover entry was the only network without one).
+- `rest/user` known-client records carry **`last_connection_network_id`**
+  (272 of 338 records on this console) — the only per-MAC network attribution
+  available without trusting `stat/sta`.
+
+**The fix (this session):**
+
+- `find_zone_id(zones, key)` matches `zone_key` first, display name only as a
+  fallback for firmware without `zone_key`. Verified live: identical ids to
+  the old name lookup on the home console (parity check).
+- DNS lockdown scopes `client_zone_id` to the chosen networks' actual zone via
+  `zone_of_network()` (`firewall_zone_id`, falling back to the zone's
+  `network_ids` list). A selection spanning two zones is refused — one
+  lockdown per zone — because a single rule set cannot cover two source zones.
+- Device lockdown attributes each MAC through known-client →
+  `last_connection_network_id` → `firewall_zone_id`. That record shares
+  stat/sta's staleness problems, but the measured misreports swapped VLANs
+  *within* the Internal zone, so zone-granularity attribution is safer than
+  hardcoding Internal — and the scoping is stated as a caveat on the review,
+  not applied silently. Unattributable MACs fall back to Internal.
+- `classify_resolvers()` gained a third bucket: an approved resolver on a LAN
+  network in a *different* zone than the locked networks gets **no allow at
+  all** (the blocks never cover that pair, so an allow there does nothing) and
+  a caveat noting that every other DNS server in that zone stays reachable
+  too. A foreign-only resolver set builds blocks-only, and
+  `dns_order_is_safe(expect_allow=False)` accepts the intentional absence of
+  an allow instead of rolling it back.
+
+**Honest-coverage caveats added.** The LAN block covers the client zone's own
+pair only. On a console with further populated LAN zones (the home console's
+Vpn zone holds the Crosstalk Office network, for example), a full lockdown's
+"no LAN" genuinely does not cut traffic to those zones. The tool now says so
+on the review instead of overclaiming. Extending the blocks to one-per-LAN-zone
+would close this and is left as a flagged follow-up — it multiplies policies
+and touches release/attribution, so it should not ride along in a fix.

@@ -64,6 +64,7 @@ function houseArrest() {
         networkId: '',
         allowInbound: true,
         preview: null,
+        previewCaveats: [],
 
         setTab(name) {
             this.tab = name;
@@ -929,6 +930,7 @@ function houseArrest() {
                     return;
                 }
                 this.preview = data.payloads;
+                this.previewCaveats = data.caveats || [];
             } finally {
                 this.previewing = false;
             }
