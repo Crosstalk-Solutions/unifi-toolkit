@@ -4,7 +4,7 @@ A comprehensive suite of tools for UniFi network management and monitoring.
 
 > **Note:** This project is not affiliated with, endorsed by, or sponsored by Ubiquiti Inc. UniFi is a trademark of Ubiquiti Inc.
 
-<img width="1094" height="748" alt="image" src="https://github.com/user-attachments/assets/a167fc5c-9db5-48f2-8b43-0dfdab3b08a8" />
+<img alt="UI Toolkit dashboard" src="docs/images/dashboard.jpg" />
 
 ## Features
 
@@ -50,6 +50,8 @@ Lock a device or a whole network down using UniFi's zone-based firewall. Reversi
 - **Requires the zone-based firewall** (UniFi Network 9.0+ on a UniFi OS console)
 
 See [docs/HOUSE-ARREST.md](docs/HOUSE-ARREST.md) for the full guide, including measured limitations.
+
+<img alt="House Arrest Networks tab" src="docs/images/house-arrest.png" />
 
 ### Network Pulse
 Real-time network monitoring dashboard.
