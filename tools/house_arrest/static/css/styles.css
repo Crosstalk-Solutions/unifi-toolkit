@@ -505,6 +505,11 @@ select:focus, input[type="text"]:focus {
     border: 1px solid var(--border-color);
     border-radius: 10px;
     background: #ffffff;
+    /* Match the DNS (360px) / isolation (440px) figures — without a cap this
+       one fills the whole 1fr column and dwarfs the other two tabs. */
+    width: 100%;
+    max-width: 440px;
+    justify-self: start;
 }
 .paths-figure img {
     display: block;
@@ -523,6 +528,7 @@ select:focus, input[type="text"]:focus {
 @media (max-width: 900px) {
     .paths-split { grid-template-columns: 1fr; }
     .paths-list { max-width: none; }
+    .paths-figure { justify-self: center; }
 }
 
 .path-line {
