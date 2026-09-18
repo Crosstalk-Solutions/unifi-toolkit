@@ -35,6 +35,10 @@ class ClientInfo(BaseModel):
     online: bool = False
     fixed_ip: Optional[str] = None
     locally_administered: bool = False
+    # Wireless context, so the Devices tab can say when an SSID's Client
+    # Isolation already covers the same-VLAN path the diagram shows as open.
+    essid: Optional[str] = None
+    is_wired: Optional[bool] = None
 
 
 class PolicyHealth(BaseModel):

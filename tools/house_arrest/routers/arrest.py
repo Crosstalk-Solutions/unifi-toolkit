@@ -373,6 +373,8 @@ async def list_clients(online_only: bool = False):
             online=online,
             fixed_ip=c.get("fixed_ip") if c.get("use_fixedip") else None,
             locally_administered=P.is_locally_administered(mac),
+            essid=live.get("essid"),
+            is_wired=live.get("is_wired"),
         ))
     out.sort(key=lambda x: (not x.online, (x.name or "zzz").lower()))
     return out

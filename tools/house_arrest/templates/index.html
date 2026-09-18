@@ -395,23 +395,12 @@
         <div class="card-head">
             <h2>DNS Lockdown</h2>
         </div>
-        <!-- The mechanism, drawn, inline beside the explanation. DNS lockdown is
-             abstract — the diagram shows exactly what survives (the approved
-             resolver on 53) and what is cut (every other resolver, DoT on 853,
-             and an app's hardcoded DNS). -->
-        <div class="intro-split">
-            <p class="card-note">
-                Name the resolvers you trust, pick the networks that must use them,
-                and everything else answering DNS gets blocked. Devices that
-                hardcode their own DNS server stop being able to use it.
-            </p>
-            <figure class="mechanism-figure dns-figure">
-                <img src="/arrest/static/images/dns-lockdown.png?v={{ version }}"
-                     width="620" height="492" decoding="async"
-                     alt="Devices on a locked network can reach the approved DNS resolver on port 53, while any other DNS server, encrypted DNS on port 853, and DNS hardcoded inside an app are all blocked.">
-                <figcaption>Approved resolver stays reachable; every other path to DNS is cut.</figcaption>
-            </figure>
-        </div>
+        <p class="card-note">
+            Allow only specific DNS servers of your choosing and block all
+            non-authorized DNS resolution.
+            <strong class="warn-inline">WARNING:</strong> This will break any
+            devices with hardcoded DNS server settings.
+        </p>
 
         <template x-if="state.dns_lockdowns && state.dns_lockdowns.length">
             <div style="margin-bottom:1.5rem">
@@ -438,8 +427,12 @@
             </div>
         </template>
 
-        <div class="field-row">
-            <div>
+        <!-- Two columns: the form reads top-to-bottom on the left; the
+             mechanism diagram and the what-is-handed-out-now table ride
+             beside it instead of stacking the page twice as tall. -->
+        <div class="dns-workbench">
+        <div class="dns-form">
+            <div class="dns-field">
                 <label for="dns-resolvers">Approved DNS servers</label>
                 <input id="dns-resolvers" type="text" x-model="dnsResolvers"
                        @input="dnsPreview = null">
@@ -448,7 +441,7 @@
                     chosen networks will be forced to use these.
                 </div>
             </div>
-            <div>
+            <div class="dns-field">
                 <label>Networks that must use them</label>
                 <div class="net-picker">
                     <template x-for="n in networks" :key="n.id">
@@ -464,56 +457,7 @@
                     </template>
                 </div>
             </div>
-        </div>
 
-        <!-- What each network currently hands out. Choosing which networks to
-             force onto a resolver means knowing what they already advertise,
-             and that used to mean switching to the Networks tab and back. The
-             row for a network you have selected is highlighted, and a resolver
-             that is not on the approved list is called out, because that is
-             the combination that takes a network's DNS out. -->
-        <div class="dns-current">
-            <div class="dns-current-head">
-                <strong>What each network hands out now</strong>
-                <span class="hint">Via DHCP. Same data as the Networks tab.</span>
-            </div>
-            <table class="dns-table">
-                <thead>
-                    <tr><th>Network</th><th>VLAN</th><th>DHCP name servers</th></tr>
-                </thead>
-                <tbody>
-                    <template x-for="n in networks" :key="'dns-' + n.id">
-                        <tr :class="{ 'is-chosen': dnsNetworks.includes(n.id) }">
-                            <td x-text="n.name"></td>
-                            <td class="mono" x-text="n.vlan"></td>
-                            <td>
-                                <template x-if="!n.dhcp_dns.length">
-                                    <span class="muted">Gateway</span>
-                                </template>
-                                <template x-if="n.dhcp_dns.length">
-                                    <span>
-                                        <template x-for="(ip, i) in n.dhcp_dns" :key="i">
-                                            <span class="dns-ip"
-                                                  :class="{ 'is-stale': dnsNetworks.includes(n.id)
-                                                            && dnsResolverList().length
-                                                            && !dnsResolverList().includes(ip) }"
-                                                  x-text="ip"></span>
-                                        </template>
-                                    </span>
-                                </template>
-                            </td>
-                        </tr>
-                    </template>
-                </tbody>
-            </table>
-            <p class="hint" x-show="staleResolverCount() > 0">
-                <strong x-text="staleResolverCount()"></strong>
-                highlighted <span x-text="staleResolverCount() === 1 ? 'address is' : 'addresses are'"></span>
-                not on your approved list. Devices told to use
-                <span x-text="staleResolverCount() === 1 ? 'it' : 'them'"></span>
-                will lose DNS unless you also tick “Also point DHCP at these resolvers”.
-            </p>
-        </div>
 
         <!-- The other half of a DNS lockdown, and the likeliest way to take a
              network's DNS out. The rules decide which resolver a device may
@@ -525,10 +469,9 @@
             <span>
                 <strong>Also point DHCP at these resolvers</strong>
                 <span class="hint" style="margin-top:0.15rem">
-                    Otherwise these networks keep handing out whatever resolver
-                    they already advertise — and if that is not on the approved
-                    list, the rules below block it and devices there lose DNS
-                    entirely. Applies on each device's next lease renewal.
+                    Recommended. DHCP decides which resolver devices are TOLD to
+                    use; these rules decide which they MAY use. Applies on each
+                    device's next lease renewal.
                 </span>
             </span>
         </label>
@@ -615,6 +558,69 @@
                 <li x-text="c"></li>
             </template>
         </ul>
+        </div><!-- /dns-form -->
+
+        <aside class="dns-side">
+            <!-- The mechanism, drawn: what survives (the approved resolver on
+                 53) and what is cut (every other resolver, DoT on 853, and an
+                 app's hardcoded DNS). -->
+            <figure class="mechanism-figure">
+                <img src="/arrest/static/images/dns-lockdown.png?v={{ version }}"
+                     width="620" height="492" decoding="async"
+                     alt="Devices on a locked network can reach the approved DNS resolver on port 53, while any other DNS server, encrypted DNS on port 853, and DNS hardcoded inside an app are all blocked.">
+                <figcaption>Approved resolver stays reachable; every other path to DNS is cut.</figcaption>
+            </figure>
+
+        <!-- What each network currently hands out. Choosing which networks to
+             force onto a resolver means knowing what they already advertise,
+             and that used to mean switching to the Networks tab and back. The
+             row for a network you have selected is highlighted, and a resolver
+             that is not on the approved list is called out, because that is
+             the combination that takes a network's DNS out. -->
+        <div class="dns-current">
+            <div class="dns-current-head">
+                <strong>What each network hands out now</strong>
+                <span class="hint">Via DHCP. Same data as the Networks tab.</span>
+            </div>
+            <table class="dns-table">
+                <thead>
+                    <tr><th>Network</th><th>VLAN</th><th>DHCP name servers</th></tr>
+                </thead>
+                <tbody>
+                    <template x-for="n in networks" :key="'dns-' + n.id">
+                        <tr :class="{ 'is-chosen': dnsNetworks.includes(n.id) }">
+                            <td x-text="n.name"></td>
+                            <td class="mono" x-text="n.vlan"></td>
+                            <td>
+                                <template x-if="!n.dhcp_dns.length">
+                                    <span class="muted">Gateway</span>
+                                </template>
+                                <template x-if="n.dhcp_dns.length">
+                                    <span>
+                                        <template x-for="(ip, i) in n.dhcp_dns" :key="i">
+                                            <span class="dns-ip"
+                                                  :class="{ 'is-stale': dnsNetworks.includes(n.id)
+                                                            && dnsResolverList().length
+                                                            && !dnsResolverList().includes(ip) }"
+                                                  x-text="ip"></span>
+                                        </template>
+                                    </span>
+                                </template>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p class="hint" x-show="staleResolverCount() > 0">
+                <strong x-text="staleResolverCount()"></strong>
+                highlighted <span x-text="staleResolverCount() === 1 ? 'address is' : 'addresses are'"></span>
+                not on your approved list. Devices told to use
+                <span x-text="staleResolverCount() === 1 ? 'it' : 'them'"></span>
+                will lose DNS unless you also tick “Also point DHCP at these resolvers”.
+            </p>
+        </div>
+        </aside>
+        </div><!-- /dns-workbench -->
     </section>
 
     <!-- ============ 1. Lock down a device ============
@@ -638,7 +644,7 @@
     <section class="card" x-show="tab === 'devices'" role="tabpanel">
         <div class="card-head">
             <span class="step">STEP 1</span>
-            <h2>Choose a device and what to cut</h2>
+            <h2>Choose your devices and how they should be locked down</h2>
         </div>
 
         <div class="field-row">
@@ -735,6 +741,24 @@
             </template>
         </div>
 
+        <!-- Deliberately not "let ME reach it". The rule cannot tell one person
+             from another: it blocks what the DEVICE starts, so anything able to
+             route to the device can still open a connection to it. Saying "me"
+             would promise a narrowness the firewall is not delivering. -->
+        <label class="inline-check">
+            <input type="checkbox" x-model="allowInbound" @change="preview = null">
+            <span>
+                <strong x-text="selectedMacs.length > 1 ? 'Let other devices still reach these devices' : 'Let other devices still reach this device'"></strong>
+                <span class="hint" style="margin-top:0.15rem">
+                    It can't start connections out, but it can still answer when
+                    something contacts it — so a camera or smart bulb stays usable.
+                    This is not limited to your computer: anything that can already
+                    route to the device, on any VLAN a firewall rule doesn't stop,
+                    can reach in. Uncheck for absolute isolation in both directions.
+                </span>
+            </span>
+        </label>
+
         <!-- The Quarantine + VLAN move preset used to put its VLAN picker here.
              Removed 2026-09-17: the per-client VLAN override was measured
              half-applying on a wired device (a lease on the target VLAN with no
@@ -824,6 +848,14 @@
                 </figure>
             </div>
 
+            <!-- The diagram draws the firewall's view: the same-VLAN path is
+                 green because no rule here touches it. If a selected device's
+                 own SSID already has Client Isolation on, reality is stricter
+                 than the picture — say so instead of letting the diagram
+                 overstate what its neighbours can reach. -->
+            <p class="hint" x-show="isolatedSelected().length"
+               x-text="isolatedSelectedNote()"></p>
+
             <p class="path-note" x-text="pathNote()"></p>
 
             <!-- The one thing a firewall genuinely cannot do, stated at full
@@ -880,24 +912,6 @@
                 than keep telling you the device is locked down.
             </div>
         </template>
-
-        <!-- Deliberately not "let ME reach it". The rule cannot tell one person
-             from another: it blocks what the DEVICE starts, so anything able to
-             route to the device can still open a connection to it. Saying "me"
-             would promise a narrowness the firewall is not delivering. -->
-        <label class="inline-check">
-            <input type="checkbox" x-model="allowInbound" @change="preview = null">
-            <span>
-                <strong x-text="selectedMacs.length > 1 ? 'Let other devices still reach these devices' : 'Let other devices still reach this device'"></strong>
-                <span class="hint" style="margin-top:0.15rem">
-                    It can't start connections out, but it can still answer when
-                    something contacts it — so a camera or smart bulb stays usable.
-                    This is not limited to your computer: anything that can already
-                    route to the device, on any VLAN a firewall rule doesn't stop,
-                    can reach in. Uncheck for absolute isolation in both directions.
-                </span>
-            </span>
-        </label>
 
         <div class="actions">
             <button class="btn btn-secondary" @click="dryRun()" :disabled="!canReview() || previewing">

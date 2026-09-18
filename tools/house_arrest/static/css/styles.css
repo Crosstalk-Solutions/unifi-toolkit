@@ -1321,15 +1321,6 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
    centered island with dead space on either side. The row is left-aligned and
    width-capped so the text and diagram stay paired instead of drifting apart on
    a wide card. */
-.intro-split {
-    display: flex;
-    gap: 1.5rem;
-    align-items: center;
-    margin-bottom: 1.25rem;
-    max-width: 940px;
-}
-.intro-split .card-note { margin: 0; flex: 1 1 auto; max-width: none; }
-
 .mechanism-figure {
     margin: 0;
     padding: 0.5rem;
@@ -1346,13 +1337,28 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
     color: #374151;
 }
 
+/* ---------- DNS workbench ----------
+   Form on the left, mechanism diagram + current-DNS table on the right.
+   Replaces the old single-column stack, which parked a 360px diagram beside
+   a short intro paragraph and left the rest of the row empty. */
+.dns-workbench {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+    gap: 1.5rem 2.5rem;
+    align-items: start;
+    margin-top: 0.25rem;
+}
+.dns-field { margin-bottom: 1rem; }
+.dns-side { display: flex; flex-direction: column; gap: 1.25rem; }
+.dns-side .mechanism-figure { margin: 0; }
+@media (max-width: 1000px) {
+    .dns-workbench { grid-template-columns: 1fr; }
+    .dns-side { max-width: 480px; }
+}
+
+.warn-inline { color: var(--danger-color); }
+
 /* Inside the toggle dialog: the diagram of the state the click lands in. */
 .modal-figure { margin: 0.9rem 0 0; }
 
-/* DNS diagram (near-square) rides in the intro split, right of the text. */
-.dns-figure { flex: 0 0 360px; max-width: 360px; }
 
-@media (max-width: 760px) {
-    .intro-split { flex-direction: column; align-items: stretch; gap: 1rem; max-width: 480px; }
-    .dns-figure { flex-basis: auto; max-width: 100%; align-self: center; }
-}

@@ -666,6 +666,31 @@ function houseArrest() {
         // exists to avoid. Filenames are built from the same two values the
         // rows are, so the two cannot drift apart.
 
+        // Selected wireless devices whose own SSID already has Client
+        // Isolation on. For them the diagram's green same-VLAN path
+        // overstates reality — isolation already cuts peer traffic, which is
+        // stricter than anything these firewall rules do.
+        isolatedSelected() {
+            const isolatedSsids = new Set(
+                (this.wlans || []).filter(w => w.isolated).map(w => w.name));
+            return this.selectedClients().filter(
+                c => c.essid && isolatedSsids.has(c.essid));
+        },
+
+        isolatedSelectedNote() {
+            const hits = this.isolatedSelected();
+            if (!hits.length) return '';
+            const names = hits.map(c => c.name || c.mac).join(' and ');
+            const ssids = [...new Set(hits.map(c => c.essid))].join(', ');
+            return 'Better than the picture shows: ' + names +
+                (hits.length === 1 ? ' is' : ' are') + ' on Wi-Fi ' +
+                (ssids.includes(',') ? 'networks ' : 'network ') + ssids +
+                ', which already has Client Isolation on — so the green ' +
+                '"same VLAN" path is already cut for ' +
+                (hits.length === 1 ? 'it' : 'them') +
+                ' at the Wi-Fi level, before these rules even apply.';
+        },
+
         scenarioKey() {
             const preset = this.preset ||
                 (this.presets.length ? this.presets[0].value : 'full_lockdown');
