@@ -741,6 +741,12 @@ pre.payload {
    but never alone — every cell has a readable label too. */
 
 .matrix-wrap { overflow-x: auto; }
+/* The scroll container clips hover tips at its edges. On viewports wide
+   enough that the table never actually scrolls, let it overflow so tips
+   render in full; narrow screens keep the contained scroll. */
+@media (min-width: 1100px) {
+    .matrix-wrap { overflow-x: visible; }
+}
 
 table.matrix {
     width: 100%;
@@ -839,7 +845,11 @@ td.cell.is-neutral { color: var(--text-secondary); }
 }
 .tip strong { display: block; margin-bottom: 0.25rem; }
 td.cell:hover .tip, td.cell:focus .tip { opacity: 1; visibility: visible; }
-table.matrix tr:first-child .tip { bottom: auto; top: calc(100% + 6px); }
+/* First DATA row's tips open downward so they don't cover the header (or,
+   on narrow screens, get clipped by the scroll container). first-of-type,
+   not first-child: Alpine's x-for leaves its <template> as the tbody's
+   first child, so tr:first-child never matched anything. */
+table.matrix tbody tr:first-of-type .tip { bottom: auto; top: calc(100% + 6px); }
 table.matrix tr td:last-child .tip { left: auto; right: 0; }
 
 /* ---------- Inspection ---------- */
