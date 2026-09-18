@@ -332,6 +332,13 @@ function houseArrest() {
                 this.inspection = await res.json();
             } catch (e) {
                 this.inspection = { error: String(e), findings: [] };
+            } finally {
+                // Explicit false, not merely absent. MEASURED 2026-09-18:
+                // Alpine leaves a bound `disabled` attribute IN PLACE when the
+                // binding evaluates to undefined, so replacing this object
+                // with an API response that has no `loading` key left the
+                // re-read button permanently disabled after the first load.
+                this.inspection.loading = false;
             }
         },
 
