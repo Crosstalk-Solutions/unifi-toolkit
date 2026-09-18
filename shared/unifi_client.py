@@ -2273,6 +2273,84 @@ class UniFiClient:
             logger.error(f"Error setting WLAN {wlan_id} isolation: {e}")
             return False
 
+    async def get_global_network_config(self) -> Optional[Dict]:
+        """
+        The v2 site-wide network config document.
+
+        This is where mDNS actually lives: `mdns_enabled_for`
+        ("some" + `mdns_enabled_for_network_ids`) is the Gateway mDNS Proxy
+        scope list. The per-network `mdns_enabled` field is a read-only
+        projection of it. Returns None on failure — treat as "unknown",
+        never as "off".
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/global/config/network"
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to read global network config: {resp.status}")
+                    return None
+                return await resp.json()
+        except Exception as e:
+            logger.error(f"Error reading global network config: {e}")
+            return None
+
+    async def set_mdns_networks(self, network_ids: List[str]) -> bool:
+        """
+        Replace the site-wide Gateway mDNS Proxy scope list.
+
+        MEASURED 2026-09-16 (write + restore round trip): `PUT
+        /v2/api/site/{site}/global/config/network` with a PARTIAL payload of
+        `{"mdns_enabled_for": "some", "mdns_enabled_for_network_ids": [...]}`
+        works with the toolkit's API-key auth (browser sessions need CSRF; the
+        key does not). The legacy `rest/setting/mdns` routes use different
+        field names and silently discard these — 200 with no change — which is
+        why this must never fall back to them.
+
+        Always writes "some" plus the explicit list, and verifies by polling
+        the same GET until the stored list matches, because a 200 that echoes
+        an unchanged document is this API's way of ignoring you.
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/global/config/network"
+        wanted = sorted({str(i) for i in (network_ids or [])})
+        payload = {
+            "mdns_enabled_for": "some",
+            "mdns_enabled_for_network_ids": wanted,
+        }
+        try:
+            async with self._session.put(url, json=payload) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error(
+                        f"Failed to write mDNS scope: {resp.status} {body[:300]}")
+                    return False
+
+            deadline, waited, delay = 20.0, 0.0, 1.0
+            while waited <= deadline:
+                fresh = await self.get_global_network_config()
+                stored = sorted(
+                    str(i) for i in
+                    (fresh or {}).get("mdns_enabled_for_network_ids") or []
+                )
+                if fresh is not None and stored == wanted:
+                    logger.info(
+                        f"mDNS scope set to {len(wanted)} networks "
+                        f"(confirmed after {waited:.0f}s)")
+                    return True
+                await asyncio.sleep(delay)
+                waited += delay
+                delay = min(delay * 1.6, 5.0)
+
+            logger.error("mDNS scope write did not take (stored list never matched)")
+            return False
+        except Exception as e:
+            logger.error(f"Error writing mDNS scope: {e}")
+            return False
+
     async def get_site_setting(self, key: str) -> Optional[Dict]:
         """
         One entry from the site settings collection, e.g. 'mdns' or 'usg'.

@@ -639,6 +639,7 @@ function houseArrest() {
         EDITABLE: {
             isolation: { on: 'On', off: 'Off' },
             internet:  { on: 'Allowed', off: 'Blocked' },
+            mdns:      { on: 'On', off: 'Off' },
         },
 
         // The server decides per cell, not per column. Editability can depend
@@ -688,6 +689,10 @@ function houseArrest() {
                 internet: [
                     'Every device on this network loses internet access, now and in future.',
                     'Devices here get internet access back.',
+                ],
+                mdns: [
+                    'Removes this network from the site-wide Gateway mDNS Proxy list — the one shared list all networks use. Devices here stop discovering, and being discovered by, devices on your other mDNS-enabled networks. Casting and AirPlay across this boundary will break.',
+                    'Adds this network to the site-wide Gateway mDNS Proxy list — the one shared list all networks use. Service discovery (casting, AirPlay) will cross this boundary, which also advertises what lives here to your other networks.',
                 ],
             };
             const pair = W[key];

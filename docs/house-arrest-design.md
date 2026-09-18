@@ -1182,3 +1182,25 @@ Vpn zone holds the Crosstalk Office network, for example), a full lockdown's
 on the review instead of overclaiming. Extending the blocks to one-per-LAN-zone
 would close this and is left as a flagged follow-up — it multiplies policies
 and touches release/attribution, so it should not ride along in a fix.
+
+## BUILT 2026-09-17: editable mDNS scope from the matrix
+
+The mDNS matrix cell is now editable. Presentation rule it was blocked on —
+"a per-network switch must not quietly write site-scoped state" — is honoured
+by the confirm dialog, which states that the toggle adds/removes the network
+from the ONE site-wide Gateway mDNS Proxy list.
+
+Mechanics: `UniFiClient.get_global_network_config()` /
+`set_mdns_networks(ids)` on the v2 `global/config/network` route. The writer
+always sends `{"mdns_enabled_for": "some", "mdns_enabled_for_network_ids":
+[...]}` (partial payload, measured sufficient 2026-09-16) and verifies by
+polling the stored list — never the 200. `mdns_effective_ids()` expands the
+current config: "some" → stored list [Measured]; "all" → every non-WAN
+network [Inferred from the UI's All-networks option, not measured — degrades
+gracefully because removing one network under "all" writes "some" with the
+rest]; anything else → empty.
+
+**[Measured 2026-09-17]** Full round trip through the new code path on the
+home console: removed the OpenClaw lab VLAN from a 4-network scope, stored
+list confirmed without it, restored the original list, confirmed identical,
+and the per-network `mdns_enabled` projection tracked both writes.

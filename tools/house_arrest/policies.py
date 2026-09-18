@@ -1532,6 +1532,27 @@ EDITABLE_COLUMNS = {
 }
 
 
+def mdns_effective_ids(config: Optional[Dict], networks: List[Dict]) -> List[str]:
+    """
+    The network ids the site-wide mDNS scope currently covers.
+
+    `mdns_enabled_for` was measured as "some" with an explicit id list; "all"
+    is inferred from the UI's "All networks" option and expanded to every
+    non-WAN network so removing one network from it degrades gracefully to
+    "some" minus that network. Anything else (or a missing config) reads as
+    an empty scope — the caller then only ever ADDS, which is safe.
+    """
+    mode = (config or {}).get("mdns_enabled_for")
+    if mode == "all":
+        return [
+            str(n["_id"]) for n in networks or []
+            if n.get("_id") and n.get("purpose") != "wan"
+        ]
+    if mode == "some":
+        return [str(i) for i in (config or {}).get("mdns_enabled_for_network_ids") or []]
+    return []
+
+
 def editable_column(key: str) -> Optional[Dict]:
     """The toggle spec for a matrix column, or None if it is not a switch."""
     return EDITABLE_COLUMNS.get(key)
@@ -1642,18 +1663,16 @@ def build_isolation_matrix(
         )
 
         # mDNS
-        # Read-only for now, but NOT because the write is impossible - that
-        # earlier finding was wrong and is corrected in the design doc.
-        # MEASURED 2026-09-16: `PUT v2/api/site/{site}/global/config/network`
-        # with `mdns_enabled_for_network_ids` works. The legacy setting/mdns
-        # routes we had been using name the field `enabled_for_network_ids`
-        # and silently discard it, which is what produced 200-and-no-change.
+        # Editable since 2026-09-17, via the one route that actually works:
+        # MEASURED 2026-09-16, `PUT v2/api/site/{site}/global/config/network`
+        # with `mdns_enabled_for_network_ids`. The legacy setting/mdns routes
+        # name the field `enabled_for_network_ids` and silently discard the
+        # v2 spelling, which is what produced 200-and-no-change for so long.
         #
-        # It stays read-only because mDNS is a SITE-LEVEL control holding one
-        # shared VLAN list, so a per-network switch in this matrix would write
-        # site-scoped state from a per-network control. That needs its own
-        # presentation and its own release path (restore the exact prior list),
-        # not the per-network field write EDITABLE_COLUMNS performs.
+        # The control is still SITE-LEVEL — one shared VLAN list (the Gateway
+        # mDNS Proxy "Custom" scope). The toggle here adds or removes THIS
+        # network from that shared list, and the confirm dialog says exactly
+        # that, so a per-network switch never quietly edits site state.
         mdns = n.get("mdns_enabled")
         cells["mdns"] = _cell(
             "warn" if mdns else "good",
@@ -1663,11 +1682,11 @@ def build_isolation_matrix(
                "casting, but it does advertise what lives here."
                if mdns else
                "Service discovery does not cross this boundary.")
-            + " mDNS is a site-wide setting, not a per-network one: it lives "
-              "under Settings -> Networks -> Gateway mDNS Proxy, where Custom "
-              "holds the list of VLANs it covers. Change it there, because "
-              "changing it for one network changes that shared list.",
-            editable=False,
+            + " mDNS is one site-wide list (Settings -> Networks -> Gateway "
+              "mDNS Proxy -> Custom). Toggling it here adds or removes this "
+              "network from that shared list — the same edit the UniFi UI "
+              "makes.",
+            editable=True,
         )
 
         # DNS handed out by DHCP.
