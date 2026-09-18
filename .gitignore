@@ -86,3 +86,8 @@ CLAUDE.md
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+# Internal working notes (session audit docs) — never ship these in a release.
+# They exist locally for review and carry lab-environment detail.
+docs/stat-sta-trust-audit.md
+docs/house-arrest-ux-audit.md
