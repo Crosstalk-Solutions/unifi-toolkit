@@ -341,6 +341,85 @@ DNS_PORT = "53"
 DOT_PORT = "853"
 
 
+# ----------------------------------------------------------------------
+# Zone resolution
+#
+# MEASURED 2026-09-17 (home UCG-Fiber): every default zone document carries a
+# stable `zone_key` — "internal", "external", "gateway", "vpn", "hotspot",
+# "dmz" — that survives the user renaming the zone, plus `default_zone: true`
+# and a `network_ids` membership list. Every LAN network document carries
+# `firewall_zone_id` pointing at its zone's `_id`. Matching on the display
+# name ("Internal"/"External") therefore breaks the moment a user renames a
+# zone, while `zone_key` does not. Name matching is kept only as a fallback
+# for firmware whose zone documents predate `zone_key`.
+# ----------------------------------------------------------------------
+
+
+def find_zone_id(zones: List[Dict], key: str) -> Optional[str]:
+    """
+    The `_id` of the zone whose `zone_key` is `key` ("internal", "external").
+
+    Falls back to matching the display name, which only works while the user
+    has not renamed the zone — zone_key is the reliable handle.
+    """
+    for z in zones or []:
+        if (z.get("zone_key") or "").strip().lower() == key:
+            return z.get("_id")
+    for z in zones or []:
+        if (z.get("name") or "").strip().lower() == key:
+            return z.get("_id")
+    return None
+
+
+def zone_of_network(network: Dict, zones: List[Dict]) -> Optional[str]:
+    """
+    The zone `_id` a network belongs to.
+
+    Prefers the network document's own `firewall_zone_id`; falls back to the
+    zone whose `network_ids` membership list names this network. Returns None
+    when neither side records the link.
+    """
+    if not network:
+        return None
+    zid = network.get("firewall_zone_id")
+    if zid:
+        return zid
+    nid = network.get("_id")
+    if nid:
+        for z in zones or []:
+            if nid in (z.get("network_ids") or []):
+                return z.get("_id")
+    return None
+
+
+def zone_name(zones: List[Dict], zone_id: Optional[str]) -> str:
+    """Display name for a zone id, for messages. Never raises."""
+    for z in zones or []:
+        if z.get("_id") == zone_id:
+            return z.get("name") or "unnamed zone"
+    return "unknown zone"
+
+
+def other_lan_zones(zones: List[Dict], client_zone_id: str) -> List[Dict]:
+    """
+    Zones (other than the client's own) that hold at least one network and are
+    not the External or Gateway zone — i.e. places a device could still reach
+    that these rules' zone pairs do not cover. Used for honest caveats: a
+    block scoped Internal->Internal says nothing about Internal->VPN.
+    """
+    out = []
+    for z in zones or []:
+        if z.get("_id") == client_zone_id:
+            continue
+        kind = ((z.get("zone_key") or z.get("name")) or "").strip().lower()
+        if kind in ("external", "gateway"):
+            continue
+        if not z.get("network_ids"):
+            continue
+        out.append(z)
+    return out
+
+
 def network_source(network_ids: List[str], zone_id: str) -> Dict:
     """
     Source block matching whole networks.
@@ -390,8 +469,11 @@ def dns_policy_count(
 
 
 def classify_resolvers(
-    resolver_ips: List[str], networks: List[Dict]
-) -> Tuple[List[str], List[str]]:
+    resolver_ips: List[str],
+    networks: List[Dict],
+    zones: Optional[List[Dict]] = None,
+    client_zone_id: Optional[str] = None,
+) -> Tuple[List[str], List[str], List[Dict]]:
     """
     Split approved resolvers by which zone they are reached through.
 
@@ -405,17 +487,40 @@ def classify_resolvers(
     chosen networks with no DNS at all. A resolver therefore has to be allowed
     in the pair it is actually reached through, which means up to two allows.
 
+    A LAN resolver can also sit on a network in a DIFFERENT zone than the
+    locked-down networks (e.g. a Pi-hole in a custom "Servers" zone). The
+    blocks this lockdown writes only cover the client zone's own pair and the
+    External pair, so traffic to that resolver is neither blocked nor in need
+    of an allow — it is simply outside these rules. Such resolvers come back
+    in the third slot so the caller can say so out loud instead of writing an
+    ALLOW into a zone pair where it does nothing.
+
     Returns:
-        (resolvers inside the LAN, resolvers out on the internet)
+        (resolvers in the client's own zone, resolvers on the internet,
+         foreign LAN resolvers as {"ip", "network", "zone_id"} dicts)
     """
-    subnets = [
-        n.get("ip_subnet") for n in networks or []
-        if n.get("purpose") != "wan" and n.get("ip_subnet")
-    ]
-    lan, wan = [], []
+    lan, wan, foreign = [], [], []
     for ip in resolver_ips or []:
-        (lan if any(_ip_in_subnet(ip, sn) for sn in subnets) else wan).append(ip)
-    return lan, wan
+        home = None
+        for n in networks or []:
+            if n.get("purpose") == "wan" or not n.get("ip_subnet"):
+                continue
+            if _ip_in_subnet(ip, n.get("ip_subnet")):
+                home = n
+                break
+        if home is None:
+            wan.append(ip)
+            continue
+        home_zone = zone_of_network(home, zones)
+        if client_zone_id and home_zone and home_zone != client_zone_id:
+            foreign.append({
+                "ip": ip,
+                "network": home.get("name") or "network",
+                "zone_id": home_zone,
+            })
+        else:
+            lan.append(ip)
+    return lan, wan, foreign
 
 
 def _dns_dest(zone_id: str, port: str, ips: Optional[List[str]] = None) -> Dict:
@@ -442,6 +547,7 @@ def build_dns_lockdown(
     external_zone_id: str,
     indexes: List[int],
     block_dot: bool = False,
+    foreign_resolvers: Optional[List[Dict]] = None,
 ) -> List[Dict]:
     """
     Build the DNS Lockdown policy set.
@@ -460,16 +566,22 @@ def build_dns_lockdown(
     Args:
         network_ids: the VLANs to lock down
         network_label: for policy names
-        resolver_ips: the approved resolvers
-        resolver_zone_id: zone the resolvers live in
-        client_zone_id: zone the networks live in
+        lan_resolvers: approved resolvers in the client zone (get the LAN allow)
+        wan_resolvers: approved resolvers on the internet (get the WAN allow)
+        client_zone_id: zone the chosen networks live in (from their
+            firewall_zone_id — not assumed to be Internal)
         external_zone_id: the WAN zone
         indexes: pre-allocated, from next_free_index()
         block_dot: also block DNS-over-TLS on 853
+        foreign_resolvers: approved resolvers on LAN networks in OTHER zones —
+            no policy is written for them, they only relax the no-resolver
+            guard, because nothing in this set blocks their zone pair anyway
     """
     if not network_ids:
         raise ValueError("At least one network is required")
-    if not (lan_resolvers or wan_resolvers):
+    # A resolver in a foreign zone needs no ALLOW (nothing here blocks that
+    # zone pair), so a foreign-only selection legitimately builds blocks-only.
+    if not (lan_resolvers or wan_resolvers or foreign_resolvers):
         raise ValueError("At least one approved resolver is required")
     needed = dns_policy_count(block_dot, bool(lan_resolvers), bool(wan_resolvers))
     if len(indexes) < needed:
@@ -619,7 +731,7 @@ def zone_pair_of(policy: Dict) -> Tuple[Optional[str], Optional[str]]:
     )
 
 
-def dns_order_is_safe(created: List[Dict]) -> bool:
+def dns_order_is_safe(created: List[Dict], expect_allow: bool = True) -> bool:
     """
     Confirm each allow really did land ahead of the blocks it competes with.
 
@@ -655,8 +767,10 @@ def dns_order_is_safe(created: List[Dict]) -> bool:
     # No allow anywhere means nothing was created, or every resolver was
     # dropped. And no block anywhere means nothing is actually being shut —
     # an allow-only set is not a lockdown at all. Either way it is not a safe
-    # state to walk away from. (A real lockdown always carries both.)
-    if not any(slot["ALLOW"] for slot in by_pair.values()):
+    # state to walk away from. (A real lockdown always carries both — EXCEPT
+    # when every approved resolver sits in a foreign zone, where no allow is
+    # supposed to exist; the caller says so with expect_allow=False.)
+    if expect_allow and not any(slot["ALLOW"] for slot in by_pair.values()):
         return False
     if not any(slot["BLOCK"] for slot in by_pair.values()):
         return False

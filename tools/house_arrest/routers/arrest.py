@@ -55,15 +55,75 @@ def _zone_ids(zones: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
     Find the Internal and External zone IDs.
 
     Zone IDs are per-console, so they are always looked up, never hardcoded.
+    Matched on the stable `zone_key` field, not the display name — a renamed
+    zone keeps its zone_key (measured 2026-09-17; name matching remains only
+    as a fallback inside find_zone_id for firmware without zone_key).
     """
-    internal = external = None
-    for z in zones:
-        name = (z.get("name") or "").strip().lower()
-        if name == "internal":
-            internal = z.get("_id")
-        elif name == "external":
-            external = z.get("_id")
-    return internal, external
+    return P.find_zone_id(zones, "internal"), P.find_zone_id(zones, "external")
+
+
+def _device_zone(
+    macs: List[str],
+    known_clients: List[Dict],
+    networks: List[Dict],
+    zones: List[Dict],
+    internal_id: str,
+    caveats: List[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    The firewall zone id to scope a device lockdown to.
+
+    Attribution chain per MAC: known-client record -> last_connection_network_id
+    -> that network's firewall_zone_id. Unattributable MACs fall back to the
+    Internal zone. Returns (zone_id, error): mixed zones across the selection
+    are refused as an error, and a non-Internal result appends a caveat so the
+    user can see exactly what the rules were scoped to.
+    """
+    nets_by_id = {n.get("_id"): n for n in networks or [] if n.get("_id")}
+    by_mac = {}
+    for c in known_clients or []:
+        mac = (c.get("mac") or "").lower()
+        if mac:
+            by_mac[mac] = c
+
+    found: Dict[str, List[str]] = {}
+    unknown: List[str] = []
+    for mac in macs:
+        rec = by_mac.get(mac.lower())
+        net = nets_by_id.get((rec or {}).get("last_connection_network_id"))
+        zid = P.zone_of_network(net, zones) if net else None
+        if zid:
+            found.setdefault(zid, []).append(mac)
+        else:
+            unknown.append(mac)
+
+    if len(found) > 1:
+        parts = "; ".join(
+            f"{P.zone_name(zones, z)}: {', '.join(ms)}"
+            for z, ms in found.items()
+        )
+        return None, (
+            f"These devices sit in different firewall zones ({parts}). "
+            "Firewall rules are scoped to one zone pair, so apply a separate "
+            "lockdown per zone instead."
+        )
+
+    zone_id = next(iter(found)) if found else internal_id
+    if zone_id != internal_id:
+        caveats.append(
+            f"The controller last saw "
+            + ("this device" if len(macs) == 1 else "these devices")
+            + f" on a network in the \"{P.zone_name(zones, zone_id)}\" "
+            "firewall zone, so the rules are scoped to that zone. If the "
+            "device has since moved to another zone, release and re-apply."
+        )
+        if unknown:
+            caveats.append(
+                f"No network could be attributed to {', '.join(unknown)}; "
+                f"included in the \"{P.zone_name(zones, zone_id)}\" scope "
+                "with the rest of the selection."
+            )
+    return zone_id, None
 
 
 async def _client_or_error():
@@ -653,6 +713,27 @@ async def dns_lockdown(req: DnsLockdownRequest):
         raise HTTPException(status_code=400, detail="Unknown network")
     label = ", ".join(n.get("name") or "network" for n in chosen)
 
+    # Scope the rules to the zone the chosen networks are ACTUALLY in, read
+    # off each network's firewall_zone_id — not assumed to be Internal. A
+    # custom-zone network locked with Internal-pair rules would get policies
+    # its traffic never crosses: silent non-protection.
+    by_zone: Dict[str, List[str]] = {}
+    for n in chosen:
+        zid = P.zone_of_network(n, zones) or internal_id
+        by_zone.setdefault(zid, []).append(n.get("name") or "network")
+    if len(by_zone) > 1:
+        parts = "; ".join(
+            f"{P.zone_name(zones, z)}: {', '.join(names)}"
+            for z, names in by_zone.items()
+        )
+        return DnsLockdownResponse(
+            dry_run=req.dry_run,
+            error=("These networks sit in different firewall zones "
+                   f"({parts}). Firewall rules are scoped to one zone pair, "
+                   "so apply a separate DNS lockdown per zone instead."),
+        )
+    client_zone_id = next(iter(by_zone))
+
     # Refuse to stack a second lockdown on a network that already has one.
     # Without this the same set could be written twice — it was, on the bench
     # console, leaving 10 rules where 5 are correct.
@@ -681,7 +762,9 @@ async def dns_lockdown(req: DnsLockdownRequest):
     # A resolver has to be allowed in the zone pair it is actually reached
     # through. Splitting them is what stops a public resolver like 1.1.1.1
     # from being allowed on the LAN side while the internet block kills it.
-    lan_resolvers, wan_resolvers = P.classify_resolvers(req.resolver_ips, networks)
+    lan_resolvers, wan_resolvers, foreign_resolvers = P.classify_resolvers(
+        req.resolver_ips, networks, zones, client_zone_id
+    )
 
     try:
         indexes = P.next_free_index(
@@ -695,10 +778,11 @@ async def dns_lockdown(req: DnsLockdownRequest):
             network_label=label,
             lan_resolvers=lan_resolvers,
             wan_resolvers=wan_resolvers,
-            client_zone_id=internal_id,
+            client_zone_id=client_zone_id,
             external_zone_id=external_id,
             indexes=indexes,
             block_dot=req.block_dot,
+            foreign_resolvers=foreign_resolvers,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -722,6 +806,30 @@ async def dns_lockdown(req: DnsLockdownRequest):
             + ("it" if len(wan_resolvers) == 1 else "them")
             + " leave your network in the clear, as ordinary DNS always does."
         )
+    if client_zone_id != internal_id:
+        caveats.append(
+            f"These networks sit in the \"{P.zone_name(zones, client_zone_id)}\" "
+            "firewall zone, so the rules are scoped to that zone's pairs "
+            "rather than Internal's."
+        )
+    for f in foreign_resolvers:
+        caveats.append(
+            f"{f['ip']} lives on {f['network']} in the "
+            f"\"{P.zone_name(zones, f['zone_id'])}\" zone — a different zone "
+            "than the locked networks. No rule is needed (or written) for it: "
+            "these rules do not block that zone pair at all, which also means "
+            "every OTHER DNS server in that zone stays reachable too."
+        )
+    others = P.other_lan_zones(zones, client_zone_id)
+    if others:
+        names = ", ".join(f"\"{z.get('name') or 'unnamed'}\"" for z in others)
+        caveats.append(
+            f"This console has more LAN zones than just the locked networks' "
+            f"own ({names}). These rules cover the "
+            f"\"{P.zone_name(zones, client_zone_id)}\" and External pairs "
+            "only, so a DNS server on a network in those other zones would "
+            "still be reachable."
+        )
 
     if req.dry_run:
         return DnsLockdownResponse(dry_run=True, payloads=payloads, caveats=caveats)
@@ -744,7 +852,11 @@ async def dns_lockdown(req: DnsLockdownRequest):
             )
         created.append(result)
 
-    if not P.dns_order_is_safe(created):
+    # A foreign-zone-only resolver set legitimately creates no allow, so the
+    # no-allow trip in the safety check must not roll that back.
+    if not P.dns_order_is_safe(
+        created, expect_allow=bool(lan_resolvers or wan_resolvers)
+    ):
         await roll_back()
         return DnsLockdownResponse(
             dry_run=False,
@@ -953,6 +1065,8 @@ async def lockdown(req: LockdownRequest):
     try:
         zones = await client.get_firewall_zones()
         existing = await client.get_firewall_policies()
+        networks = await client.get_networks()
+        known_clients = await client.get_known_clients()
     except Exception as e:
         return LockdownResponse(dry_run=req.dry_run, error=str(e))
 
@@ -962,6 +1076,20 @@ async def lockdown(req: LockdownRequest):
             dry_run=req.dry_run,
             error="Could not find Internal and External zones on this console",
         )
+
+    # Scope the rules to the zone the devices are actually in. The only
+    # attribution available for a MAC is the known-client record's
+    # last_connection_network_id -> that network's firewall_zone_id. That
+    # record shares stat/sta's staleness problems, but zone-level attribution
+    # is coarser than network-level (the measured misreports swapped VLANs
+    # WITHIN the Internal zone), and a lockdown built for the wrong zone is
+    # silent non-protection — so a best-effort zone beats a hardcoded one.
+    caveats: List[str] = []
+    client_zone_id, zone_err = _device_zone(
+        req.macs, known_clients, networks, zones, internal_id, caveats
+    )
+    if zone_err:
+        return LockdownResponse(dry_run=req.dry_run, error=zone_err)
 
     # Same guard as DNS: a second preset over a device that already has one
     # leaves two contradictory rule sets, and the tool would then report
@@ -984,7 +1112,7 @@ async def lockdown(req: LockdownRequest):
             preset=req.preset,
             macs=req.macs,
             device_label=req.label,
-            client_zone_id=internal_id,
+            client_zone_id=client_zone_id,
             external_zone_id=external_id,
             indexes=indexes,
             allow_inbound=req.allow_inbound,
@@ -992,8 +1120,22 @@ async def lockdown(req: LockdownRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # "No LAN" is one block in the device's own zone pair. Where the console
+    # has further LAN zones, say out loud that those stay reachable rather
+    # than letting the preset name overclaim.
+    if req.preset in (P.FULL_LOCKDOWN, P.INTERNET_ONLY):
+        others = P.other_lan_zones(zones, client_zone_id)
+        if others:
+            names = ", ".join(f"\"{z.get('name') or 'unnamed'}\"" for z in others)
+            caveats.append(
+                f"This console has more LAN zones than the device's own "
+                f"({names}). The LAN block covers the "
+                f"\"{P.zone_name(zones, client_zone_id)}\" zone pair only, so "
+                "networks in those other zones stay reachable from this device."
+            )
+
     if req.dry_run:
-        return LockdownResponse(dry_run=True, payloads=payloads)
+        return LockdownResponse(dry_run=True, payloads=payloads, caveats=caveats)
 
     async def roll_back():
         for done in created:
@@ -1020,7 +1162,7 @@ async def lockdown(req: LockdownRequest):
     # target VLAN but no working L2 (ARP failures to gateway and peers), with
     # the controller reporting contradictory locations. Release still clears
     # any pre-removal override (see release()); only the apply side is gone.
-    return LockdownResponse(dry_run=False, created=created)
+    return LockdownResponse(dry_run=False, created=created, caveats=caveats)
 
 
 @router.post("/release", response_model=ReleaseResponse)

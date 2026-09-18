@@ -255,6 +255,9 @@ class LockdownResponse(BaseModel):
     dry_run: bool
     created: List[Dict] = Field(default_factory=list)
     payloads: List[Dict] = Field(default_factory=list)
+    # Honest scoping notes, e.g. rules scoped to a non-Internal zone, or other
+    # LAN zones the blocks do not cover. Shown with the review.
+    caveats: List[str] = Field(default_factory=list)
     # Set when the preset also moves the device into another VLAN.
     moved_to: Optional[str] = None
     # Set when the override was saved but the device has not actually moved.

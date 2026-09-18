@@ -647,3 +647,177 @@ class TestDnsLockdown:
 
     def test_same_network_resolver_limitation_is_disclosed(self):
         assert any("OWN network" in c for c in P.DNS_CAVEATS)
+
+
+class TestZoneResolution:
+    """
+    Zones are found by `zone_key`, not display name — a renamed "Internal"
+    keeps zone_key "internal" (measured 2026-09-17). Name matching survives
+    only as a fallback for firmware without zone_key.
+    """
+
+    ZONES = [
+        {"_id": "z-int", "name": "Homebase", "zone_key": "internal",
+         "network_ids": ["n1", "n2"]},
+        {"_id": "z-ext", "name": "Outside", "zone_key": "external",
+         "network_ids": ["wan1"]},
+        {"_id": "z-gw", "name": "Gateway", "zone_key": "gateway",
+         "network_ids": []},
+        {"_id": "z-vpn", "name": "Vpn", "zone_key": "vpn",
+         "network_ids": ["n-vpn"]},
+        {"_id": "z-custom", "name": "Servers", "network_ids": ["n3"]},
+    ]
+
+    def test_renamed_default_zones_still_found(self):
+        assert P.find_zone_id(self.ZONES, "internal") == "z-int"
+        assert P.find_zone_id(self.ZONES, "external") == "z-ext"
+
+    def test_name_fallback_without_zone_key(self):
+        legacy = [{"_id": "a", "name": "Internal"}, {"_id": "b", "name": "External"}]
+        assert P.find_zone_id(legacy, "internal") == "a"
+        assert P.find_zone_id(legacy, "external") == "b"
+
+    def test_missing_zone_is_none_not_a_guess(self):
+        assert P.find_zone_id([{"_id": "a", "name": "Whatever"}], "internal") is None
+
+    def test_network_zone_prefers_firewall_zone_id(self):
+        net = {"_id": "n9", "firewall_zone_id": "z-custom"}
+        assert P.zone_of_network(net, self.ZONES) == "z-custom"
+
+    def test_network_zone_falls_back_to_membership(self):
+        assert P.zone_of_network({"_id": "n3"}, self.ZONES) == "z-custom"
+
+    def test_unlinked_network_is_none(self):
+        assert P.zone_of_network({"_id": "n-unknown"}, self.ZONES) is None
+        assert P.zone_of_network({}, self.ZONES) is None
+
+    def test_other_lan_zones_excludes_external_gateway_empty_and_self(self):
+        others = P.other_lan_zones(self.ZONES, "z-int")
+        assert {z["_id"] for z in others} == {"z-vpn", "z-custom"}
+
+    def test_zone_name_never_raises(self):
+        assert P.zone_name(self.ZONES, "z-int") == "Homebase"
+        assert P.zone_name(self.ZONES, "nope") == "unknown zone"
+        assert P.zone_name(None, None) == "unknown zone"
+
+
+class TestZoneAwareResolverClassification:
+    """
+    A resolver is allowed in the zone pair it is reached through. One sitting
+    on a LAN network in a DIFFERENT zone than the locked networks is outside
+    every pair these rules write — it must come back as foreign, not as a LAN
+    resolver, or the allow lands in a pair where it does nothing.
+    """
+
+    ZONES = [
+        {"_id": "z-int", "name": "Internal", "zone_key": "internal",
+         "network_ids": ["n1"]},
+        {"_id": "z-srv", "name": "Servers", "zone_key": None,
+         "network_ids": ["n2"]},
+    ]
+    NETWORKS = [
+        {"_id": "n1", "name": "Default", "ip_subnet": "192.168.1.1/24",
+         "firewall_zone_id": "z-int"},
+        {"_id": "n2", "name": "SrvNet", "ip_subnet": "10.10.0.1/24",
+         "firewall_zone_id": "z-srv"},
+        {"_id": "wan", "name": "WAN", "purpose": "wan",
+         "ip_subnet": "203.0.113.1/30"},
+    ]
+
+    def test_same_zone_resolver_is_lan(self):
+        lan, wan, foreign = P.classify_resolvers(
+            ["192.168.1.53"], self.NETWORKS, self.ZONES, "z-int")
+        assert (lan, wan, foreign) == (["192.168.1.53"], [], [])
+
+    def test_public_resolver_is_wan(self):
+        lan, wan, foreign = P.classify_resolvers(
+            ["1.1.1.1"], self.NETWORKS, self.ZONES, "z-int")
+        assert (lan, wan, foreign) == ([], ["1.1.1.1"], [])
+
+    def test_other_zone_resolver_is_foreign(self):
+        lan, wan, foreign = P.classify_resolvers(
+            ["10.10.0.53"], self.NETWORKS, self.ZONES, "z-int")
+        assert lan == [] and wan == []
+        assert foreign == [{"ip": "10.10.0.53", "network": "SrvNet",
+                            "zone_id": "z-srv"}]
+
+    def test_without_zone_context_behaves_like_before(self):
+        lan, wan, foreign = P.classify_resolvers(
+            ["10.10.0.53", "1.1.1.1"], self.NETWORKS)
+        assert lan == ["10.10.0.53"]
+        assert wan == ["1.1.1.1"]
+        assert foreign == []
+
+    def test_foreign_only_selection_still_builds_blocks(self):
+        pols = P.build_dns_lockdown(
+            ["n1"], "Default", [], [], "z-int", "z-ext",
+            P.next_free_index([], P.dns_policy_count(False, False, False)),
+            foreign_resolvers=[{"ip": "10.10.0.53", "network": "SrvNet",
+                                "zone_id": "z-srv"}],
+        )
+        assert [p["action"] for p in pols] == ["BLOCK", "BLOCK"]
+
+    def test_no_resolvers_at_all_still_refused(self):
+        with pytest.raises(ValueError):
+            P.build_dns_lockdown(["n1"], "x", [], [], "z-int", "z-ext", [1, 2])
+
+    def test_blocks_only_set_is_safe_when_no_allow_expected(self):
+        blocks = [
+            {"action": "BLOCK", "index": 10000,
+             "source": {"zone_id": "z-int"}, "destination": {"zone_id": "z-int"}},
+            {"action": "BLOCK", "index": 10000,
+             "source": {"zone_id": "z-int"}, "destination": {"zone_id": "z-ext"}},
+        ]
+        assert P.dns_order_is_safe(blocks, expect_allow=False) is True
+        assert P.dns_order_is_safe(blocks) is False  # default still strict
+
+
+class TestDeviceZoneAttribution:
+    """MAC -> known-client -> last_connection_network_id -> firewall zone."""
+
+    from tools.house_arrest.routers.arrest import _device_zone
+    _device_zone = staticmethod(_device_zone)
+
+    ZONES = [
+        {"_id": "z-int", "name": "Internal", "zone_key": "internal",
+         "network_ids": ["n1"]},
+        {"_id": "z-srv", "name": "Servers", "network_ids": ["n2"]},
+    ]
+    NETWORKS = [
+        {"_id": "n1", "name": "Default", "firewall_zone_id": "z-int"},
+        {"_id": "n2", "name": "SrvNet", "firewall_zone_id": "z-srv"},
+    ]
+    KNOWN = [
+        {"mac": "aa:aa:aa:aa:aa:01", "last_connection_network_id": "n1"},
+        {"mac": "aa:aa:aa:aa:aa:02", "last_connection_network_id": "n2"},
+        {"mac": "aa:aa:aa:aa:aa:03"},
+    ]
+
+    def _run(self, macs):
+        caveats = []
+        zone, err = self._device_zone(
+            macs, self.KNOWN, self.NETWORKS, self.ZONES, "z-int", caveats)
+        return zone, err, caveats
+
+    def test_internal_device_scopes_to_internal_no_caveat(self):
+        zone, err, caveats = self._run(["aa:aa:aa:aa:aa:01"])
+        assert (zone, err, caveats) == ("z-int", None, [])
+
+    def test_custom_zone_device_scopes_to_its_zone_with_caveat(self):
+        zone, err, caveats = self._run(["AA:AA:AA:AA:AA:02"])
+        assert zone == "z-srv" and err is None
+        assert any("Servers" in c for c in caveats)
+
+    def test_unattributable_device_falls_back_to_internal(self):
+        zone, err, caveats = self._run(["aa:aa:aa:aa:aa:03"])
+        assert (zone, err, caveats) == ("z-int", None, [])
+
+    def test_unknown_mac_falls_back_to_internal(self):
+        zone, err, caveats = self._run(["ff:ff:ff:ff:ff:ff"])
+        assert (zone, err, caveats) == ("z-int", None, [])
+
+    def test_mixed_zone_selection_is_refused(self):
+        zone, err, caveats = self._run(
+            ["aa:aa:aa:aa:aa:01", "aa:aa:aa:aa:aa:02"])
+        assert zone is None
+        assert "different firewall zones" in err
