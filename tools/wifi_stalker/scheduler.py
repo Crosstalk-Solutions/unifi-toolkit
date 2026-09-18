@@ -424,10 +424,12 @@ async def process_device(
             # Trigger disconnection webhooks
             await trigger_webhooks(session, 'disconnected', device)
 
-    # Always check blocked status (works for both online and offline devices)
+    # Always check blocked status (works for both online and offline devices).
+    # None means the read failed — unknown, not "unblocked" — so keep the
+    # stored state and fire nothing rather than flip every blocked device.
     try:
         is_blocked = await unifi_client.is_client_blocked(mac)
-        if device.is_blocked != is_blocked:
+        if is_blocked is not None and device.is_blocked != is_blocked:
             logger.info(f"Device {device.mac_address} blocked status changed to {is_blocked}")
             device.is_blocked = is_blocked
             # Broadcast update via WebSocket

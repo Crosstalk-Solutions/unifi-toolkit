@@ -651,15 +651,21 @@ class UniFiClient:
             logger.error(f"Error unblocking client {mac_address}: {e}")
             return False
 
-    async def is_client_blocked(self, mac_address: str) -> bool:
+    async def is_client_blocked(self, mac_address: str) -> Optional[bool]:
         """
-        Check if a client is blocked in UniFi
+        Check if a client is blocked in UniFi.
 
         Args:
             mac_address: MAC address of client to check
 
         Returns:
-            True if blocked, False otherwise
+            True/False from a SUCCESSFUL read of rest/user; None when the read
+            failed (non-200 or exception). A failed read used to come back as
+            False, which the Wi-Fi Stalker scheduler read as "every blocked
+            device just got unblocked" — one auth blip fired spurious
+            'unblocked' webhooks. Absence of the record is only evidence once
+            the read itself is known good; callers must treat None as unknown
+            and skip their compare-and-fire.
         """
         if not self._session:
             raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
@@ -668,19 +674,21 @@ class UniFiClient:
             url = f"{self.host}/proxy/network/api/s/{self.site}/rest/user"
 
             async with self._session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    users = data.get('data', [])
-                    user = next((u for u in users if u.get('mac', '').lower() == mac_address.lower()), None)
-
-                    if user:
-                        return user.get('blocked', False)
-
-            return False
+                if resp.status != 200:
+                    logger.warning(
+                        f"Blocked-status read failed ({resp.status}) for "
+                        f"{mac_address}; reporting unknown, not unblocked")
+                    return None
+                data = await resp.json()
+                users = data.get('data', [])
+                user = next((u for u in users if u.get('mac', '').lower() == mac_address.lower()), None)
+                # A good read with no record: the controller has no user entry
+                # for this MAC, so it is genuinely not blocked.
+                return bool(user.get('blocked', False)) if user else False
 
         except Exception as e:
             logger.error(f"Error checking blocked status for {mac_address}: {e}")
-            return False
+            return None
 
     async def set_client_name(self, mac_address: str, name: str) -> bool:
         """

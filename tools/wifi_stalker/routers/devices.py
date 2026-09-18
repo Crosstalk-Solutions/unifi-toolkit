@@ -170,8 +170,12 @@ async def get_device_details(
         try:
             mac_normalized = device.mac_address.lower()
 
-            # Always check blocked status (works even for disconnected devices)
-            detail_data["is_blocked"] = await unifi_client.is_client_blocked(mac_normalized)
+            # Always check blocked status (works even for disconnected devices).
+            # None = the read failed; keep the stored value rather than
+            # presenting an unknown as "not blocked".
+            live_blocked = await unifi_client.is_client_blocked(mac_normalized)
+            if live_blocked is not None:
+                detail_data["is_blocked"] = live_blocked
 
             # Get live data if device is connected
             if device.is_connected:

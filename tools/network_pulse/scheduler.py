@@ -184,7 +184,8 @@ async def refresh_network_stats():
                 tx_bytes=client.get('tx_bytes', 0),
                 rx_bytes=client.get('rx_bytes', 0),
                 total_bytes=client.get('total_bytes', 0),
-                rssi=client.get('rssi'),
+                # Console displays `signal`; `rssi` is a different value (#60).
+                rssi=client.get('signal') or client.get('rssi'),
                 is_wired=client.get('is_wired', False),
                 uptime=client.get('uptime'),
                 essid=client.get('essid'),
@@ -218,7 +219,7 @@ async def refresh_network_stats():
                 tx_bytes=tx_bytes,
                 rx_bytes=rx_bytes,
                 total_bytes=tx_bytes + rx_bytes,
-                rssi=client_data.get('rssi'),
+                rssi=client_data.get('signal') or client_data.get('rssi'),
                 is_wired=is_wired,
                 uptime=client_data.get('uptime'),
                 essid=essid,
