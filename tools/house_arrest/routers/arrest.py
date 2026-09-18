@@ -296,6 +296,8 @@ async def get_state():
         pid = pol.get("_id")
         if pid:
             entry.policy_ids.append(pid)
+        if pol.get("enabled") is False:
+            entry.disabled_count += 1
         for nid in ((pol.get("source") or {}).get("network_ids") or []):
             if nid not in entry.network_ids:
                 entry.network_ids.append(nid)

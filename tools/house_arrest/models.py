@@ -161,6 +161,9 @@ class DnsLockdownEntry(BaseModel):
     # Which networks this covers, so the picker can mark them before the user
     # selects one and hits the duplicate guard as an error.
     network_ids: List[str] = Field(default_factory=list)
+    # Rules in this set toggled off in the UniFi UI. Anything above zero means
+    # the lockdown is NOT fully enforcing and the row must not show green.
+    disabled_count: int = 0
 
 
 class StateResponse(BaseModel):

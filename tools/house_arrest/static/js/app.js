@@ -98,7 +98,9 @@ function houseArrest() {
         // ---- state ----
 
         get brokenCount() {
-            return this.state.arrests.filter(a => a.status && a.status !== 'ok').length;
+            const arrests = this.state.arrests.filter(a => a.status && a.status !== 'ok').length;
+            const dns = (this.state.dns_lockdowns || []).filter(l => l.disabled_count > 0).length;
+            return arrests + dns;
         },
 
         headline() {
@@ -266,8 +268,17 @@ function houseArrest() {
             return d.toLocaleDateString();
         },
 
+        // DNS lockdown row state. Any rule toggled off in the UniFi UI means
+        // the set is not fully enforcing, and green would be a lie.
+        dnsStateText(l) {
+            if (!l.disabled_count) return 'Enforcing';
+            if (l.disabled_count >= l.policy_ids.length) return 'Disabled in UniFi — not enforcing';
+            return l.disabled_count + ' of ' + l.policy_ids.length + ' rules disabled in UniFi';
+        },
+
         stateText(status) {
             if (status === 'ok') return 'Enforcing';
+            if (status === 'disabled') return 'Disabled in UniFi — not enforcing';
             // The rules are live, but the VLAN move is waiting on a reconnect.
             if (status === 'pending_move') return 'Rules live — VLAN move pending reconnect';
             if (status === 'rotated') return 'MAC changed — not enforcing';

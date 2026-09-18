@@ -1813,6 +1813,10 @@ def policy_macs(policy: Dict) -> List[str]:
 OK = "ok"
 BROKEN = "broken"
 ROTATED = "rotated"
+# Toggled off in the UniFi UI. The rule still exists but enforces nothing,
+# which is exactly the state this tool must never paint green (it happened
+# for real: a paused DNS rule kept showing "Enforcing" for a day).
+DISABLED = "disabled"
 
 
 def check_breakage(ours: List[Dict], known: Dict[str, str]) -> List[Dict]:
@@ -1847,6 +1851,22 @@ def check_breakage(ours: List[Dict], known: Dict[str, str]) -> List[Dict]:
         missing = [m for m in macs if m not in known]
         status = OK if not missing else BROKEN
         suggestion = None
+
+        # A policy switched off in the UniFi UI enforces nothing no matter
+        # what its MACs are doing, and "re-enable it" is the fix — so it
+        # outranks the rotation check. Only an explicit False counts; docs
+        # without the field are treated as enabled.
+        if pol.get("enabled") is False:
+            status = DISABLED
+            results.append({
+                "policy_id": pol.get("_id"),
+                "name": pol.get("name"),
+                "macs": macs,
+                "status": status,
+                "missing": missing,
+                "suggestion": None,
+            })
+            continue
 
         if missing:
             # Recover the device name from the policy description/name, then

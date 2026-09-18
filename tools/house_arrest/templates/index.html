@@ -429,9 +429,10 @@
                                 </template>
                             </span>
                         </span>
-                        <span class="state ok">
-                            <span class="dot" style="background: var(--state-enforcing)"></span>
-                            <span>Enforcing</span>
+                        <span class="state" :class="l.disabled_count ? '' : 'ok'">
+                            <span class="dot"
+                                  :style="'background: var(--state-' + (l.disabled_count ? 'broken' : 'enforcing') + ')'"></span>
+                            <span x-text="dnsStateText(l)"></span>
                         </span>
                         <span class="muted small" x-text="l.policy_ids.length + ' rules'"></span>
                         <button class="btn btn-danger btn-sm" @click="dnsRelease(l.label)">Release</button>

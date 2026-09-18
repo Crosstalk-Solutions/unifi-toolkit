@@ -844,3 +844,42 @@ class TestMdnsScope:
         assert P.mdns_effective_ids({"mdns_enabled_for": "none"}, self.NETWORKS) == []
         assert P.mdns_effective_ids(None, self.NETWORKS) == []
         assert P.mdns_effective_ids({}, self.NETWORKS) == []
+
+
+class TestDisabledPolicyDetection:
+    """
+    A rule toggled off in the UniFi UI enforces nothing and must never be
+    reported green. Happened for real: a paused DNS rule showed "Enforcing"
+    for a day while troubleshooting (2026-09-17/18).
+    """
+
+    KNOWN = {"aa:bb:cc:dd:ee:01": "Cam"}
+
+    def _pol(self, enabled, mac="aa:bb:cc:dd:ee:01"):
+        return {
+            "_id": "p1",
+            "name": "House Arrest: Cam — no internet",
+            "description": P.describe("Full lockdown for Cam"),
+            "enabled": enabled,
+            "source": {"matching_target": "CLIENT_MACS", "client_macs": [mac]},
+        }
+
+    def test_disabled_policy_is_flagged(self):
+        rows = P.check_breakage([self._pol(False)], self.KNOWN)
+        assert rows[0]["status"] == P.DISABLED
+
+    def test_enabled_policy_stays_ok(self):
+        rows = P.check_breakage([self._pol(True)], self.KNOWN)
+        assert rows[0]["status"] == P.OK
+
+    def test_missing_enabled_field_treated_as_enabled(self):
+        pol = self._pol(True)
+        del pol["enabled"]
+        rows = P.check_breakage([pol], self.KNOWN)
+        assert rows[0]["status"] == P.OK
+
+    def test_disabled_outranks_rotation(self):
+        # Disabled AND the MAC is gone: "re-enable it" comes first.
+        rows = P.check_breakage([self._pol(False, mac="aa:bb:cc:dd:ee:99")],
+                                self.KNOWN)
+        assert rows[0]["status"] == P.DISABLED
