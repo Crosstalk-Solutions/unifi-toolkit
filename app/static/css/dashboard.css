@@ -789,6 +789,36 @@ body {
     font-size: 1rem;
 }
 
+/* Rogue Support help button. Sits at the far right of the header cluster.
+   Orange-accented but ghost-styled so it reads as a helpful door, not an ad. */
+.rs-help-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.875rem 0.45rem 0.5rem;
+    background: var(--background);
+    border: 1px solid #F15A29;
+    border-radius: 8px;
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.rs-help-btn:hover {
+    background: rgba(241, 90, 41, 0.1);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 10px rgba(241, 90, 41, 0.25);
+}
+
+.rs-help-icon {
+    width: 24px;
+    height: auto;
+    display: block;
+}
+
 /* Theme Toggle */
 .theme-toggle {
     display: flex;
@@ -909,6 +939,15 @@ body {
 
     .logout-btn {
         padding: 0.5rem;
+    }
+
+    /* Icon-only on narrow screens; the title attribute still explains it. */
+    .rs-help-label {
+        display: none;
+    }
+
+    .rs-help-btn {
+        padding: 0.375rem 0.5rem;
     }
 }
 
