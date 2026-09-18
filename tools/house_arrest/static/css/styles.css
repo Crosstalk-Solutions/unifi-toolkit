@@ -75,10 +75,10 @@ body {
 
 header {
     background: var(--surface);
-    padding: 2rem;
+    padding: 1.5rem 2rem;
     border-radius: 12px;
     box-shadow: var(--shadow);
-    margin-bottom: 2rem;
+    margin-bottom: 1.25rem;
 }
 
 .header-top { margin-bottom: 1rem; }
@@ -112,8 +112,8 @@ h2 {
 
 .subtitle {
     color: var(--text-secondary);
-    margin: 0 0 1.5rem;
-    max-width: 68ch;
+    margin: 0 0 1rem;
+    max-width: 90ch;
 }
 
 /* ---------- Trust strip ----------
@@ -177,7 +177,7 @@ h2 {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 0.75rem;
-    margin-bottom: 1.75rem;
+    margin-bottom: 1.25rem;
 }
 
 .tool-tab {
@@ -289,8 +289,8 @@ h2 {
     background: var(--surface);
     border-radius: 12px;
     box-shadow: var(--shadow);
-    padding: 1.5rem;
-    margin-bottom: 2rem;
+    padding: 1.25rem 1.5rem 1.5rem;
+    margin-bottom: 1.25rem;
 }
 
 .card-head {
@@ -298,8 +298,12 @@ h2 {
     align-items: baseline;
     gap: 0.75rem;
     flex-wrap: wrap;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
 }
+
+/* An action that belongs to the card header rides at its right edge instead
+   of costing the card a whole extra row. */
+.card-head .head-action { margin-left: auto; align-self: center; }
 
 .card-head .step {
     font-size: 0.75rem;
@@ -314,8 +318,8 @@ h2 {
 .card-note {
     color: var(--text-secondary);
     font-size: 0.9rem;
-    margin: 0 0 1.25rem;
-    max-width: 70ch;
+    margin: 0 0 1rem;
+    max-width: 110ch;
 }
 
 .muted { color: var(--text-secondary); }
@@ -761,9 +765,8 @@ table.matrix th .col-help {
     display: block;
     font-weight: 400;
     font-size: 0.75rem;
-    line-height: 1.35;
+    line-height: 1.3;
     margin-top: 0.15rem;
-    max-width: 17ch;
 }
 
 th.net-col {
@@ -781,7 +784,7 @@ th.net-col span:first-child { color: var(--text-primary); font-weight: 600; }
 
 td.cell {
     position: relative;
-    padding: 0.6rem 0.75rem;
+    padding: 0.5rem 0.75rem;
     border-radius: 8px;
     font-size: 0.85rem;
     cursor: help;
@@ -1082,8 +1085,8 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
    form, and the "currently isolated" list ended up stranded at the bottom
    under a Wi-Fi heading it had nothing to do with. */
 .subsection {
-    margin-top: 1.75rem;
-    padding-top: 1.5rem;
+    margin-top: 1.25rem;
+    padding-top: 1rem;
     border-top: 2px solid var(--border-color);
 }
 .subsection.is-first { margin-top: 0; padding-top: 0; border-top: none; }

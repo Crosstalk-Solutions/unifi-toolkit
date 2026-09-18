@@ -130,15 +130,11 @@
         <div class="card-head">
             <span class="step">INSPECT</span>
             <h2>Is your network already isolated?</h2>
-        </div>
-        <div class="actions" style="margin-bottom:1rem">
-            <button class="btn btn-secondary btn-sm" @click="loadInspection()"
-                    :disabled="inspection && inspection.loading">
+            <button class="btn btn-secondary btn-sm head-action" @click="loadInspection()"
+                    :disabled="inspection && inspection.loading"
+                    title="Settings changed in the UniFi UI show up here after a re-read.">
                 <span x-text="(inspection && inspection.loading) ? 'Re-reading…' : 'Re-read from controller'"></span>
             </button>
-            <span class="muted small">
-                Settings changed in the UniFi UI show up here after a re-read.
-            </span>
         </div>
         <p class="card-note">
             An audit of your VLANs you can act on: cells marked &#x270E; change
