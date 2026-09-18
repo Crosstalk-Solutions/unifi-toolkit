@@ -1132,8 +1132,18 @@
         </template>
     </section>
 
-    <p class="muted small">House Arrest v{{ version }}</p>
+    <p class="muted small">
+        House Arrest v{{ version }} &middot;
+        <a href="https://github.com/Crosstalk-Solutions/unifi-toolkit/issues"
+           data-report-issue data-tool="House Arrest" target="_blank" rel="noopener">
+            Report an issue</a>
+        &middot;
+        <a href="https://github.com/Crosstalk-Solutions/unifi-toolkit/blob/main/docs/HOUSE-ARREST.md"
+           target="_blank" rel="noopener">Docs</a>
+    </p>
 </div>
+
+<script src="/static/js/report-issue.js?v={{ version }}"></script>
 
 <!-- Loaded at the end of body WITHOUT defer, matching Threat Watch and
      Network Pulse: this must define houseArrest() before the deferred
