@@ -44,12 +44,6 @@ function houseArrest() {
         blockedFlows: [],
         blockedLoading: false,
         // network isolation
-        isoNetworkId: '',
-        isoPreset: '',
-        isoPreview: null,
-        isoNote: null,
-        isoPreviewing: false,
-        isoApplying: false,
         error: null,
         message: null,
 
@@ -81,7 +75,6 @@ function houseArrest() {
             this.pathLabels = this.readJson('ha-path-labels', {});
             this.networkPresets = this.readJson('ha-network-presets', []);
             this.assetVersion = this.readJson('ha-asset-version', '');
-            if (this.networkPresets.length) this.isoPreset = this.networkPresets[0].value;
             if (this.presets.length) this.preset = this.presets[0].value;
 
             await this.refresh();
@@ -114,124 +107,6 @@ function houseArrest() {
             if (this.brokenCount > 1) return this.brokenCount + ' lockdowns are not enforcing';
             if (this.state.arrests.length === 0) return 'Connected — nothing locked down';
             return 'All lockdowns enforcing';
-        },
-
-        currentNetworkPreset() {
-            return this.networkPresets.find(p => p.value === this.isoPreset) || null;
-        },
-
-        isoSummary() {
-            const p = this.currentNetworkPreset();
-            return p ? p.effects.summary : '';
-        },
-
-        isoCaveats() {
-            const p = this.currentNetworkPreset();
-            return p ? p.caveats : [];
-        },
-
-        // Preset-keyed isolation diagram. One image per network preset so the
-        // picture never contradicts the verdict the way a single static graphic
-        // would — the same rule the device tab's scenario images follow.
-        isoImage() {
-            if (!this.isoPreset) return '';
-            return '/arrest/static/images/isolation-' + this.isoPreset + '.png' +
-                (this.assetVersion ? '?v=' + this.assetVersion : '');
-        },
-        isoImageAlt() {
-            const p = this.currentNetworkPreset();
-            return p ? ('Network isolation — ' + p.label + '. ' + p.effects.summary) : '';
-        },
-
-        async isoDryRun() {
-            this.message = null;
-            this.isoPreviewing = true;
-            try {
-                const res = await fetch('api/isolate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-                    body: JSON.stringify({
-                        preset: this.isoPreset,
-                        network_id: this.isoNetworkId,
-                        dry_run: true
-                    })
-                });
-                const data = await res.json();
-                if (!res.ok || data.error) {
-                    this.message = { kind: 'danger', text: data.detail || data.error || 'Review failed' };
-                    return;
-                }
-                this.isoNote = data.note || null;
-                this.isoPreview = data.changes || {};
-            } finally {
-                this.isoPreviewing = false;
-            }
-        },
-
-        async isoApply() {
-            if (!this.isoPreview) return;
-            this.isoApplying = true;
-            this.message = null;
-            try {
-                const res = await fetch('api/isolate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-                    body: JSON.stringify({
-                        preset: this.isoPreset,
-                        network_id: this.isoNetworkId,
-                        dry_run: false
-                    })
-                });
-                const data = await res.json();
-                if (data.error) {
-                    this.message = { kind: 'danger', text: data.error };
-                } else {
-                    const net = this.networks.find(n => n.id === this.isoNetworkId);
-                    this.message = data.note
-                        ? { kind: 'ok', text: data.note }
-                        : {
-                            kind: 'ok',
-                            text: (net ? net.name : 'Network') + ' isolated - ' +
-                                  Object.keys(data.changes || {}).length + ' setting(s) changed.'
-                          };
-                    this.isoPreview = null;
-                    this.isoNetworkId = '';
-                    await this.refresh(true);
-                    this.loadInspection();
-                }
-            } finally {
-                this.isoApplying = false;
-            }
-        },
-
-        isoChangeLines() {
-            const friendly = {
-                network_isolation_enabled: v => v
-                    ? 'Isolate Network: on - blocked from reaching your other networks'
-                    : 'Isolate Network: off - can reach your other networks again',
-                internet_access_enabled: v => v
-                    ? 'Allow Internet Access: on - internet restored'
-                    : 'Allow Internet Access: off - no internet for this network'
-            };
-            return Object.entries(this.isoPreview || {}).map(
-                ([k, v]) => (friendly[k] ? friendly[k](v) : k + ' = ' + v)
-            );
-        },
-
-        async releaseNetwork(networkId, label) {
-            this.message = null;
-            const res = await fetch('api/release-network', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-                body: JSON.stringify({
-                    preset: 'full_isolation', network_id: networkId, dry_run: false
-                })
-            });
-            const data = await res.json();
-            this.message = data.error
-                ? { kind: 'danger', text: data.error }
-                : { kind: 'ok', text: data.note || (label + ' released.') };
-            await this.refreshAll();
         },
 
         async releaseLegacy() {
@@ -661,7 +536,35 @@ function houseArrest() {
             const isOn = cell.label === spec.on;
             const next = !isOn;
 
+            // The isolation diagrams are keyed to flag combinations, so the
+            // dialog can show the exact state this click lands the network in:
+            // read both flags off the row, override the one being toggled.
+            let img = null;
+            if (col.key === 'isolation' || col.key === 'internet') {
+                const isoCell = row.cells['isolation'] || {};
+                const inetCell = row.cells['internet'] || {};
+                let iso = isoCell.label === 'On';
+                let inet = inetCell.label === 'Allowed';
+                if (col.key === 'isolation') iso = next;
+                if (col.key === 'internet') inet = next;
+                if (iso && !inet) img = 'full_isolation';
+                else if (iso && inet) img = 'isolate_networks';
+                else if (!iso && !inet) img = 'no_internet';
+                // both open = the normal state, no diagram needed
+            }
+            const imgPreset = img ? this.networkPresets.find(p => p.value === img) : null;
+
             this.toggle = {
+                isoImage: img
+                    ? '/arrest/static/images/isolation-' + img + '.png' +
+                      (this.assetVersion ? '?v=' + this.assetVersion : '')
+                    : null,
+                isoCaption: imgPreset
+                    ? 'Where this leaves ' + row.name + ': ' + imgPreset.effects.summary
+                    : '',
+                isoAlt: imgPreset
+                    ? 'Diagram: ' + imgPreset.label + '. ' + imgPreset.effects.summary
+                    : '',
                 networkId: row.id,
                 networkName: row.name,
                 vlan: row.vlan,

@@ -967,7 +967,7 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
     z-index: 50;
 }
 .modal {
-    width: min(520px, 100%);
+    width: min(560px, 100%);
     max-height: 90vh;
     overflow-y: auto;
     background: var(--surface);
@@ -1066,30 +1066,12 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
 
 .wifi-isolation h3 { margin: 0 0 0.5rem; font-size: 1rem; }
 
-.wlan-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 1rem;
-}
-.wlan-table th {
-    text-align: left;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-secondary);
-    padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid var(--border-color);
-}
-.wlan-table td {
-    padding: 0.6rem;
-    border-bottom: 1px solid var(--border-color);
-    font-size: 0.9rem;
-    vertical-align: middle;
-}
-.wlan-table tr:last-child td { border-bottom: none; }
-.wlan-table tr.is-off td { opacity: 0.55; }
-.wlan-table td:last-child { text-align: right; }
-.wlan-table .hint { display: block; margin: 0; }
+/* The Wi-Fi table reuses the matrix vocabulary; only the disabled-SSID
+   dimming and a width cap (three columns would stretch absurdly wide at
+   full card width) are its own. */
+.wlan-matrix { max-width: 760px; }
+.wlan-matrix tr.is-off th,
+.wlan-matrix tr.is-off td { opacity: 0.55; }
 
 /* ---------------------------------------------------------------------------
    Sub-sections within a tab
@@ -1112,8 +1094,6 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
     align-items: baseline;
     gap: 0.5rem;
 }
-/* wifi-isolation carried its own rule before .subsection existed. */
-.wifi-isolation.subsection { margin-top: 1.75rem; padding-top: 1.5rem; }
 
 /* Which lockdown a device is actually under. The row said "Enforcing" without
    ever saying what was being enforced, so two devices under opposite presets
@@ -1353,13 +1333,13 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
     color: #374151;
 }
 
+/* Inside the toggle dialog: the diagram of the state the click lands in. */
+.modal-figure { margin: 0.9rem 0 0; }
+
 /* DNS diagram (near-square) rides in the intro split, right of the text. */
 .dns-figure { flex: 0 0 360px; max-width: 360px; }
 
-/* Isolation diagram is wide-and-short — sits right of its explanation too. */
-.iso-figure { flex: 0 0 440px; max-width: 440px; }
-
 @media (max-width: 760px) {
     .intro-split { flex-direction: column; align-items: stretch; gap: 1rem; max-width: 480px; }
-    .dns-figure, .iso-figure { flex-basis: auto; max-width: 100%; align-self: center; }
+    .dns-figure { flex-basis: auto; max-width: 100%; align-self: center; }
 }

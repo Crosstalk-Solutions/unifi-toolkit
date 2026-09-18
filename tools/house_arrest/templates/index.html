@@ -128,7 +128,7 @@
          lockdown is even necessary. -->
     <section class="card" x-show="tab === 'networks'" role="tabpanel">
         <div class="card-head">
-            <span class="step">CONTEXT</span>
+            <span class="step">INSPECT</span>
             <h2>Is your network already isolated?</h2>
         </div>
         <div class="actions" style="margin-bottom:1rem">
@@ -141,9 +141,11 @@
             </span>
         </div>
         <p class="card-note">
-            Read-only audit of your VLANs. A network can look isolated in the UniFi
-            UI and still be wide open, because the predefined allow-all rule sits
-            beneath everything and lets traffic through.
+            An audit of your VLANs you can act on: cells marked &#x270E; change
+            that setting right here, everything else explains itself on hover.
+            A network can look isolated in the UniFi UI and still be wide open,
+            because the predefined allow-all rule sits beneath everything and
+            lets traffic through.
         </p>
 
         <div x-show="inspection && inspection.loading">
@@ -268,6 +270,12 @@
                             <strong x-text="toggle.nextLabel"></strong>
                         </div>
 
+                        <figure class="mechanism-figure modal-figure" x-show="toggle.isoImage">
+                            <img :src="toggle.isoImage" :alt="toggle.isoAlt"
+                                 width="800" height="446" decoding="async">
+                            <figcaption x-text="toggle.isoCaption"></figcaption>
+                        </figure>
+
                         <p class="modal-warn" x-show="toggle.warning" x-text="toggle.warning"></p>
                         <p class="notice danger" x-show="toggle.error" x-text="toggle.error"></p>
 
@@ -288,120 +296,21 @@
             </template>
         </div>
 
-        <!-- Acting on what the matrix shows: isolate a whole network, using the
-             same preview-then-apply discipline as a device lockdown. -->
+        <!-- Network-level isolation is changed from the matrix cells above.
+             The old dropdown-driven "Isolate a network" flow and the separate
+             "Networks currently isolated" list were removed 2026-09-18: both
+             were a second control surface / second display of the same native
+             flags the matrix now edits directly, and two views of one truth is
+             exactly the drift this tool exists to avoid. The per-preset
+             isolation diagrams moved into the matrix toggle dialog, where they
+             show the exact state a click lands the network in. -->
         <div class="isolate-block">
-            <div class="subsection is-first">
-            <h3>Isolate a network</h3>
-
-            <!-- Explanation and the live preset preview, inline. The picture is
-                 preset-aware (one image per level) so it always matches the
-                 verdict — internet and other-VLAN paths swap between allowed and
-                 blocked, and the green self-loop keeps the same-VLAN peer caveat
-                 in plain sight. It updates as the Level below is changed. -->
-            <div class="intro-split">
-                <p class="card-note">
-                    Uses UniFi's own per-network settings, the same switches as
-                    Settings -> Networks -> the network. The controller generates the
-                    firewall rules, so this page and the UniFi UI always agree.
-                    Applies to every device on the network, now and in future.
-                </p>
-                <figure class="mechanism-figure iso-figure" x-show="isoPreset">
-                    <img :src="isoImage()" :alt="isoImageAlt()"
-                         width="800" height="446" decoding="async">
-                    <figcaption x-text="isoSummary()"></figcaption>
-                </figure>
-            </div>
-
-            <div class="field-row">
-                <div>
-                    <label for="iso-net">Network</label>
-                    <select id="iso-net" x-model="isoNetworkId" @change="isoPreview = null">
-                        <option value="">Select a network…</option>
-                        <template x-for="n in networks" :key="n.id">
-                            <option :value="n.id" x-text="n.name + ' — VLAN ' + n.vlan"></option>
-                        </template>
-                    </select>
-                </div>
-                <div>
-                    <label for="iso-preset">Level</label>
-                    <select id="iso-preset" x-model="isoPreset" @change="isoPreview = null">
-                        <template x-for="p in networkPresets" :key="p.value">
-                            <option :value="p.value" x-text="p.label"></option>
-                        </template>
-                    </select>
-                    <div class="hint" x-text="isoSummary()"></div>
-                </div>
-            </div>
-
-            <ul class="caveats" x-show="isoCaveats().length">
-                <template x-for="(c, i) in isoCaveats()" :key="i">
-                    <li x-text="c"></li>
-                </template>
-            </ul>
-
-            <div class="actions">
-                <button class="btn btn-secondary" @click="isoDryRun()"
-                        :disabled="!isoNetworkId || isoPreviewing">
-                    <span x-text="isoPreviewing ? 'Checking…' : 'Review changes'"></span>
-                </button>
-                <button class="btn btn-primary" @click="isoApply()"
-                        :disabled="!isoPreview || isoApplying">
-                    <span x-text="isoApplying ? 'Applying…' : 'Isolate network'"></span>
-                </button>
-                <span class="muted small" x-show="!isoPreview && isoNetworkId">
-                    Review first — this affects every device on that network.
-                </span>
-            </div>
-
-            <template x-if="isoPreview">
-                <div class="review">
-                    <h3 x-text="isoNote || 'These settings will change'"></h3>
-                    <ul x-show="!isoNote">
-                        <template x-for="(line, i) in isoChangeLines()" :key="i">
-                            <li x-text="line"></li>
-                        </template>
-                    </ul>
-                </div>
-            </template>
-
-            </div>
-
-            <!-- What is isolated right now. Sits directly under the control
-                 that creates it, because "what did I just do" is the next
-                 question after doing it. It used to be stranded at the very
-                 bottom of the tab, below an unrelated Wi-Fi section. -->
-            <div class="subsection" x-show="state.isolated_networks && state.isolated_networks.length">
-                <h3>Networks currently isolated</h3>
-                <p class="card-note">
-                    Read from UniFi's own per-network settings, so anything you
-                    isolated in the UniFi UI appears here too.
-                </p>
-                <!-- x-for directly: the wrapper's x-show already gates on the
-                     same condition, and the extra x-if it used to carry was a
-                     second root element waiting to swallow whatever followed. -->
-                <template x-for="n in state.isolated_networks" :key="n.label">
-                    <div class="arrest">
-                        <span class="arrest-id">
-                            <span class="arrest-name" x-text="n.label"></span>
-                            <span class="muted small" x-text="' · ' + n.preset"></span>
-                        </span>
-                        <span class="state ok">
-                            <span class="dot" style="background: var(--state-enforcing)"></span>
-                            <span>Enforcing</span>
-                        </span>
-                        <button class="btn btn-danger btn-sm"
-                                @click="releaseNetwork(n.network_id, n.label)">Release</button>
-                    </div>
-                </template>
-            </div>
-
             <!-- Wi-Fi client isolation. Kept next to network isolation because
                  they answer adjacent questions, but deliberately separate: this
                  one is the ONLY control here that reaches same-VLAN peer
                  traffic, and it is a property of the SSID rather than of any
                  one device. -->
-            <div class="subsection wifi-isolation">
+            <div class="subsection wifi-isolation is-first">
                 <h3>Wi-Fi client isolation</h3>
                 <p class="card-note">
                     Stops devices on an SSID reaching <em>each other</em>. This is
@@ -412,34 +321,61 @@
                 </p>
 
                 <p class="hint" x-show="wlansLoading">Reading SSIDs…</p>
-                <table class="wlan-table" x-show="!wlansLoading && wlans.length">
-                    <thead>
-                        <tr><th>Wi-Fi network</th><th>Clients</th><th>Isolation</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                        <template x-for="w in wlans" :key="w.id">
-                            <tr :class="{ 'is-off': !w.enabled }">
-                                <td>
-                                    <span x-text="w.name"></span>
-                                    <span class="hint" x-show="!w.enabled">disabled</span>
-                                </td>
-                                <td x-text="w.client_count"></td>
-                                <td>
-                                    <span class="state" :class="w.isolated ? 'ok' : ''">
-                                        <span class="dot"
-                                              :style="'background: var(--state-' + (w.isolated ? 'enforcing' : 'rotated') + ')'"></span>
-                                        <span x-text="w.isolated ? 'Isolated' : 'Can reach each other'"></span>
-                                    </span>
-                                </td>
-                                <td>
-                                    <button class="btn btn-secondary btn-sm"
-                                            @click="openWlanToggle(w)"
-                                            x-text="w.isolated ? 'Turn off' : 'Turn on'"></button>
-                                </td>
+                <!-- Same visual language as the network matrix above: state
+                     chips in cells, the editable one carries the pencil and
+                     opens the same style of confirm dialog. One table
+                     vocabulary for the whole tab. -->
+                <div class="matrix-wrap" x-show="!wlansLoading && wlans.length">
+                    <table class="matrix wlan-matrix">
+                        <thead>
+                            <tr>
+                                <th class="net-col">Wi-Fi network</th>
+                                <th>
+                                    <span class="col-label">Clients</span>
+                                    <span class="col-help">Wireless devices on this SSID right now.</span>
+                                </th>
+                                <th>
+                                    <span class="col-label">Client isolation</span>
+                                    <span class="col-help">Stops devices on this SSID reaching each other.</span>
+                                </th>
                             </tr>
-                        </template>
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            <template x-for="w in wlans" :key="w.id">
+                                <tr :class="{ 'is-off': !w.enabled }">
+                                    <th class="net-col" scope="row">
+                                        <span x-text="w.name"></span>
+                                        <span class="vlan-tag" x-show="!w.enabled">disabled</span>
+                                    </th>
+                                    <td class="cell is-neutral">
+                                        <span class="cell-label" x-text="w.client_count"></span>
+                                        <span class="tip" role="tooltip">
+                                            <strong x-text="w.name + ' · Clients'"></strong>
+                                            <span x-text="w.client_count + (w.client_count === 1 ? ' wireless device is' : ' wireless devices are') + ' on this SSID right now. Isolation applies to all of them.'"></span>
+                                        </span>
+                                    </td>
+                                    <td class="cell is-editable"
+                                        :class="w.isolated ? 'is-good' : 'is-warn'"
+                                        tabindex="0" role="button"
+                                        @click="openWlanToggle(w)"
+                                        @keydown.enter.prevent="openWlanToggle(w)"
+                                        @keydown.space.prevent="openWlanToggle(w)"
+                                        :aria-label="w.name + ' — Client isolation: ' + (w.isolated ? 'On' : 'Off') + '. Activate to change this setting.'">
+                                        <span class="cell-label" x-text="w.isolated ? 'On' : 'Off'"></span>
+                                        <span class="cell-edit" aria-hidden="true">✎</span>
+                                        <span class="tip" role="tooltip">
+                                            <strong x-text="w.name + ' · Client isolation'"></strong>
+                                            <span x-text="w.isolated
+                                                ? 'Devices on this SSID cannot reach each other. The only control here that touches same-VLAN peer traffic.'
+                                                : 'Devices on this SSID can reach — and discover and profile — each other.'"></span>
+                                            <span class="tip-cta">Click to change</span>
+                                        </span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
                 <p class="hint" x-show="!wlansLoading && !wlans.length">
                     No wireless networks reported by the controller.
                 </p>
