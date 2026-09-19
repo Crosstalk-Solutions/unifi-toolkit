@@ -142,6 +142,48 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
+### v1.13.0 (post-merge beta-prep pass — on `main`/`:edge`, still untagged)
+Done after PR #122 merged, gated for release on JB's fresh-install pass (JB has
+since run `:edge` clean). Detail in CHANGELOG.md and `docs/house-arrest-design.md`.
+- **Zone-key fix** — resolve firewall zones by stable `zone_key`, not display
+  name; scope DNS lockdowns to the chosen networks' actual `firewall_zone_id`
+  and device lockdowns to the MAC's attributed zone; refuse mixed-zone
+  selections; honest caveats for foreign-zone resolvers and other LAN zones.
+- **Editable mDNS scope** from the matrix (writes the site-wide Gateway mDNS
+  Proxy list via v2 `global/config/network`, poll-verified).
+- **Networks tab consolidated** onto the editable matrix — removed the isolate
+  dropdown flow + "currently isolated" list (two surfaces for one truth);
+  isolation diagrams moved into the toggle confirm dialog (resulting-state).
+- **Disabled-policy detection** — a rule toggled off in the UniFi UI now shows
+  "not enforcing", never green (`check_breakage` returns `DISABLED`;
+  `DnsLockdownEntry.disabled_count`).
+- **DNS interception warnings** — DNS tab warns when CyberSecure Encrypted DNS
+  / Content Filter / Ad Blocking is intercepting DNS at the gateway (competes
+  with any resolver scheme; invisible to `traffic-flows`).
+- **Untagged networks** (Default) now appear in DNS Lockdown — the `vlan is
+  None` exclusion was dead code from the removed Quarantine preset.
+- Always-visible DoH caveat on the DNS tab; Wi-Fi-isolation honesty note on the
+  Devices tab (keyed to live SSID isolation state).
+- DNS tab rebuilt as a two-column workbench; whitespace/symmetry pass; tooltip
+  clipping fix; re-read button `undefined`-disabled fix; footer Report-an-issue
+  + Docs links with real fallback hrefs.
+- **Rogue Support** header button + `/rogue-support` promo page → live
+  `rogue.support/toolkit` landing page, `TOOLKIT25` Stripe code (see
+  [[rogue-support-help-button]]).
+- Docs: new `docs/HOUSE-ARREST.md`, `docs/RELEASING.md`; pre-beta accuracy pass
+  on README + platform docs; brand-voice scrub (no em-dashes in user docs).
+
+### v1.11.3 (hotfix, tagged + released)
+- Fresh pulls of `:latest` 500'd on every page (#123): a Dependabot merge
+  rebuilt the 1.11.2 image under the OLD (push-to-main) publish workflow with
+  unpinned deps → fastapi 0.141 / starlette 1.6, which dropped the old
+  `TemplateResponse` signature. Fixed all 8 call sites to request-first,
+  pinned `fastapi>=0.115.6,<0.116` + `starlette>=0.40,<0.42`, removed the
+  conflicting `starlette>=0.47.2` line, and carried the tag-driven workflow.
+  NOTE: the v1.11.3 tag tree accidentally contains the two internal audit docs
+  (`git add -A` sweep; left in place with approval, now gitignored on `main` —
+  see [[bulk-add-swept-audit-docs]]).
+
 ### v1.11.2
 - Fix Network Pulse chart panels not resizing responsively (#96) — `min-width: 0` on `.chart-card` and `overflow: hidden` on `.chart-container` fix CSS Grid min-width:auto gotcha that prevented canvas-based chart cards from shrinking on narrow viewports
 - Remove legacy standalone controller references from README and INSTALLATION.md (#97) — added UniFi OS requirement callout, removed port 8443 examples, lifted Python 3.13 restriction, reordered auth to lead with API key
@@ -363,3 +405,26 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
 - Blocked traffic is queryable via v2 `traffic-flows` with `action: ["blocked"]`
   (lowercase enum; `BLOCK`/`BLOCKED` are rejected) and `source_mac`. Each flow's
   `policies[]` names the exact policy that blocked it, so blocks can be attributed by id.
+- **Zones carry a stable `zone_key`** (`internal`/`external`/`gateway`/`vpn`/
+  `hotspot`/`dmz`) that survives the user renaming the zone; each LAN network
+  document carries `firewall_zone_id`. Resolve zones by `zone_key`, not display
+  name (measured 2026-09-17). A VLAN is not a firewall zone — several VLANs share
+  the Internal zone.
+- **The gateway itself intercepts DNS in three ways, none visible to
+  `traffic-flows`** (measured 2026-09-18): CyberSecure Encrypted DNS
+  (`rest/setting/doh`, `state != "off"` → gateway resolves via its own DoH
+  upstreams and a LAN Pi-hole silently stops being used); Content Filter (v2
+  `content-filtering`, per-network docs with `enabled`/`network_ids`); Ad
+  Blocking (`rest/setting/ips` → `ad_blocking_enabled`). A DNS lockdown can be
+  fully green while resolution is hijacked upstream of every firewall rule.
+- **A filtering resolver (Pi-hole/AdGuard) is invisible to the firewall too.**
+  If it NXDOMAINs a domain a device needs, the gateway logs nothing — suspected
+  cause of a Valheim crossplay failure under DNS lockdown (unconfirmed; disproof
+  = check the resolver's own query log, not `traffic-flows`).
+- **`is_client_blocked()` returns `Optional[bool]`** — `None` on a failed
+  `rest/user` read. A failed read is NOT "unblocked"; callers must skip their
+  compare-and-fire on `None` (a plain `False` fired spurious webhooks).
+- **Alpine `:disabled` leaves the attribute in place when the expression is
+  `undefined`** (only an explicit `false` removes it). A state object replaced by
+  an API response lacking the bound key stays disabled forever — set the key
+  explicitly. (This dead-disabled the House Arrest re-read button.)
