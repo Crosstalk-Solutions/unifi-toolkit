@@ -2359,6 +2359,33 @@ class UniFiClient:
             logger.error(f"Error writing mDNS scope: {e}")
             return False
 
+    async def get_content_filters(self) -> List[Dict]:
+        """
+        CyberSecure Content Filter entries (v2 `content-filtering`).
+
+        MEASURED 2026-09-18 on a live console: one document per filter with
+        `enabled`, `categories`, `network_ids`, `client_macs`, `safe_search`.
+        Content filtering redirects the covered networks' DNS through UniFi's
+        filtering resolvers, which competes with any resolver scheme of your
+        own — House Arrest warns rather than pretends otherwise.
+
+        Returns [] on failure; callers must treat that as "unknown", not
+        "no filters".
+        """
+        if not self._session:
+            raise RuntimeError("Not connected to UniFi controller. Call connect() first.")
+        url = f"{self.host}/proxy/network/v2/api/site/{self.site}/content-filtering"
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    logger.debug(f"content-filtering read: {resp.status}")
+                    return []
+                data = await resp.json()
+                return data if isinstance(data, list) else data.get("data", []) or []
+        except Exception as e:
+            logger.error(f"Error reading content filters: {e}")
+            return []
+
     async def get_site_setting(self, key: str) -> Optional[Dict]:
         """
         One entry from the site settings collection, e.g. 'mdns' or 'usg'.

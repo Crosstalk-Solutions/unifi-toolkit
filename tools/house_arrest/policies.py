@@ -723,6 +723,73 @@ def dhcp_dns_conflicts(networks: List[Dict], resolver_ips: List[str]) -> List[st
     return out
 
 
+def content_filtered_ids(content_filters: List[Dict]) -> List[str]:
+    """Network ids covered by an ENABLED CyberSecure Content Filter entry."""
+    out = []
+    for f in content_filters or []:
+        if not f.get("enabled"):
+            continue
+        for nid in f.get("network_ids") or []:
+            if nid not in out:
+                out.append(nid)
+    return out
+
+
+def dns_interception_caveats(
+    doh_setting: Optional[Dict],
+    ips_setting: Optional[Dict],
+    content_filters: List[Dict],
+    network_ids: List[str],
+    names_by_id: Dict[str, str],
+) -> List[str]:
+    """
+    Ways the GATEWAY ITSELF intercepts DNS, which compete with a DNS lockdown.
+
+    MEASURED 2026-09-18 (studio console, then field-verified on the home one):
+    with CyberSecure's Encrypted DNS enabled (`setting/doh`, `state` != "off"),
+    the gateway takes over resolution with its own DoH upstreams and a LAN
+    resolver like a Pi-hole silently stops being used — every firewall rule
+    can be correct and the lockdown still means nothing. Content Filter
+    (v2 `content-filtering`, per network) and ad blocking
+    (`setting/ips` -> `ad_blocking_enabled`) also intercept DNS at the
+    gateway, less drastically.
+
+    A missing/unreadable setting produces NO caveat: absence of the read is
+    not evidence the feature is off (the null-result rule), and warning on
+    every read failure would train people to ignore the warnings.
+    """
+    out = []
+    state = (doh_setting or {}).get("state")
+    if state and state != "off":
+        out.append(
+            "UniFi's Encrypted DNS is ON (Settings -> CyberSecure -> Threat "
+            "Management -> Encrypted DNS). The gateway intercepts DNS and "
+            "resolves through its own encrypted upstreams, so devices may "
+            "never reach the resolvers you approve here no matter what these "
+            "rules say. Turn it off if you want your own resolvers to "
+            "actually be used."
+        )
+
+    filtered = set(content_filtered_ids(content_filters))
+    hit = [names_by_id.get(n, n) for n in (network_ids or []) if n in filtered]
+    if hit:
+        out.append(
+            "CyberSecure Content Filter is on for "
+            + ", ".join(hit)
+            + " (Settings -> CyberSecure -> Content Filter). UniFi redirects "
+            "a filtered network's DNS through its own filtering resolvers, "
+            "which competes with the resolvers you approve here."
+        )
+
+    if (ips_setting or {}).get("ad_blocking_enabled"):
+        out.append(
+            "UniFi's Ad Blocking is on, which also intercepts DNS at the "
+            "gateway. It usually coexists with a custom resolver, but if "
+            "results look wrong, it is part of the resolution path."
+        )
+    return out
+
+
 def zone_pair_of(policy: Dict) -> Tuple[Optional[str], Optional[str]]:
     """The (source zone, destination zone) pair a policy is ordered within."""
     return (

@@ -186,6 +186,11 @@ class StateResponse(BaseModel):
     custom_policy_count: int = 0
     total_policy_count: int = 0
     precedence_warnings: List[PrecedenceWarning] = Field(default_factory=list)
+    # Gateway-level DNS interception (CyberSecure). None = could not read,
+    # which the UI must treat as unknown, never as off.
+    encrypted_dns_on: Optional[bool] = None
+    ad_blocking_on: Optional[bool] = None
+    content_filtered_network_ids: List[str] = Field(default_factory=list)
 
 
 class InspectionFinding(BaseModel):

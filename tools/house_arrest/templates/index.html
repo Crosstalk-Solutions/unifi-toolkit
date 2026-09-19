@@ -402,6 +402,20 @@
             devices with hardcoded DNS server settings.
         </p>
 
+        <!-- The gateway itself can be in the resolution path (CyberSecure).
+             Measured: with Encrypted DNS on, a LAN resolver silently stops
+             being used while every firewall rule stays green. Say it before
+             anyone builds a lockdown on top of it. -->
+        <template x-if="state.encrypted_dns_on">
+            <div class="notice warn">
+                <strong>UniFi's Encrypted DNS is on, and it will fight this tool.</strong>
+                The gateway intercepts DNS and resolves through its own encrypted
+                upstreams (Settings &rarr; CyberSecure &rarr; Threat Management &rarr;
+                Encrypted DNS), so devices may never reach the resolvers you approve
+                here. Turn it off if you want your own resolvers to actually be used.
+            </div>
+        </template>
+
         <template x-if="state.dns_lockdowns && state.dns_lockdowns.length">
             <div style="margin-bottom:1.5rem">
                 <template x-for="l in state.dns_lockdowns" :key="l.label">
@@ -449,7 +463,11 @@
                             <input type="checkbox" :value="n.id" x-model="dnsNetworks"
                                    :disabled="dnsLockedIds().includes(n.id)"
                                    @change="dnsPreview = null; dhcpPreview = null">
-                            <span x-text="n.name + ' (VLAN ' + n.vlan + ')'"></span>
+                            <span x-text="n.name + (n.vlan !== null ? ' (VLAN ' + n.vlan + ')' : ' (untagged)')"></span>
+                            <span class="vlan-chip" x-show="(state.content_filtered_network_ids || []).includes(n.id)"
+                                  title="CyberSecure Content Filter is on for this network. UniFi redirects its DNS through the filtering resolvers, which competes with the resolvers you approve here.">
+                                Content Filter
+                            </span>
                             <span class="hint" x-show="dnsLockedIds().includes(n.id)">
                                 already locked down — release it first
                             </span>
@@ -605,7 +623,7 @@
                     <template x-for="n in networks" :key="'dns-' + n.id">
                         <tr :class="{ 'is-chosen': dnsNetworks.includes(n.id) }">
                             <td x-text="n.name"></td>
-                            <td class="mono" x-text="n.vlan"></td>
+                            <td class="mono" x-text="n.vlan !== null ? n.vlan : '—'"></td>
                             <td>
                                 <template x-if="!n.dhcp_dns.length">
                                     <span class="muted">Gateway</span>

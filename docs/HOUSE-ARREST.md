@@ -168,6 +168,13 @@ next to the feature it qualifies. Collected here:
   device.
 - **A lockdown shows "disabled in UniFi".** One or more of its rules was
   toggled off in the UniFi UI. Re-enable it there, or release and re-apply.
+- **Devices ignore your approved resolvers entirely, and nothing here
+  shows red.** Check Settings, CyberSecure in UniFi. With Encrypted DNS
+  enabled, the gateway intercepts DNS and resolves through its own encrypted
+  upstreams, so your Pi-hole or AdGuard never sees the queries no matter
+  what the firewall rules say. Content Filter and Ad Blocking also put the
+  gateway in the resolution path for covered networks. The DNS Lockdown tab
+  warns about all three when it can read those settings.
 - **A network lost DNS entirely after a lockdown.** Its DHCP was advertising
   a resolver the rules now block, and devices were still using it. Tick
   "Also point DHCP at these resolvers" and wait for lease renewal, or

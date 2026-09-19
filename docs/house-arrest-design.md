@@ -1204,3 +1204,38 @@ rest]; anything else → empty.
 home console: removed the OpenClaw lab VLAN from a 4-network scope, stored
 list confirmed without it, restored the original list, confirmed identical,
 and the per-network `mdns_enabled` projection tracked both writes.
+
+## MEASURED 2026-09-18: gateway-level DNS interception (CyberSecure)
+
+**The field report.** At the studio, a Pi-hole + AdGuard setup silently
+stopped being used after switching resolvers; disabling CyberSecure fixed it
+(Encrypted DNS the prime suspect, Content Filter the other). Meanwhile
+House Arrest's DNS Lockdown would have reported green throughout: every
+firewall rule correct, resolution hijacked upstream of them.
+
+**[Measured] API locations (home UCG-Fiber):**
+
+- `rest/setting/doh` = CyberSecure Encrypted DNS. `{"state": "off",
+  "server_names": [], "custom_servers": []}` when off; any other state means
+  the gateway resolves through its own DoH upstreams.
+- v2 `content-filtering` = per-filter docs with `enabled`, `categories`,
+  `network_ids`, `client_macs`, `safe_search`. Redirects covered networks'
+  DNS through UniFi's filtering resolvers.
+- `rest/setting/ips` -> `ad_blocking_enabled` — ad blocking also intercepts
+  DNS at the gateway.
+
+**Built the same day:** `get_content_filters()` on the client;
+`dns_interception_caveats()` + `content_filtered_ids()` (pure, tested);
+StateResponse carries `encrypted_dns_on` / `ad_blocking_on` /
+`content_filtered_network_ids` (None/empty = read failed = UNKNOWN, never
+"off" — the null-result rule); the DNS tab shows a warning banner when
+Encrypted DNS is on, a Content Filter chip on covered networks in the
+picker, and all three appear as caveats on review.
+
+## FIXED 2026-09-18: Default (untagged) network missing from the pickers
+
+`list_networks()` excluded any network with `vlan: None` — a leftover from
+the removed Quarantine preset, whose picker chose VLAN move targets. That
+silently kept the untagged Default network out of DNS Lockdown everywhere
+(spotted on NOMAD2, where Default is the primary network; reproduced at
+home). WANs stay excluded; untagged networks now appear as "(untagged)".

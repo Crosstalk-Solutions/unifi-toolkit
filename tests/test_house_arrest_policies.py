@@ -883,3 +883,46 @@ class TestDisabledPolicyDetection:
         rows = P.check_breakage([self._pol(False, mac="aa:bb:cc:dd:ee:99")],
                                 self.KNOWN)
         assert rows[0]["status"] == P.DISABLED
+
+
+class TestDnsInterception:
+    """
+    Gateway-level DNS interception (CyberSecure) competes with a DNS lockdown.
+    Measured 2026-09-18: Encrypted DNS on = a LAN resolver silently unused
+    while every firewall rule stays green.
+    """
+
+    FILTERS = [
+        {"enabled": True, "network_ids": ["n1", "n2"], "name": "Guests"},
+        {"enabled": False, "network_ids": ["n3"], "name": "Off"},
+    ]
+    NAMES = {"n1": "Guests", "n2": "OpenClaw", "n3": "IDIoT"}
+
+    def test_content_filtered_ids_only_enabled(self):
+        assert P.content_filtered_ids(self.FILTERS) == ["n1", "n2"]
+
+    def test_encrypted_dns_on_warns(self):
+        out = P.dns_interception_caveats({"state": "auto"}, None, [], [], {})
+        assert len(out) == 1 and "Encrypted DNS" in out[0]
+
+    def test_encrypted_dns_off_is_silent(self):
+        assert P.dns_interception_caveats({"state": "off"}, None, [], [], {}) == []
+
+    def test_unreadable_settings_produce_no_caveats(self):
+        # Null-result rule: a failed read is unknown, not evidence of "on".
+        assert P.dns_interception_caveats(None, None, [], ["n1"], self.NAMES) == []
+
+    def test_content_filter_names_only_chosen_networks(self):
+        out = P.dns_interception_caveats(None, None, self.FILTERS, ["n2", "n3"], self.NAMES)
+        assert len(out) == 1
+        assert "OpenClaw" in out[0] and "IDIoT" not in out[0]
+
+    def test_ad_blocking_warns(self):
+        out = P.dns_interception_caveats(None, {"ad_blocking_enabled": True}, [], [], {})
+        assert len(out) == 1 and "Ad Blocking" in out[0]
+
+    def test_all_three_stack(self):
+        out = P.dns_interception_caveats(
+            {"state": "manual"}, {"ad_blocking_enabled": True},
+            self.FILTERS, ["n1"], self.NAMES)
+        assert len(out) == 3

@@ -307,8 +307,33 @@ async def get_state():
         if dest.get("port") == P.DOT_PORT:
             entry.blocks_dot = True
 
+    # Gateway-level DNS interception signals for the DNS tab. Each read is
+    # independent and failure means unknown (None / empty), never "off".
+    encrypted_dns_on = None
+    ad_blocking_on = None
+    content_filtered = []
+    try:
+        doh = await client.get_site_setting("doh")
+        if doh is not None and doh.get("state") is not None:
+            encrypted_dns_on = doh.get("state") != "off"
+    except Exception:
+        pass
+    try:
+        ips_setting = await client.get_site_setting("ips")
+        if ips_setting is not None:
+            ad_blocking_on = bool(ips_setting.get("ad_blocking_enabled"))
+    except Exception:
+        pass
+    try:
+        content_filtered = P.content_filtered_ids(await client.get_content_filters())
+    except Exception:
+        pass
+
     return StateResponse(
         connected=True,
+        encrypted_dns_on=encrypted_dns_on,
+        ad_blocking_on=ad_blocking_on,
+        content_filtered_network_ids=content_filtered,
         dns_lockdowns=list(dns_by_label.values()),
         isolated_networks=isolated,
         legacy_network_policies=legacy,
@@ -859,6 +884,17 @@ async def dns_lockdown(req: DnsLockdownRequest):
             "these rules do not block that zone pair at all, which also means "
             "every OTHER DNS server in that zone stays reachable too."
         )
+    try:
+        caveats += P.dns_interception_caveats(
+            await client.get_site_setting("doh"),
+            await client.get_site_setting("ips"),
+            await client.get_content_filters(),
+            req.network_ids,
+            {n.get("_id"): (n.get("name") or "network") for n in networks},
+        )
+    except Exception as e:
+        logger.warning(f"Could not read DNS interception settings: {e}")
+
     others = P.other_lan_zones(zones, client_zone_id)
     if others:
         names = ", ".join(f"\"{z.get('name') or 'unnamed'}\"" for z in others)
@@ -940,8 +976,11 @@ async def list_networks():
     """
     Networks, for the Networks-tab selectors and the DNS lockdown picker.
 
-    WANs are excluded, and so is any network without a VLAN id — House Arrest
-    moves a device into an existing VLAN and never creates one.
+    WANs are excluded. Untagged networks (vlan is None — usually Default) are
+    INCLUDED: the old exclusion was a leftover from the removed Quarantine
+    preset, whose picker chose VLAN move targets. It silently kept the
+    Default network out of DNS Lockdown (found on the NOMAD2 console, where
+    Default is the primary network).
     """
     client, err = await _client_or_error()
     if err:
@@ -954,7 +993,7 @@ async def list_networks():
 
     out = []
     for n in networks:
-        if n.get("purpose") == "wan" or n.get("vlan") is None:
+        if n.get("purpose") == "wan":
             continue
         out.append(NetworkInfo(
             id=n.get("_id"),
