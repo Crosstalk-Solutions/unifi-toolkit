@@ -279,6 +279,7 @@ if __name__ == "__main__":
     from tools.wifi_stalker import __version__ as stalker_version
     from tools.threat_watch import __version__ as threat_watch_version
     from tools.network_pulse import __version__ as pulse_version
+    from tools.house_arrest import __version__ as arrest_version
 
     # Run migrations FIRST, before any uvicorn/async stuff
     run_migrations()
@@ -308,6 +309,7 @@ if __name__ == "__main__":
     print(f"  - Wi-Fi Stalker v{stalker_version}")
     print(f"  - Threat Watch v{threat_watch_version}")
     print(f"  - Network Pulse v{pulse_version}")
+    print(f"  - House Arrest v{arrest_version}")
     print()
 
     if deployment_type == "PRODUCTION":
@@ -317,6 +319,7 @@ if __name__ == "__main__":
         print(f"Wi-Fi Stalker at: http://localhost:{settings.app_port}/stalker/")
         print(f"Threat Watch at: http://localhost:{settings.app_port}/threats/")
         print(f"Network Pulse at: http://localhost:{settings.app_port}/pulse/")
+        print(f"House Arrest at: http://localhost:{settings.app_port}/arrest/")
     print()
     print("Press Ctrl+C to stop the server")
     print("=" * 70)
