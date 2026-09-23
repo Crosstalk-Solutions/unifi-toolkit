@@ -38,6 +38,12 @@ class ToolkitSettings(BaseSettings):
     unifi_site_id: str = "default"
     unifi_verify_ssl: bool = False
 
+    # Webhooks: allow private/LAN webhook targets (Home Assistant, n8n, ntfy,
+    # etc. on your own network). Off by default so a toolkit exposed beyond
+    # the LAN can't be used to probe it; cloud-metadata and link-local
+    # addresses stay blocked even when this is on.
+    webhook_allow_private_ips: bool = False
+
     # Tool-specific settings
     stalker_refresh_interval: int = 60
 

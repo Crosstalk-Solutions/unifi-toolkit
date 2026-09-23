@@ -204,6 +204,7 @@ database, not read from environment variables.
 |----------|-------------|
 | `STALKER_REFRESH_INTERVAL` | Device refresh interval in seconds (default: `60`) |
 | `ALLOWED_HOSTS` | Extra hostnames allowed to reach the toolkit (comma separated). The toolkit rejects requests whose Host header is not an IP, `localhost`, a `.local`-style name, or your `DOMAIN`, which protects against DNS-rebinding. If you access it through a Tailscale name or reverse-proxy alias, add that name here. |
+| `WEBHOOK_ALLOW_PRIVATE_IPS` | Set to `true` to allow webhook targets on private/LAN addresses, such as Home Assistant, n8n, ntfy, or Gotify running on your own network (default: `false`). By default webhooks may only target public addresses, so a toolkit exposed beyond your LAN cannot be used to probe it. Cloud-metadata and link-local addresses stay blocked even when enabled. |
 
 Every secret-carrying variable also accepts a `_FILE` variant (e.g. `ENCRYPTION_KEY_FILE=/run/secrets/key`) for Docker Swarm / Kubernetes secrets mounted as files.
 

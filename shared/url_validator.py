@@ -13,53 +13,82 @@ from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
-# Private/internal IP ranges that should be blocked
-BLOCKED_IP_RANGES = [
-    ipaddress.ip_network('10.0.0.0/8'),        # Private Class A
-    ipaddress.ip_network('172.16.0.0/12'),     # Private Class B
-    ipaddress.ip_network('192.168.0.0/16'),    # Private Class C
-    ipaddress.ip_network('127.0.0.0/8'),       # Loopback
+# Ranges that are blocked no matter what: nothing a webhook should ever
+# target lives here, and 169.254.0.0/16 carries the cloud metadata endpoint.
+ALWAYS_BLOCKED_IP_RANGES = [
     ipaddress.ip_network('169.254.0.0/16'),    # Link-local (includes cloud metadata)
     ipaddress.ip_network('0.0.0.0/8'),         # "This" network
     ipaddress.ip_network('224.0.0.0/4'),       # Multicast
     ipaddress.ip_network('240.0.0.0/4'),       # Reserved
-    ipaddress.ip_network('100.64.0.0/10'),     # Carrier-grade NAT
     ipaddress.ip_network('192.0.0.0/24'),      # IETF Protocol Assignments
     ipaddress.ip_network('192.0.2.0/24'),      # TEST-NET-1
     ipaddress.ip_network('198.51.100.0/24'),   # TEST-NET-2
     ipaddress.ip_network('203.0.113.0/24'),    # TEST-NET-3
-    ipaddress.ip_network('fc00::/7'),          # IPv6 Unique Local
     ipaddress.ip_network('fe80::/10'),         # IPv6 Link-Local
+]
+
+# Ranges blocked by default but permitted when WEBHOOK_ALLOW_PRIVATE_IPS is
+# set — this is where self-hosted webhook targets (Home Assistant, n8n,
+# ntfy, Gotify) actually live. 100.64.0.0/10 is nominally carrier-grade NAT
+# but is also the Tailscale address space.
+PRIVATE_IP_RANGES = [
+    ipaddress.ip_network('10.0.0.0/8'),        # Private Class A
+    ipaddress.ip_network('172.16.0.0/12'),     # Private Class B
+    ipaddress.ip_network('192.168.0.0/16'),    # Private Class C
+    ipaddress.ip_network('127.0.0.0/8'),       # Loopback
+    ipaddress.ip_network('100.64.0.0/10'),     # Carrier-grade NAT / Tailscale
+    ipaddress.ip_network('fc00::/7'),          # IPv6 Unique Local
     ipaddress.ip_network('::1/128'),           # IPv6 Loopback
 ]
 
-# Blocked hostnames (case-insensitive)
-BLOCKED_HOSTNAMES = [
-    'localhost',
-    'localhost.localdomain',
+# Hostnames blocked no matter what (case-insensitive)
+ALWAYS_BLOCKED_HOSTNAMES = [
     'metadata.google.internal',      # GCP metadata
     'metadata.goog',                 # GCP metadata alternative
+]
+
+# Hostnames blocked unless WEBHOOK_ALLOW_PRIVATE_IPS is set
+PRIVATE_HOSTNAMES = [
+    'localhost',
+    'localhost.localdomain',
 ]
 
 # Cloud metadata IP (special case - always block)
 CLOUD_METADATA_IP = '169.254.169.254'
 
 
-def is_ip_blocked(ip_str: str) -> bool:
+def _private_targets_allowed() -> bool:
+    """Whether WEBHOOK_ALLOW_PRIVATE_IPS is enabled in settings."""
+    try:
+        from shared.config import get_settings
+        return get_settings().webhook_allow_private_ips
+    except Exception:
+        # Settings unavailable (e.g. bare unit test) — keep the safe default
+        return False
+
+
+def is_ip_blocked(ip_str: str, allow_private: bool = False) -> bool:
     """
     Check if an IP address is in a blocked range.
 
     Args:
         ip_str: IP address as string
+        allow_private: permit RFC1918/loopback/ULA targets (the
+            WEBHOOK_ALLOW_PRIVATE_IPS setting); always-blocked ranges
+            (link-local, metadata, multicast, reserved) stay blocked
 
     Returns:
         True if the IP is blocked, False otherwise
     """
     try:
         ip = ipaddress.ip_address(ip_str)
-        for blocked_range in BLOCKED_IP_RANGES:
+        for blocked_range in ALWAYS_BLOCKED_IP_RANGES:
             if ip in blocked_range:
                 return True
+        if not allow_private:
+            for blocked_range in PRIVATE_IP_RANGES:
+                if ip in blocked_range:
+                    return True
         return False
     except ValueError:
         # Invalid IP address format
@@ -121,19 +150,31 @@ def validate_webhook_url(url: str) -> Tuple[bool, str]:
         return False, "URL must include a hostname"
 
     hostname_lower = hostname.lower()
+    allow_private = _private_targets_allowed()
 
     # Check against blocked hostnames
-    if hostname_lower in BLOCKED_HOSTNAMES:
+    if hostname_lower in ALWAYS_BLOCKED_HOSTNAMES:
         logger.warning(f"Blocked webhook URL with hostname: {hostname}")
         return False, "This hostname is not allowed for webhooks"
+    if hostname_lower in PRIVATE_HOSTNAMES and not allow_private:
+        logger.warning(f"Blocked webhook URL with hostname: {hostname}")
+        return False, (
+            "This hostname is not allowed for webhooks. "
+            "Set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow webhook targets on your own network."
+        )
 
     # Check if hostname is an IP address
     try:
         ip = ipaddress.ip_address(hostname)
-        if is_ip_blocked(str(ip)):
+        if is_ip_blocked(str(ip), allow_private):
             logger.warning(f"Blocked webhook URL with private/reserved IP: {hostname}")
+            if not allow_private and not is_ip_blocked(str(ip), allow_private=True):
+                return False, (
+                    "Private, reserved, or internal IP addresses are not allowed. "
+                    "Set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow webhook targets on your own network."
+                )
             return False, "Private, reserved, or internal IP addresses are not allowed"
-        # Valid public IP
+        # Valid IP
         return True, ""
     except ValueError:
         # Not an IP address, it's a hostname - resolve it
@@ -152,9 +193,14 @@ def validate_webhook_url(url: str) -> Tuple[bool, str]:
 
     # Check all resolved IPs
     for ip in resolved_ips:
-        if is_ip_blocked(ip):
+        if is_ip_blocked(ip, allow_private):
             logger.warning(f"Blocked webhook URL: {url} resolves to blocked IP: {ip}")
-            return False, f"URL resolves to a private or reserved IP address"
+            if not allow_private and not is_ip_blocked(ip, allow_private=True):
+                return False, (
+                    "URL resolves to a private or reserved IP address. "
+                    "Set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow webhook targets on your own network."
+                )
+            return False, "URL resolves to a private or reserved IP address"
 
     return True, ""
 
