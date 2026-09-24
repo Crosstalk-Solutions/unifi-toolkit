@@ -142,9 +142,19 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
-### v1.13.0 (post-merge beta-prep pass — on `main`/`:edge`, still untagged)
-Done after PR #122 merged, gated for release on JB's fresh-install pass (JB has
-since run `:edge` clean). Detail in CHANGELOG.md and `docs/house-arrest-design.md`.
+### v1.13.0 (PUBLIC BETA since 2026-09-22 — on `main`/`:edge`, still untagged)
+Beta announced on Discord 2026-09-22. Tag + GitHub Release come after the bake
+(docs/RELEASING.md). Hold Dependabot PRs #125–129 until then — a mid-beta
+dependency rebuild is how the v1.11.3 outage happened.
+- **`WEBHOOK_ALLOW_PRIVATE_IPS` env var (#124)** — opt-in for LAN webhook
+  targets (Home Assistant, n8n, ntfy). The SSRF validator in
+  `shared/url_validator.py` now splits ALWAYS_BLOCKED ranges (link-local,
+  metadata, multicast) from PRIVATE ranges the flag can allow (RFC1918,
+  loopback, CGNAT/Tailscale). Tests in `tests/test_url_validator.py`.
+- House Arrest bumped to 0.13.0 and added to the run.py startup banner.
+
+Earlier post-merge pass (after PR #122, cleared by JB's `:edge` run). Detail in
+CHANGELOG.md and `docs/house-arrest-design.md`.
 - **Zone-key fix** — resolve firewall zones by stable `zone_key`, not display
   name; scope DNS lockdowns to the chosen networks' actual `firewall_zone_id`
   and device lockdowns to the MAC's attributed zone; refuse mixed-zone
@@ -298,6 +308,12 @@ since run `:edge` clean). Detail in CHANGELOG.md and `docs/house-arrest-design.m
 - **`run.py` does not enable auto-reload.** Jinja templates and static files are
   picked up on refresh, but any Python change needs the process restarted before
   it takes effect.
+- **Packages can vanish from the system Python between sessions** (bcrypt went
+  missing 2026-09-22, cause unknown — no venv, other tools share the install).
+  If `run.py` dies with `ModuleNotFoundError`, re-run
+  `pip install -r requirements.txt` before digging deeper.
+- **House Arrest mounts at `/arrest/`**, not `/house-arrest` (see the
+  `app.mount` calls in `app/main.py` for all tool paths).
 
 - **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
   "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.
