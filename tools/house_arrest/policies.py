@@ -67,12 +67,11 @@ PRESET_LABELS = {
 # describing the old behaviour.
 #
 # Same-VLAN traffic never reaches the GATEWAY, so no zone-based firewall policy
-# can touch it — and House Arrest only writes firewall policies, so `peers` is
-# never "block" here. Note the precise scope: UniFi *can* block same-VLAN peers
-# via switch-level Device Isolation (ACL) or per-SSID Client Isolation. Those
-# are per-network/per-SSID toggles affecting every device on that network, not
-# per-client, so they are out of scope for a per-device tool — but the UI must
-# not claim the traffic is unblockable in general.
+# can touch it — `peers` is "allow" for every preset on its own. UPDATED
+# 2026-09-29: the optional neighbour block (NEIGHBOUR_BLOCK_PRESETS below) adds
+# a per-device switch-ACL pair that does reach it, but only as far as the
+# switches in the path can enforce, so the UI reports coverage per device
+# rather than flipping this row to a flat "blocked".
 #
 # Quarantine (legacy, release-side only — see the note on the constant) is
 # "moved": relocating the device changes WHICH peers it has, it does not cut
@@ -125,6 +124,22 @@ LOCKDOWN_CAVEATS = [
 ]
 
 
+# Presets that may add the optional neighbour block. LAN only is excluded on
+# purpose: its whole point is keeping local access, and cutting neighbours
+# would contradict the preset's name.
+NEIGHBOUR_BLOCK_PRESETS = (FULL_LOCKDOWN, INTERNET_ONLY)
+
+NEIGHBOUR_CAVEATS = [
+    "The neighbour block works in both directions, so devices on its own "
+    "network can't reach this device either. The \"Let devices on your other "
+    "networks still reach this device\" option only applies to your other "
+    "networks.",
+    "The neighbour block only works on UniFi switch models that support it. "
+    "House Arrest works out where each device is connected and shows how well "
+    "the block will work for each one.",
+]
+
+
 def caveats_for(preset: str) -> List[str]:
     """
     Caveats worth showing for a preset. Only presets that claim to cut
@@ -150,7 +165,7 @@ def requires_network(preset: str) -> bool:
 PATH_LABELS = {
     "internet": "The internet",
     "networks": "Your other networks",
-    "peers": "Devices on its own VLAN",
+    "peers": "Devices on its own network",
     "inbound": "Other devices reaching in to it",
 }
 
@@ -167,6 +182,7 @@ def preset_catalog() -> List[Dict]:
             "policy_count": policy_count(value),
             "requires_network": requires_network(value),
             "caveats": caveats_for(value),
+            "neighbour_block": value in NEIGHBOUR_BLOCK_PRESETS,
         }
         for value in PRESETS
     ]
@@ -282,8 +298,9 @@ def caveats_for_network(preset: str) -> List[str]:
         base = list(LOCKDOWN_CAVEATS)
     base.append(
         "Devices on this network can still talk to each other. That traffic "
-        "never passes the gateway, so no firewall policy reaches it — use the "
-        "network's own Device Isolation setting in UniFi if you need that too."
+        "never passes the gateway, so no firewall policy reaches it. To block "
+        "that too, turn on Device isolation for this network in the table. "
+        "Hover its cell to see how many devices it will cover."
     )
     return base
 
@@ -1224,64 +1241,14 @@ def policy_count(preset: str) -> int:
     raise ValueError(f"Unknown preset: {preset!r}")
 
 
-def build_exception(
-    macs: List[str],
-    device_label: str,
-    client_zone_id: str,
-    dest_ips: List[str],
-    dest_zone_id: str,
-    index: int,
-    port: Optional[str] = None,
-    note: str = "",
-) -> Dict:
-    """
-    Build an ALLOW policy carving a hole in a lockdown.
-
-    `create_allow_respond` is set so the reply path works without opening the
-    reverse direction as its own initiation.
-    """
-    label = device_label or "device"
-    where = note or (dest_ips[0] if dest_ips else "exception")
-    return _base_policy(
-        name=f"{NAME_PREFIX}{label} — allow {where}",
-        action="ALLOW",
-        index=index,
-        source=client_source(macs, client_zone_id),
-        destination=ip_destination(dest_ips, dest_zone_id, port=port),
-        description=describe(f"Exception for {label}: {where}"),
-        allow_respond=True,
-    )
-
-
-def build_inbound_exception(
-    device_ips: List[str],
-    device_label: str,
-    device_zone_id: str,
-    source_zone_id: str,
-    index: int,
-    port: Optional[str] = None,
-    note: str = "",
-) -> Dict:
-    """
-    Build an ALLOW policy letting the LAN reach a locked-down device.
-
-    The device is the DESTINATION here, which the API can only express as an
-    IP — so the caller must ensure the device holds a DHCP reservation. A
-    reservation is keyed on MAC, so this is only reliable for devices with a
-    burned-in vendor MAC (cameras, printers, NAS). Do not offer this for a
-    device whose MAC is locally administered without warning first.
-    """
-    label = device_label or "device"
-    where = note or "LAN access"
-    return _base_policy(
-        name=f"{NAME_PREFIX}{label} — allow {where} inbound",
-        action="ALLOW",
-        index=index,
-        source=zone_destination(source_zone_id),
-        destination=ip_destination(device_ips, device_zone_id, port=port),
-        description=describe(f"Inbound exception for {label}: {where}"),
-        allow_respond=True,
-    )
+# REMOVED 2026-09-29: build_exception / build_inbound_exception. They built
+# per-device ALLOW policies, and a custom ALLOW is evaluated BEFORE UniFi's own
+# "Isolated Networks" block (custom 10000s vs predefined 30000s) — so a
+# per-device exception silently re-opens a network the Networks tab isolated.
+# Decision (Chris): the Devices tab only ever ADDS restrictions. A user who
+# needs a specific hole writes that firewall rule themselves in UniFi, where
+# the Networks tab's exceptions view will then show it. Neither builder was
+# wired to any endpoint.
 
 
 def find_ours(policies: List[Dict]) -> List[Dict]:
@@ -1560,13 +1527,17 @@ MATRIX_COLUMNS = [
      "help": "Networks in the same zone reach each other by default."},
     {"key": "isolation", "label": "Network isolation",
      "help": "Blocks this network from reaching your other networks."},
+    {"key": "device_isolation", "label": "Device isolation",
+     "help": "Stops devices on this network from reaching each other. It only "
+             "fully works for wired devices plugged into a UniFi switch model "
+             "that supports it."},
     {"key": "internet", "label": "Internet access",
      "help": "Whether devices here can reach the internet at all."},
     {"key": "mdns", "label": "mDNS forwarding",
      "help": "Lets service discovery (casting, AirPlay) cross this boundary."},
     {"key": "dns", "label": "DNS handed out",
-     "help": "Which resolver DHCP gives devices here. A resolver on this same "
-             "network cannot be filtered by the gateway."},
+     "help": "Which DNS server DHCP gives devices here. DNS Lockdown can't block "
+             "a DNS server on this same network."},
 ]
 
 
@@ -1652,7 +1623,12 @@ def _ip_in_subnet(ip: Optional[str], subnet: Optional[str]) -> bool:
 
 
 def build_isolation_matrix(
-    networks: List[Dict], zones: List[Dict]
+    networks: List[Dict],
+    zones: List[Dict],
+    device_isolation_ids: Optional[List[str]] = None,
+    coverage: Optional[Dict[str, Dict[str, int]]] = None,
+    switch_acl_supported: Optional[bool] = None,
+    isolation_exceptions: Optional[Dict[str, List[str]]] = None,
 ) -> Dict:
     """
     Build the network-by-attribute isolation matrix.
@@ -1704,18 +1680,64 @@ def build_isolation_matrix(
         else:
             cells["zone"] = _cell("neutral", "—", "No zone membership reported.")
 
-        # Network isolation
+        # Network isolation. Stays a plain green "On" like every other column,
+        # but the hover names every custom ALLOW that gets through it — a
+        # green cell must not imply nothing does.
         iso = n.get("network_isolation_enabled")
+        holes = (isolation_exceptions or {}).get(nid) or [] if iso else []
+        if iso and holes:
+            # A hover box grows with its text, so a site with dozens of rules
+            # would bury the point. Always give the count; name at most
+            # EXCEPTIONS_SHOWN (House Arrest's own first) and point to UniFi's
+            # Policy Table for the full list.
+            shown = sorted(holes, key=lambda h: 0 if "House Arrest" in h else 1)
+            shown = shown[:EXCEPTIONS_SHOWN]
+            more = len(holes) - len(shown)
+            count = len(holes)
+            iso_detail = (
+                f"On. Devices here are blocked from your other networks, except "
+                f"for what {count} {'rule lets' if count == 1 else 'rules let'} through: "
+                + "; ".join(shown)
+                + (f"; and {more} more. See them all in UniFi under Settings → "
+                   f"Policy Engine → Policy Table, filtered to {name}."
+                   if more else ".")
+            )
+        elif iso:
+            iso_detail = ("On. Devices here are blocked from your other networks, "
+                          "in both directions. No rules make exceptions.")
+        else:
+            iso_detail = ("Off. Devices here can reach your other networks unless "
+                          "a firewall rule stops them.")
         cells["isolation"] = _cell(
             "good" if iso else "warn",
             "On" if iso else "Off",
-            f"VLAN {vlan} has network_isolation_enabled={iso!r}. "
-            + ("Devices here are blocked from reaching your other networks."
-               if iso else
-               "Devices here can reach other networks unless a firewall policy "
-               "stops them."),
+            iso_detail,
             editable=True,
         )
+
+        # Device isolation (switch ACL). A SITE-LEVEL list, like mDNS: the
+        # toggle adds or removes this network from `acl_device_isolation`.
+        # None means the list could not be read — reported as unknown and not
+        # offered as a switch, never shown as "Off".
+        if n.get("purpose") not in DEVICE_ISOLATION_PURPOSES:
+            # UniFi's own Device Isolation picker lists only local networks
+            # (measured: exactly the `corporate` ones). Offering the switch on
+            # a VPN or transit segment would be a toggle the controller ignores.
+            cells["device_isolation"] = _cell(
+                "neutral", "—",
+                "Device isolation only applies to local networks, not to VPN "
+                "or transit networks like this one.")
+        elif device_isolation_ids is None:
+            cells["device_isolation"] = _cell(
+                "neutral", "Unknown",
+                "House Arrest couldn't read the Device isolation setting from "
+                "the controller, so it can't show or change it here.")
+        else:
+            cells["device_isolation"] = device_isolation_cell(
+                nid in device_isolation_ids,
+                (coverage or {}).get(nid) if coverage is not None else None,
+                site_supported=switch_acl_supported,
+            )
 
         # Internet access
         inet = n.get("internet_access_enabled")
@@ -1802,6 +1824,580 @@ def build_isolation_matrix(
 
     rows.sort(key=lambda r: (r["vlan"] is None, r["vlan"] or 0))
     return {"columns": list(MATRIX_COLUMNS), "rows": rows}
+
+
+# ---------------------------------------------------------------------------
+# Switch ACLs: coverage, Device Isolation, and the per-device neighbour block
+# ---------------------------------------------------------------------------
+#
+# Everything here was measured on a live console on 2026-09-29 — see the
+# design doc, "MEASURED 2026-09-29". The rules that shape the code:
+#
+#   * Same-network traffic never reaches the gateway, so no firewall policy
+#     can touch it. Switch ACLs can, but only switches that report
+#     `switch_caps.max_custom_mac_acls > 0` enforce them — never hardcode
+#     models.
+#   * An ACL is enforced by every capable switch the traffic CROSSES, not only
+#     the device's own port. A device on a cheap switch is still partly
+#     covered if a capable switch sits above it.
+#   * That holds for Wi-Fi clients too, but two devices whose traffic meets
+#     below every capable switch (same AP, or APs joined on a cheap switch)
+#     are not covered at all. Per-SSID client isolation is the tool there.
+#   * "Block this device -> Any" also blocks the gateway, i.e. the internet.
+#     The neighbour block is therefore a PAIR: ALLOW to the gateway's LAN
+#     MACs plus broadcast/IPv6-multicast (the exact set UniFi's own
+#     Local-Blocklist ACL generates), then BLOCK -> Any.
+
+COVERED = "covered"
+PARTIAL = "partial"
+NOT_COVERED = "none"
+UNKNOWN = "unknown"
+
+ACL_NAME_PREFIX = "[HouseArrest] "
+ACL_NAME_MAX = 32
+# Broadcast (ARP, DHCP) and the IPv6 all-routers / DHCPv6 multicast groups.
+# Mirrors the ALLOW list UniFi generates for its own Local Blocklist.
+ACL_ALWAYS_ALLOW = ["ff:ff:ff:ff:ff:ff", "33:33:00:00:00:02", "33:33:00:01:00:02"]
+GATEWAY_TYPES = ("udm", "ugw", "uxg")
+# Network purposes UniFi offers Device Isolation for. Measured 2026-09-29: its
+# picker listed exactly the `corporate` networks; `guest` is the other LAN
+# purpose UniFi uses and is included on the same footing.
+DEVICE_ISOLATION_PURPOSES = ("corporate", "guest")
+
+
+def acl_capable(device: Optional[Dict]) -> bool:
+    """Does this device enforce switch ACLs? Read from its own capabilities."""
+    caps = (device or {}).get("switch_caps") or {}
+    try:
+        return int(caps.get("max_custom_mac_acls") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def gateway_lan_macs(devices: List[Dict]) -> List[str]:
+    """
+    The MACs a LAN device sees as its gateway.
+
+    Measured: the gateway answers ARP on a LAN with the MAC in its
+    `network_table[].mac` (…:85 here), which is NOT the device MAC the
+    controller reports (…:80). `ethernet_table[].mac` lists every interface;
+    UniFi's own generated ACL allows all of them, so this does too.
+    """
+    macs = []
+    for d in devices or []:
+        if d.get("type") not in GATEWAY_TYPES or not d.get("network_table"):
+            continue
+        for row in (d.get("network_table") or []) + (d.get("ethernet_table") or []):
+            m = (row.get("mac") or "").lower()
+            if m and m not in macs:
+                macs.append(m)
+        own = (d.get("mac") or "").lower()
+        if own and own not in macs:
+            macs.append(own)
+    return macs
+
+
+def _devices_by_mac(devices: List[Dict]) -> Dict[str, Dict]:
+    return {(d.get("mac") or "").lower(): d for d in devices or [] if d.get("mac")}
+
+
+def _first_enforcer_above(
+    start_mac: Optional[str], by_mac: Dict[str, Dict]
+) -> Tuple[Optional[Dict], bool]:
+    """
+    Walk the uplink chain and return (first ACL-capable device, complete).
+
+    `complete` is False when the chain points at a device the controller does
+    not list (measured 2026-09-29: an AP still named a since-removed switch as
+    its uplink). An unfollowable path means "unknown", never "not covered".
+    A loop is treated as the end of a complete chain.
+    """
+    seen = set()
+    mac = (start_mac or "").lower()
+    while mac and mac not in seen:
+        if mac not in by_mac:
+            return None, False
+        seen.add(mac)
+        dev = by_mac[mac]
+        if acl_capable(dev):
+            return dev, True
+        mac = ((dev.get("uplink") or {}).get("uplink_mac") or "").lower()
+    return None, True
+
+
+def site_acl_capable(devices: List[Dict]) -> Optional[bool]:
+    """
+    Does ANY switch on this site support switch ACLs?
+
+    None when the device list could not be read (unknown, never "no"). False
+    means nothing on this network can enforce Device Isolation or the
+    neighbour block, so neither should be offered at all.
+    """
+    if not devices:
+        return None
+    return any(acl_capable(d) for d in devices)
+
+
+def _shares_port(client: Dict, clients: Optional[Dict[str, Dict]]) -> bool:
+    """
+    Does another client sit on the same switch port?
+
+    UniFi cannot see unmanaged gear. Several clients on one port almost always
+    means an unmanaged switch (or a VM host) hangs off it, and devices behind
+    that never reach the UniFi switch, so "fully covered" would overclaim.
+    """
+    if not clients or not client.get("is_wired"):
+        return False
+    sw, port, mac = client.get("sw_mac"), client.get("sw_port"), client.get("mac")
+    if not sw or port is None:
+        return False
+    return any(
+        c.get("is_wired") and c.get("sw_mac") == sw and c.get("sw_port") == port
+        and c.get("mac") != mac
+        for c in clients.values()
+    )
+
+
+def client_coverage(
+    client: Optional[Dict],
+    devices: List[Dict],
+    clients: Optional[Dict[str, Dict]] = None,
+) -> Dict:
+    """
+    How well switch ACLs can separate this device from its neighbours.
+
+    Returns {status, attached_to, enforcer, wired, shared_port}. `status`:
+      covered  — its own switch enforces, so every frame it sends is checked
+      partial  — a switch further up enforces, so devices elsewhere are
+                 separated but neighbours on the same switch/AP are not. Also
+                 used when a capable switch's port is shared with other
+                 devices (probably an unmanaged switch in between)
+      none     — no capable switch anywhere on its path
+      unknown  — the controller could not place it (offline, or unreported)
+
+    `clients` (the live client dict) enables the shared-port check; without
+    it the verdict is based on the switch alone.
+    """
+    by_mac = _devices_by_mac(devices)
+    if not client:
+        return {"status": UNKNOWN, "attached_to": None, "enforcer": None,
+                "wired": None, "shared_port": False}
+    wired = bool(client.get("is_wired"))
+    attach_mac = (client.get("sw_mac") if wired else client.get("ap_mac")) or ""
+    attach = by_mac.get(attach_mac.lower())
+    if not attach:
+        return {"status": UNKNOWN, "attached_to": None, "enforcer": None,
+                "wired": wired, "shared_port": False}
+    name = attach.get("name") or attach.get("model") or "its switch"
+    if wired and acl_capable(attach):
+        if _shares_port(client, clients):
+            return {"status": PARTIAL, "attached_to": name, "enforcer": name,
+                    "wired": True, "shared_port": True}
+        return {"status": COVERED, "attached_to": name, "enforcer": name,
+                "wired": True, "shared_port": False}
+    up = ((attach.get("uplink") or {}).get("uplink_mac") or "")
+    enforcer, complete = _first_enforcer_above(up, by_mac)
+    if not enforcer and not complete:
+        return {"status": UNKNOWN, "attached_to": name, "enforcer": None,
+                "wired": wired, "shared_port": False}
+    if enforcer:
+        return {"status": PARTIAL, "attached_to": name,
+                "enforcer": enforcer.get("name") or "an upstream switch",
+                "wired": wired, "shared_port": False}
+    return {"status": NOT_COVERED, "attached_to": name, "enforcer": None,
+            "wired": wired, "shared_port": False}
+
+
+# The short verdict shown on chips. Plain words, no "enforced".
+COVERAGE_LABELS = {
+    COVERED: "Fully blocked",
+    PARTIAL: "Partly blocked",
+    NOT_COVERED: "Not blocked",
+    UNKNOWN: "Unknown",
+}
+
+
+def coverage_sentence(cov: Dict) -> str:
+    """One plain sentence for the UI. No ACL vocabulary."""
+    # Partial wording is deliberately "may": measured 2026-09-29, peers on
+    # other switches or APs that meet BELOW the capable switch were not
+    # blocked either, so "everything else is blocked" would overclaim.
+    status = cov.get("status")
+    where = cov.get("attached_to") or "its switch"
+    via = cov.get("enforcer") or "a switch that supports it"
+    if status == COVERED:
+        return f"It's plugged into {where}, which supports the neighbour block."
+    if status == PARTIAL and cov.get("shared_port"):
+        return (f"It's plugged into {where}, which supports the neighbour block, "
+                f"but other devices share the same switch port. That usually "
+                f"means there's another switch in between, or a computer running "
+                f"virtual machines. Devices sharing that port may still reach it.")
+    if status == PARTIAL and cov.get("wired"):
+        return (f"It's plugged into {where}, which doesn't support the neighbour "
+                f"block. Devices whose traffic passes through {via} are blocked, "
+                f"but other devices on {where}, or on other switches that don't "
+                f"support it, may still reach it.")
+    if status == PARTIAL:
+        return (f"It's connected to Wi-Fi through {where}. Devices whose traffic "
+                f"passes through {via} are blocked, but other Wi-Fi devices, "
+                f"especially ones on the same access point, may still reach it. "
+                f"Turn on Wi-Fi client isolation for its network to close that gap.")
+    if status == NOT_COVERED:
+        return (f"None of the switches between {where} and the rest of your "
+                f"network support the neighbour block, so it would have no "
+                f"effect on this device.")
+    if cov.get("attached_to"):
+        return (f"It's connected to {where}, but UniFi can't show the full path "
+                f"from there to your gateway because a device along the way isn't "
+                f"listed in UniFi. House Arrest can't tell how well the neighbour "
+                f"block will work.")
+    return ("UniFi doesn't currently know where this device is connected (it "
+            "may be offline), so House Arrest can't tell how well the neighbour "
+            "block will work.")
+
+
+def network_isolation_coverage(
+    network_id: str, clients: Dict[str, Dict], devices: List[Dict]
+) -> Dict[str, int]:
+    """Count this network's online devices by coverage status."""
+    counts = {COVERED: 0, PARTIAL: 0, NOT_COVERED: 0, UNKNOWN: 0}
+    for c in (clients or {}).values():
+        if c.get("network_id") != network_id:
+            continue
+        counts[client_coverage(c, devices, clients)["status"]] += 1
+    return counts
+
+
+NOT_SUPPORTED_DETAIL = (
+    "None of your UniFi switches support Device isolation, so turning it on "
+    "would have no effect. For Wi-Fi devices, use Wi-Fi client isolation "
+    "instead.")
+
+
+def device_isolation_cell(
+    enabled: bool,
+    counts: Optional[Dict[str, int]],
+    site_supported: Optional[bool] = None,
+) -> Dict:
+    """
+    The matrix cell for Device Isolation.
+
+    "On" alone would overclaim — on the network these were measured on, it
+    reached 4 of 41 devices. So an enabled cell always carries the count, and
+    goes to warn whenever anything on the network sits outside coverage.
+    """
+    # No capable switch anywhere: never offer a switch that does nothing, and
+    # never show a green "On" for a setting that cannot take effect. If it IS
+    # on (set in UniFi), say so without the green.
+    if site_supported is False:
+        return _cell("neutral", "Not supported",
+                     ("Device isolation is turned on in UniFi for this network. "
+                      if enabled else "")
+                     + NOT_SUPPORTED_DETAIL)
+    # Plain-language copy. What the count counts is spelled out, because
+    # "N of M covered" alone does not say N of what.
+    # Worded for the cell's state: an Off cell describes what turning it on
+    # WOULD do, so nothing in it reads as already happening.
+    if enabled:
+        what = ("Device isolation stops devices on this network from reaching "
+                "each other. It only fully works for wired devices plugged into "
+                "a UniFi switch model that supports it. Wi-Fi devices are only "
+                "partly blocked, so turn on Wi-Fi client isolation for those as "
+                "well. Casting, AirPlay, and printing between devices on this "
+                "network don't work while it is on.")
+    else:
+        what = ("Turning on Device isolation would stop devices on this network "
+                "from reaching each other. It only fully works for wired devices "
+                "plugged into a UniFi switch model that supports it. Wi-Fi "
+                "devices would only be partly blocked, so turn on Wi-Fi client "
+                "isolation for those as well. Casting, AirPlay, and printing "
+                "between devices on this network would stop working.")
+    if counts is None:
+        now = (" House Arrest couldn't read from the controller which devices "
+               "it would block.")
+    else:
+        total = sum(counts.values())
+        full = counts.get(COVERED, 0)
+        # "are" while it is on, "would be" while it is off, so an Off cell
+        # never reads as if devices are already blocked.
+        verb = "are" if enabled else "would be"
+        now = (
+            f" Of the {total} {'device' if total == 1 else 'devices'} online "
+            f"on this network, {full} {verb} fully blocked, "
+            f"{counts.get(PARTIAL, 0)} partly blocked (Wi-Fi, or wired behind a "
+            f"switch that doesn't support it), {counts.get(NOT_COVERED, 0)} not "
+            f"blocked, and {counts.get(UNKNOWN, 0)} unknown."
+        )
+    # Same colour language as every other column (decided 2026-09-29): On is
+    # green, Off is amber. Mixed colours for the same word confused more than
+    # they informed. Partial coverage is stated in the hover detail instead.
+    if not enabled:
+        return _cell("warn", "Off", "Off. " + what + now, editable=True)
+    return _cell("good", "On", "On. " + what + now, editable=True)
+
+
+def acl_rule_name(label: str) -> str:
+    """ACL names are capped at 32 characters and there is no description."""
+    return (ACL_NAME_PREFIX + (label or "device"))[:ACL_NAME_MAX]
+
+
+def is_house_arrest_acl(rule: Dict) -> bool:
+    """Ours = our name prefix and not generated by UniFi (Objects etc.)."""
+    return (
+        not rule.get("predefined")
+        and (rule.get("name") or "").startswith(ACL_NAME_PREFIX)
+    )
+
+
+def acl_source_macs(rule: Dict) -> List[str]:
+    src = rule.get("traffic_source") or {}
+    return [m.lower() for m in src.get("specific_mac_addresses") or []]
+
+
+def _acl_endpoint(macs: List[str]) -> Dict:
+    return {"ips_or_subnets": [], "network_ids": [], "ports": [],
+            "specific_mac_addresses": macs, "type": "CLIENT_MAC"}
+
+
+def next_acl_indexes(rules: List[Dict], count: int) -> List[int]:
+    """Place ours after every existing rule. acl_index is honoured on create."""
+    top = max([r.get("acl_index") or 0 for r in rules or []] + [-1])
+    return [top + 1 + i for i in range(count)]
+
+
+def same_network_resolvers(
+    network: Optional[Dict], clients: Optional[Dict]
+) -> Tuple[List[Dict], List[str]]:
+    """
+    DNS servers this network hands out by DHCP that sit on the network itself.
+
+    MEASURED 2026-10-01: the neighbour block's BLOCK device -> Any also cuts a
+    Pi-hole on the device's own VLAN, so Internet only lost name resolution
+    (internet by IP kept working, HTTPS by name failed) while the card said
+    "Fully enforced". Those resolvers get added to the ALLOW beside the gateway.
+
+    Returns (found, missing): found is [{ip, mac, name}] for resolvers matched
+    to a live client; missing is the IPs on this subnet with no known MAC
+    (offline), which the caller must not silently cut off. Resolvers on other
+    networks are routed through the gateway, which the ALLOW already covers.
+    """
+    if not network or network.get("dhcpd_dns_enabled") is False:
+        return [], []
+    subnet = network.get("ip_subnet")
+    handed = [network.get(f"dhcpd_dns_{i}") for i in (1, 2, 3, 4)]
+    local = [ip for ip in handed if ip and _ip_in_subnet(ip, subnet)]
+    by_ip = {}
+    for c in (clients or {}).values():
+        if c.get("ip") and c.get("mac"):
+            by_ip.setdefault(c["ip"], c)
+    found, missing = [], []
+    for ip in local:
+        c = by_ip.get(ip)
+        if c:
+            found.append({"ip": ip, "mac": c["mac"].lower(),
+                          "name": c.get("name") or c.get("hostname") or ip})
+        else:
+            missing.append(ip)
+    return found, missing
+
+
+def resolver_note(found: List[Dict]) -> Optional[str]:
+    """One plain sentence for the picker and the lockdown card."""
+    if not found:
+        return None
+    names = [r["name"] for r in found]
+    joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return (f"DNS keeps working: it can still reach {joined} on its own "
+            f"network. Switch rules can't filter by port, so it can reach "
+            f"{'that device' if len(found) == 1 else 'those devices'} on any "
+            f"port, not only DNS.")
+
+
+def acl_allowed_resolvers(
+    rules: List[Dict], macs: List[str], clients: Optional[Dict]
+) -> List[Dict]:
+    """
+    Clients our stored ALLOW rule lets these MACs reach, read back from the
+    controller rather than recomputed, so the card reports what is enforced.
+    The gateway and broadcast/multicast entries aren't clients, so only
+    resolvers added by build_neighbour_acls() come back.
+    """
+    clients = clients or {}
+    out, seen = [], set()
+    for r in neighbour_acls_for(rules, macs):
+        if r.get("action") != "ALLOW":
+            continue
+        dest = (r.get("traffic_destination") or {}).get("specific_mac_addresses") or []
+        for m in dest:
+            m = m.lower()
+            c = clients.get(m)
+            if c and m not in seen:
+                seen.add(m)
+                out.append({"ip": c.get("ip"), "mac": m,
+                            "name": c.get("name") or c.get("hostname") or c.get("ip") or m})
+    return out
+
+
+def build_neighbour_acls(
+    macs: List[str],
+    network_id: str,
+    gateway_macs: List[str],
+    label: str,
+    indexes: List[int],
+    resolver_macs: Optional[List[str]] = None,
+) -> List[Dict]:
+    """
+    The measured neighbour-block pair for devices on one network.
+
+    ALLOW device -> gateway LAN MACs + broadcast/multicast (+ any DNS servers
+    the network hands out on the same VLAN) first, then BLOCK device -> Any.
+    Without the ALLOW the device loses the gateway and with it the internet
+    and DHCP; without the resolvers it loses name resolution.
+    """
+    if not macs:
+        raise ValueError("At least one MAC is required")
+    if not network_id:
+        raise ValueError("network_id is required")
+    if not gateway_macs:
+        raise ValueError("Could not find the gateway's MAC addresses")
+    src = [normalize_mac(m) for m in macs]
+    allow_to = []
+    for m in list(gateway_macs) + list(resolver_macs or []) + ACL_ALWAYS_ALLOW:
+        m = m.lower()
+        # A locked-down Pi-hole is its own resolver; never allow it to itself.
+        if m not in allow_to and m not in src:
+            allow_to.append(m)
+    name = acl_rule_name(label)
+    base = {"enabled": True, "mac_acl_network_id": network_id, "name": name,
+            "specific_enforcers": [], "traffic_source": _acl_endpoint(src),
+            "type": "MAC"}
+    return [
+        {**base, "acl_index": indexes[0], "action": "ALLOW",
+         "traffic_destination": _acl_endpoint(allow_to)},
+        {**base, "acl_index": indexes[1], "action": "BLOCK",
+         "traffic_destination": _acl_endpoint([])},
+    ]
+
+
+def neighbour_acls_for(rules: List[Dict], macs: List[str]) -> List[Dict]:
+    """Our ACL rules whose source is any of these MACs."""
+    wanted = {m.lower() for m in macs or []}
+    return [r for r in rules or []
+            if is_house_arrest_acl(r) and wanted & set(acl_source_macs(r))]
+
+
+def neighbour_block_state(rules: List[Dict], macs: List[str]) -> Optional[str]:
+    """
+    None if no neighbour block exists for these MACs, "ok" if the ALLOW+BLOCK
+    pair is present and enabled, otherwise "broken" or "disabled". A lone
+    BLOCK is broken, not merely incomplete: it cuts the device off entirely.
+    """
+    ours = neighbour_acls_for(rules, macs)
+    if not ours:
+        return None
+    actions = {r.get("action") for r in ours}
+    if "ALLOW" not in actions or "BLOCK" not in actions:
+        return "broken"
+    if any(r.get("enabled") is False for r in ours):
+        return "disabled"
+    return "ok"
+
+
+# ---------------------------------------------------------------------------
+# Exceptions that get through network isolation
+# ---------------------------------------------------------------------------
+#
+# UniFi evaluates custom policies (10000s) before its own "Isolated Networks"
+# block (30000s), so any enabled custom ALLOW touching an isolated network
+# opens a path through it. MEASURED 2026-09-29: a Guests device (isolated)
+# still reached the Pi-hole on port 53 through the DNS Lockdown's allow.
+# Inbound holes work too: a custom ALLOW INTO an isolated network gets a
+# generated "(Return)" policy at 30000-30002, ahead of the isolation block.
+#
+# The Networks tab must show these next to "Network isolation: On" rather
+# than let a green cell imply nothing gets through.
+
+ISOLATION_ZONE_KEYS = ("internal", "hotspot", "dmz")
+# How many exceptions the isolation hover names before "and N more".
+EXCEPTIONS_SHOWN = 3
+
+
+def _endpoint_hits_network(
+    ep: Dict,
+    network: Dict,
+    network_zone_id: Optional[str],
+    client_network: Dict[str, str],
+) -> bool:
+    """Could this policy endpoint be a device on `network`?"""
+    target = ep.get("matching_target")
+    nid = network.get("_id")
+    if target == "ANY":
+        return bool(network_zone_id) and ep.get("zone_id") == network_zone_id
+    if target == "NETWORK":
+        return nid in (ep.get("network_ids") or [])
+    if target == "IP":
+        return any(_ip_in_subnet(str(ip).split("/")[0], network.get("ip_subnet"))
+                   for ip in ep.get("ips") or [])
+    if target == "CLIENT":
+        return any(client_network.get((m or "").lower()) == nid
+                   for m in ep.get("client_macs") or [])
+    return False
+
+
+def _describe_exception(policy: Dict, inbound: bool) -> str:
+    dest = policy.get("destination") or {}
+    port = dest.get("port")
+    if is_dns_policy(policy):
+        ips = ", ".join(dest.get("ips") or []) or "approved resolvers"
+        return f"DNS to {ips} (House Arrest DNS Lockdown)"
+    who = "a House Arrest rule" if is_house_arrest(policy) else "your rule"
+    name = policy.get("name") or "unnamed rule"
+    bits = [f"\"{name}\" ({who}"]
+    if inbound:
+        bits.append(", into this network")
+    if port:
+        bits.append(f", port {port}")
+    return "".join(bits) + ")"
+
+
+def isolation_exceptions(
+    network: Dict,
+    zones: List[Dict],
+    policies: List[Dict],
+    clients: Optional[Dict[str, Dict]] = None,
+) -> List[str]:
+    """
+    Plain descriptions of the custom ALLOW policies that open a path through
+    this network's isolation, in either direction.
+    """
+    zone_key_by_id = {z.get("_id"): z.get("zone_key") for z in zones or []}
+    network_zone_id = network.get("firewall_zone_id")
+    client_network = {(m or "").lower(): (c or {}).get("network_id")
+                      for m, c in (clients or {}).items()}
+    out = []
+    for p in policies or []:
+        if p.get("predefined") or p.get("action") != "ALLOW" or p.get("enabled") is False:
+            continue
+        src, dst = p.get("source") or {}, p.get("destination") or {}
+        dst_zone = zone_key_by_id.get(dst.get("zone_id"))
+        src_zone = zone_key_by_id.get(src.get("zone_id"))
+        src_here = _endpoint_hits_network(src, network, network_zone_id, client_network)
+        dst_here = _endpoint_hits_network(dst, network, network_zone_id, client_network)
+        src_any = src.get("matching_target") == "ANY"
+        dst_any = dst.get("matching_target") == "ANY"
+        # Out: can start here, and the destination is somewhere ELSE local.
+        # "Any" in the zone includes other networks, so it counts.
+        outbound = (src_here and dst_zone in ISOLATION_ZONE_KEYS
+                    and (dst_any or not dst_here))
+        # In: the destination is named inside this network, and the source is
+        # somewhere else local (or "Any", which includes somewhere else).
+        inbound = (dst_here and not dst_any and src_zone in ISOLATION_ZONE_KEYS
+                   and (src_any or not src_here))
+        if outbound or inbound:
+            text = _describe_exception(p, inbound=inbound and not outbound)
+            if text not in out:
+                out.append(text)
+    return out
 
 
 def check_precedence(ours: List[Dict], all_policies: List[Dict]) -> List[Dict]:

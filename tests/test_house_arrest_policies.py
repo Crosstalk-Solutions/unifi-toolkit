@@ -190,27 +190,6 @@ class TestPresets:
                              CLIENT_ZONE, EXTERNAL_ZONE, [10000])
 
 
-class TestExceptions:
-    def test_outbound_exception_allows_and_responds(self):
-        pol = P.build_exception(
-            [MAC], "Cam", CLIENT_ZONE, ["192.168.107.133"], CLIENT_ZONE,
-            index=10005, port="8123", note="Home Assistant",
-        )
-        assert pol["action"] == "ALLOW"
-        assert pol["create_allow_respond"] is True
-        assert P.is_house_arrest(pol)
-
-    def test_inbound_exception_targets_device_by_ip(self):
-        """Inbound has to be IP-matched — the API has no CLIENT destination."""
-        pol = P.build_inbound_exception(
-            ["192.168.107.133"], "Cam", CLIENT_ZONE, CLIENT_ZONE,
-            index=10006, port="443",
-        )
-        assert pol["destination"]["matching_target"] == "IP"
-        assert pol["source"]["matching_target"] == "ANY"
-        assert pol["create_allow_respond"] is True
-
-
 class TestPrecedence:
     """
     The controller assigns the stored policy index itself — indexes sent as

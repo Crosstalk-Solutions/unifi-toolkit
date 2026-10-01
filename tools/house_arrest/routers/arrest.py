@@ -214,6 +214,39 @@ async def get_state():
         elif any(m in pending_move for m in summary.macs):
             summary.status = "pending_move"
 
+    # Neighbour block (switch ACL pair) per device, and how much of it the
+    # switches in the path can actually enforce. A read failure leaves the
+    # fields unset rather than implying there is no block.
+    if grouped:
+        try:
+            acl_rules = await client.get_acl_rules()
+            devices = await client.get_devices_raw() if acl_rules else []
+        except Exception:
+            acl_rules, devices = None, []
+        for summary in grouped.values():
+            state = P.neighbour_block_state(acl_rules or [], summary.macs)
+            if not state:
+                continue
+            summary.neighbours = state
+            live = next((active_now.get(m.lower()) for m in summary.macs
+                         if active_now.get(m.lower())), None)
+            cov = P.client_coverage(live if devices else None, devices, active_now)
+            summary.neighbours_coverage = cov["status"]
+            summary.neighbours_note = P.coverage_sentence(cov)
+            summary.neighbours_dns_note = P.resolver_note(
+                P.acl_allowed_resolvers(acl_rules or [], summary.macs, active_now))
+            if state != "ok" and summary.status == "ok":
+                summary.status = "broken" if state == "broken" else P.DISABLED
+                summary.suggestion = (
+                    "Part of the neighbour block is missing, which can cut this "
+                    "device off from everything, including the internet. "
+                    "Release the lockdown and apply it again."
+                    if state == "broken" else
+                    "The neighbour block's rules are turned off in UniFi "
+                    "(Policy Table, ACL Rules). Turn them back on there, or "
+                    "release the lockdown and apply it again."
+                )
+
     # Blocked-traffic counts: only worth a round trip when something is
     # actually locked down.
     if ours:
@@ -329,8 +362,14 @@ async def get_state():
     except Exception:
         pass
 
+    try:
+        switch_acl_supported = P.site_acl_capable(await client.get_devices_raw())
+    except Exception:
+        switch_acl_supported = None
+
     return StateResponse(
         connected=True,
+        switch_acl_supported=switch_acl_supported,
         encrypted_dns_on=encrypted_dns_on,
         ad_blocking_on=ad_blocking_on,
         content_filtered_network_ids=content_filtered,
@@ -366,6 +405,25 @@ async def list_clients(online_only: bool = False):
         networks = await client.get_networks()
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+    try:
+        devices = await client.get_devices_raw()
+    except Exception:
+        devices = []
+    try:
+        gs = await client.get_site_setting("global_switch")
+        di_ids = set(str(i) for i in (gs or {}).get("acl_device_isolation") or []) if gs else None
+    except Exception:
+        di_ids = None
+    nets_by_id = {n.get("_id"): n for n in networks if n.get("_id")}
+    try:
+        zones = await client.get_firewall_zones()
+        policies = await client.get_firewall_policies()
+        holes_by_net = {
+            nid: len(P.isolation_exceptions(n, zones, policies, active))
+            for nid, n in nets_by_id.items() if n.get(P.NET_FLAG_ISOLATION)
+        }
+    except Exception:
+        holes_by_net = {}
 
     # A client sitting on a genuine WAN network (purpose == "wan") cannot be put
     # under a per-device LAN lockdown — a firewall rule against the WAN uplink
@@ -390,6 +448,21 @@ async def list_clients(online_only: bool = False):
             continue
         if live.get("network_id") in wan_ids or live.get("network") in wan_names:
             continue
+        # Offline devices have no attachment point, and an empty device list
+        # means the read failed: both are "unknown", never "not covered".
+        cov = P.client_coverage(live if (live and devices) else None, devices, active)
+        # Offline devices: fall back to the network the controller last saw.
+        net_id = live.get("network_id") or c.get("last_connection_network_id")
+        net = nets_by_id.get(net_id) or {}
+        found, missing = P.same_network_resolvers(net or None, active)
+        found = [r for r in found if r["mac"] != mac]
+        if missing:
+            dns_note = ("Its network hands out " + ", ".join(missing) + " for DNS, "
+                        "which is on the same network, but UniFi doesn't currently "
+                        "know that device's MAC address. The neighbour block can't "
+                        "be applied until it does, or this device would lose DNS.")
+        else:
+            dns_note = P.resolver_note(found)
         out.append(ClientInfo(
             mac=mac,
             name=c.get("name") or c.get("hostname") or "",
@@ -400,6 +473,13 @@ async def list_clients(online_only: bool = False):
             locally_administered=P.is_locally_administered(mac),
             essid=live.get("essid"),
             is_wired=live.get("is_wired"),
+            neighbour_coverage=cov["status"],
+            neighbour_coverage_note=P.coverage_sentence(cov),
+            neighbour_dns_note=dns_note,
+            network_isolated=bool(net.get(P.NET_FLAG_ISOLATION)) if net else None,
+            network_internet_off=(net.get(P.NET_FLAG_INTERNET) is False) if net else None,
+            network_device_isolation=(net_id in di_ids) if (net and di_ids is not None) else None,
+            network_isolation_exceptions=holes_by_net.get(net_id, 0),
         ))
     out.sort(key=lambda x: (not x.online, (x.name or "zzz").lower()))
     return out
@@ -410,9 +490,10 @@ async def list_wlans():
     """
     SSIDs with their client-isolation state and how many clients each carries.
 
-    This is the only control the tool has over same-VLAN peer traffic. A
-    firewall policy never sees that traffic — it does not pass the gateway —
-    so no preset on the Devices tab can touch it.
+    One of the controls over same-VLAN peer traffic, alongside switch ACLs
+    (Device Isolation, the per-device neighbour block). A firewall policy
+    never sees that traffic, and switch ACLs miss two Wi-Fi devices on the
+    same AP, so this is the one that covers that case.
     """
     client, err = await _client_or_error()
     if err:
@@ -586,6 +667,42 @@ async def set_network_setting(req: NetworkSettingRequest):
             )
         return {"ok": True, "field": "mdns_enabled_for_network_ids",
                 "value": req.value}
+
+    # Device Isolation (switch ACL) is the same shape as mDNS: ONE site-wide
+    # list (`global_switch.acl_device_isolation`), so the toggle adds or
+    # removes this network from it. Measured writable 2026-09-29.
+    if req.column == "device_isolation":
+        current_doc = await client.get_site_setting("global_switch")
+        if current_doc is None:
+            raise HTTPException(
+                status_code=502,
+                detail=("House Arrest couldn't read the Device isolation setting "
+                        "from the controller, so nothing was changed."),
+            )
+        if req.value:
+            try:
+                devices = await client.get_devices_raw()
+            except Exception:
+                devices = []
+            if P.site_acl_capable(devices) is False:
+                raise HTTPException(
+                    status_code=409,
+                    detail=P.NOT_SUPPORTED_DETAIL + " Nothing was changed.")
+        current = [str(i) for i in current_doc.get("acl_device_isolation") or []]
+        wanted = [i for i in current if i != req.network_id]
+        if req.value:
+            wanted.append(req.network_id)
+        if sorted(wanted) == sorted(current):
+            return {"ok": True, "field": "acl_device_isolation", "value": req.value}
+        if not await client.set_device_isolation_networks(wanted):
+            raise HTTPException(
+                status_code=502,
+                detail=("The controller didn't confirm the Device isolation "
+                        "change, so House Arrest can't tell whether it was "
+                        "applied. Check it in UniFi under Settings > Networks > "
+                        "Device Isolation (ACL)."),
+            )
+        return {"ok": True, "field": "acl_device_isolation", "value": req.value}
 
     spec = P.editable_column(req.column)
     if spec is None:
@@ -1113,7 +1230,40 @@ async def inspect():
             ),
         ))
 
-    matrix = IsolationMatrix(**P.build_isolation_matrix(networks, zones))
+    # Device Isolation is a site-level list, and whether it does anything
+    # depends on which switches each device's traffic crosses. Every read is
+    # independent; a failure means "unknown", never "off" or "not covered".
+    di_ids = None
+    coverage = None
+    acl_supported = None
+    live: Dict = {}
+    try:
+        gs = await client.get_site_setting("global_switch")
+        if gs is not None:
+            di_ids = [str(i) for i in gs.get("acl_device_isolation") or []]
+    except Exception:
+        di_ids = None
+    try:
+        devices = await client.get_devices_raw()
+        live = await client.get_clients()
+        acl_supported = P.site_acl_capable(devices)
+        if devices:
+            coverage = {
+                n.get("_id"): P.network_isolation_coverage(n.get("_id"), live, devices)
+                for n in networks if n.get("_id")
+            }
+    except Exception:
+        coverage = None
+
+    holes = {
+        n.get("_id"): P.isolation_exceptions(n, zones, all_policies, live)
+        for n in networks
+        if n.get("_id") and n.get("network_isolation_enabled")
+    }
+
+    matrix = IsolationMatrix(**P.build_isolation_matrix(
+        networks, zones, device_isolation_ids=di_ids, coverage=coverage,
+        switch_acl_supported=acl_supported, isolation_exceptions=holes))
 
     return InspectionResponse(
         connected=True, networks=net_models,
@@ -1212,16 +1362,125 @@ async def lockdown(req: LockdownRequest):
                 "networks in those other zones stay reachable from this device."
             )
 
+    # Optional neighbour block: a switch-ACL pair per network the devices sit
+    # on. Built here (before the dry-run return) so the preview shows it.
+    acl_payloads: List[Dict] = []
+    if req.block_neighbours:
+        if req.preset not in P.NEIGHBOUR_BLOCK_PRESETS:
+            raise HTTPException(
+                status_code=400,
+                detail="The neighbour block is only available with Full lockdown and Internet only.",
+            )
+        try:
+            acl_rules = await client.get_acl_rules()
+            devices = await client.get_devices_raw()
+            live = await client.get_clients()
+        except Exception as e:
+            return LockdownResponse(dry_run=req.dry_run, error=str(e))
+        if acl_rules is None or not devices:
+            return LockdownResponse(
+                dry_run=req.dry_run,
+                error=("Could not read your switches from the controller, so the "
+                       "neighbour block cannot be set up safely. Nothing was changed."),
+            )
+        if P.site_acl_capable(devices) is False:
+            return LockdownResponse(
+                dry_run=req.dry_run,
+                error=("None of your UniFi switches support the neighbour block, "
+                       "so it would have no effect. Untick it and apply again. For "
+                       "Wi-Fi devices, use Wi-Fi client isolation instead."),
+            )
+        verdicts = {m.lower(): P.client_coverage(live.get(m.lower()), devices, live)
+                    for m in req.macs}
+        if all(v["status"] == P.NOT_COVERED for v in verdicts.values()):
+            return LockdownResponse(
+                dry_run=req.dry_run,
+                error=("None of the selected devices are connected through a switch "
+                       "that supports the neighbour block, so it would have no "
+                       "effect. Untick it and apply again."),
+            )
+        if P.neighbour_acls_for(acl_rules, req.macs):
+            return LockdownResponse(
+                dry_run=req.dry_run,
+                error=("A neighbour block already exists for this device. Release "
+                       "it first, then apply again."),
+            )
+        gw_macs = P.gateway_lan_macs(devices)
+        known_by_mac = {(c.get("mac") or "").lower(): c for c in known_clients or []}
+        by_network: Dict[str, List[str]] = {}
+        unplaced = []
+        for mac in req.macs:
+            m = mac.lower()
+            nid = (live.get(m) or {}).get("network_id") or \
+                (known_by_mac.get(m) or {}).get("last_connection_network_id")
+            if nid:
+                by_network.setdefault(nid, []).append(m)
+            else:
+                unplaced.append(m)
+        if unplaced:
+            return LockdownResponse(
+                dry_run=req.dry_run,
+                error=("Could not tell which network " + ", ".join(unplaced) +
+                       " is on, so its neighbours cannot be blocked. Bring the "
+                       "device online and try again, or untick the neighbour block."),
+            )
+        # DNS servers on the device's own VLAN go in the ALLOW beside the
+        # gateway (measured 2026-10-01: without this the neighbour block cut a
+        # same-VLAN Pi-hole and names stopped resolving). One that can't be
+        # matched to a MAC can't be allowed, so refuse rather than silently
+        # break DNS.
+        nets_by_id = {n.get("_id"): n for n in networks if n.get("_id")}
+        resolver_macs: Dict[str, List[str]] = {}
+        for nid in by_network:
+            found, missing = P.same_network_resolvers(nets_by_id.get(nid), live)
+            if missing:
+                return LockdownResponse(
+                    dry_run=req.dry_run,
+                    error=("This device's network hands out "
+                           + ", ".join(missing)
+                           + " for DNS, which is on the same network, but UniFi "
+                             "doesn't currently know that device's MAC address "
+                             "(it may be offline). The neighbour block would cut "
+                             "this device off from it, and websites and apps "
+                             "would stop loading by name. Bring that DNS server "
+                             "online and try again, or untick the neighbour block."),
+                )
+            resolver_macs[nid] = [r["mac"] for r in found]
+            note = P.resolver_note(found)
+            if note:
+                caveats.append(note)
+        indexes = P.next_acl_indexes(acl_rules, 2 * len(by_network))
+        try:
+            for i, (nid, macs) in enumerate(sorted(by_network.items())):
+                acl_payloads.extend(P.build_neighbour_acls(
+                    macs, nid, gw_macs, req.label, indexes[2 * i: 2 * i + 2],
+                    resolver_macs=resolver_macs.get(nid)))
+        except ValueError as e:
+            return LockdownResponse(dry_run=req.dry_run, error=str(e))
+        caveats.extend(P.NEIGHBOUR_CAVEATS)
+        for mac in req.macs:
+            cov = verdicts[mac.lower()]
+            who = req.label or mac
+            caveats.append(
+                f"{who} ({P.COVERAGE_LABELS[cov['status']].lower()}): "
+                f"{P.coverage_sentence(cov)}")
+
     if req.dry_run:
-        return LockdownResponse(dry_run=True, payloads=payloads, caveats=caveats)
+        return LockdownResponse(
+            dry_run=True, payloads=payloads + acl_payloads, caveats=caveats)
 
     async def roll_back():
         for done in created:
             pid = done.get("_id")
             if pid:
                 await client.delete_firewall_policy(pid)
+        for done in acl_created:
+            rid = done.get("_id")
+            if rid:
+                await client.delete_acl_rule(rid)
 
     created = []
+    acl_created: List[Dict] = []
     for payload in payloads:
         result = await client.create_firewall_policy(payload)
         if result is None:
@@ -1233,6 +1492,21 @@ async def lockdown(req: LockdownRequest):
                 error=f"Failed to create policy {payload.get('name')!r}; rolled back",
             )
         created.append(result)
+
+    # ALLOW is always written before its BLOCK (payload order), so a failure
+    # can never leave a lone BLOCK behind — which would cut the device off
+    # from the gateway entirely.
+    for payload in acl_payloads:
+        result = await client.create_acl_rule(payload)
+        if result is None:
+            await roll_back()
+            return LockdownResponse(
+                dry_run=False, created=[],
+                error=("House Arrest couldn't set up the neighbour block, so it "
+                       "undid the whole lockdown."),
+            )
+        acl_created.append(result)
+    created.extend(acl_created)
 
     # No offered preset relocates the device any more. The Quarantine preset's
     # VLAN move (per-client virtual_network_override) was removed 2026-09-17
@@ -1293,14 +1567,52 @@ async def release(req: ReleaseRequest):
 
             targets = [p for p in targets if _label(p).strip().lower() == wanted]
 
+    # Neighbour-block ACLs belong to device lockdowns. Matched by the devices'
+    # MACs and, for a label release, by name too (catches an ACL whose
+    # firewall half was already removed). is_house_arrest_acl() still gates
+    # every match, so nothing UniFi generated is ever touched.
+    acl_targets: List[Dict] = []
+    if req.kind != "network":
+        device_macs = sorted({m for p in targets
+                              if not P.is_network_policy(p) and not P.is_dns_policy(p)
+                              for m in P.policy_macs(p)})
+        acl_rules = await client.get_acl_rules()
+        if acl_rules is None and device_macs:
+            refused.append({"reason": "could not read switch ACL rules; any "
+                                      "neighbour block was left in place"})
+        for r in acl_rules or []:
+            by_mac = bool(set(device_macs) & set(P.acl_source_macs(r)))
+            by_name = bool(req.label) and r.get("name") == P.acl_rule_name(req.label)
+            if P.is_house_arrest_acl(r) and (by_mac or by_name):
+                acl_targets.append(r)
+        # A partial release must never leave a lone BLOCK: take the ALLOW
+        # only after its BLOCK, by deleting BLOCKs first below.
+        acl_targets.sort(key=lambda r: 0 if r.get("action") == "BLOCK" else 1)
+
     if req.dry_run:
         return ReleaseResponse(
             dry_run=True,
             would_delete=[
                 {"policy_id": p.get("_id"), "name": p.get("name")} for p in targets
+            ] + [
+                {"policy_id": r.get("_id"), "name": r.get("name") + " (switch rule)"}
+                for r in acl_targets
             ],
             refused=refused,
         )
+
+    acl_deleted: List[str] = []
+    for r in acl_targets:
+        rid = r.get("_id")
+        if rid and await client.delete_acl_rule(rid):
+            acl_deleted.append(rid)
+        else:
+            refused.append({"policy_id": rid, "name": r.get("name"),
+                            "reason": "switch rule delete failed"})
+            if r.get("action") == "BLOCK":
+                # Stop before touching its ALLOW — a lone BLOCK cuts the
+                # device off from the gateway.
+                return ReleaseResponse(dry_run=False, deleted=acl_deleted, refused=refused)
 
     # Clear any VLAN override first. Deleting the policies while the device is
     # still parked in the quarantine network would look like a release but
@@ -1318,7 +1630,7 @@ async def release(req: ReleaseRequest):
             })
             return ReleaseResponse(dry_run=False, deleted=[], refused=refused)
 
-    deleted = []
+    deleted = list(acl_deleted)
     for pol in targets:
         pid = pol.get("_id")
         if pid and await client.delete_firewall_policy(pid):

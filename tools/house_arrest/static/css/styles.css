@@ -561,7 +561,8 @@ select:focus, input[type="text"]:focus {
     font-weight: 600;
     white-space: nowrap;
 }
-.path.is-block .path-verdict { color: var(--state-broken); }
+.path.is-block .path-verdict,
+.path.is-switch .path-verdict { color: var(--state-broken); }
 .path.is-allow .path-verdict { color: var(--state-enforcing); }
 /* "moved" is its own state: not blocked, not unchanged. */
 .path.is-moved .path-verdict { color: var(--state-rotated); }
@@ -693,6 +694,56 @@ pre.payload {
     margin-top: 0.15rem;
 }
 .arrest-meta .sep { margin: 0 0.35rem; opacity: 0.5; }
+
+/* Neighbour block: coverage verdicts. Enforced = green, partly = amber,
+   not enforced/broken = red, unknown = neutral. Same state tokens as the
+   rest of the page so dark mode follows automatically. */
+.coverage-list {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.35rem;
+}
+.coverage-list li { font-size: 0.85rem; line-height: 1.4; }
+.coverage-list .coverage-note { display: block; color: var(--text-secondary); }
+.coverage-chip {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    background: var(--surface-sunken);
+    color: var(--text-secondary);
+}
+.coverage-covered .coverage-chip, .coverage-chip.coverage-covered {
+    background: color-mix(in srgb, var(--state-enforcing) 15%, var(--surface));
+    color: var(--state-enforcing);
+}
+.coverage-partial .coverage-chip, .coverage-chip.coverage-partial {
+    background: color-mix(in srgb, var(--state-rotated) 18%, var(--surface));
+    color: #8a5a00;
+}
+:root[data-theme="dark"] .coverage-partial .coverage-chip,
+:root[data-theme="dark"] .coverage-chip.coverage-partial { color: var(--state-rotated); }
+.coverage-none .coverage-chip, .coverage-chip.coverage-none {
+    background: color-mix(in srgb, var(--state-broken) 14%, var(--surface));
+    color: var(--state-broken);
+}
+.arrest-neighbours {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+.arrest-neighbours .coverage-chip { margin-left: 0.2rem; }
+/* Offered but not possible on this network: greyed, with the reason shown. */
+.inline-check.is-disabled strong,
+.inline-check.is-disabled > span > .hint:not(.unsupported-note) { opacity: 0.55; }
+.inline-check.is-disabled input { cursor: not-allowed; }
+.unsupported-note { display: block; margin-top: 0.35rem; color: var(--text-primary); }
 .vlan-chip {
     display: inline-block;
     margin-left: 0.4rem;
@@ -753,7 +804,14 @@ table.matrix {
     border-collapse: separate;
     border-spacing: 3px;
     min-width: 720px;
+    /* Fixed layout so columns take the widths set here, not the width of
+       their longest header text: the setting columns share the space
+       equally and their help text wraps taller instead. */
+    table-layout: fixed;
 }
+table.matrix th.net-col { width: 10rem; }
+/* DNS carries resolver addresses, so it gets a larger share. */
+table.matrix th.col-dns { width: 22%; }
 
 table.matrix th {
     text-align: left;
@@ -819,6 +877,12 @@ td.cell.is-neutral { color: var(--text-secondary); }
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 16ch;
+}
+/* A list of resolvers is data, not a one-word state: show every address and
+   wrap between them (at the ", ") rather than ellipsising after 16 chars. */
+.cell-label--list {
+    white-space: normal;
+    max-width: none;
 }
 
 /* Hover/focus explanation. Positioned fixed-width and above the cell so it

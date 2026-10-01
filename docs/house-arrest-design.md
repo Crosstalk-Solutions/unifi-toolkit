@@ -1029,12 +1029,18 @@ applies to **every client on that SSID**, and it breaks casting, AirPlay and
 local printing for all of them. The IoT SSID carrying 31 clients with
 isolation off is the realistic version of that trade-off.
 
-### There is NO per-network Device Isolation field  [Measured]
+### ~~There is NO per-network Device Isolation field~~  [CORRECTED 2026-09-29]
 
-The network document carries only `network_isolation_enabled`, which is the
-cross-network control this tool already uses. Nothing on it isolates clients
-from each other within the network. For wired devices that would need a
-switch-port ACL, which was not found in the API surface examined.
+**The original claim was wrong because it over-generalised a null result.**
+What was measured: the *network document* (`rest/networkconf`) carries only
+`network_isolation_enabled`. What was written: "no per-network Device
+Isolation field" and "switch-port ACL not found in the API surface examined".
+The field exists — it lives in the site-wide `rest/setting` → `global_switch`
+document as `acl_device_isolation: [<network ids>]`, which was never read. And
+switch ACLs had already been found (see "VIABLE, NOT BUILT" above), so this
+entry contradicted the same document. A negative finding must name where it
+looked: "not on networkconf, checked 2026-09-16" was the true statement.
+See "MEASURED 2026-09-29" at the end of this file for the tested behaviour.
 
 ### `traffic-flows` returns ONLY blocked flows  [Measured]
 
@@ -1239,3 +1245,404 @@ the removed Quarantine preset, whose picker chose VLAN move targets. That
 silently kept the untagged Default network out of DNS Lockdown everywhere
 (spotted on NOMAD2, where Default is the primary network; reproduced at
 home). WANs stay excluded; untagged networks now appear as "(untagged)".
+
+## MEASURED 2026-09-29: switch isolation, per-device ACLs, and UniFi Objects
+
+Test rig: two Raspberry Pis (`testclient` dc:a6:32:08:36:42, NOMAD10
+d8:3a:dd:d1:e4:cf) on Guests (VLAN 10), moved between a USW-Pro-Max-16-PoE
+(ACL-capable) and a USW Ultra (not). Topology: Ultra → Pro Max → Pro XG 8 →
+UCG-Fiber. Each result below had a before/after control on the same ports.
+Network 10.6.106. Scope decision the same day: **IPv6 is out of scope for
+House Arrest** (the gateway serves no IPv6 on these LANs; the predefined
+"Isolated Networks" rule matches IPv4 source subnets only — revisit if IPv6
+is ever brought in scope).
+
+### Device Isolation (ACL) — site-level list, switch-enforced  [Measured]
+
+* Stored at `rest/setting` → `global_switch.acl_device_isolation` as a plain
+  list of network ids. `acl_l3_isolation` sits beside it (list of
+  source→destinations entries), plus an unexplained `switch_exclusions: []`.
+* **Writable with the toolkit API key**: read-modify-write PUT of the whole
+  `global_switch` doc to `rest/setting/global_switch/{_id}`; response echoes
+  the change, re-read agrees, no other field changed. Pro Max applied it in
+  ~10 s.
+* Which switches enforce it is readable: `stat/device` →
+  `switch_caps.max_custom_mac_acls` / `max_custom_ip_acls` / `max_global_acls`
+  > 0 on exactly the switches the UniFi UI does NOT list as unsupported (Pro
+  Max 16, Pro XG 8, Lite 8 PoE here); 0 or absent on Ultra, Flex, Flex 2.5G,
+  Flex Mini, Industrial. This answers `[VERIFY]` #1 of the ACL section above:
+  the Flex 2.5G generation is **not** ACL-capable.
+* Results (Guests on the list vs off):
+
+  | Layout | Same-VLAN peer traffic |
+  |---|---|
+  | both Pis on Pro Max | **blocked** (ARP FAILED, ping/nc fail; gateway fine) |
+  | one on Pro Max, one on Ultra | **blocked** |
+  | both on the same Ultra | **passes** despite the setting |
+  | setting off, any layout | passes |
+
+* The UI's "not applied to" note refers to the switch-level L3 setting, NOT
+  the gateway's `network_isolation_enabled`: a Guests device on the Ultra
+  still could not reach Default (gateway isolation holds). The existing
+  Network isolation column is honest.
+* Gateway network isolation blocks **both directions** (Default could not
+  start connections into IDIoT/Guests either).
+
+### Per-device MAC ACL rules (`v2/acl-rules`)  [Measured]
+
+* CRUD with the API key: POST `v2/api/site/{site}/acl-rules` (201),
+  DELETE `…/acl-rules/{id}` (200). Stored shape: `type: "MAC"`,
+  `mac_acl_network_id`, `traffic_source` / `traffic_destination` each
+  `{type: "CLIENT_MAC", specific_mac_addresses: [...]}` (empty = Any),
+  `action`, `acl_index`, `specific_enforcers` ([] = all switches).
+  User-created rules have **no description field** and names are capped at
+  **32 chars** — a marker must live in the name.
+* `acl_index` sent on create IS honoured (0 and 1 stored as sent). Answers
+  `[VERIFY]` #3 above for the v2 route.
+* **"Block source → Any" also blocks the gateway.** The device lost
+  everything, SSH from the LAN included; restored 2 s after the delete.
+* **Enforced in transit, not only at the edge port.** `testclient` on the
+  (non-ACL) Ultra was still cut off, because its traffic crosses the Pro Max
+  and Pro XG on the way to the gateway. Coverage = "an ACL-capable switch lies
+  between the device and what it talks to", not "its own switch is capable".
+* **The working per-device pattern:** `acl_index 0` ALLOW device → gateway's
+  MAC *on that network* (`a8:9c:6c:90:e3:85` on Guests — NOT the device MAC
+  `…:80` the controller reports), then `acl_index 1` BLOCK device → Any.
+  Result: peer blocked (ARP INCOMPLETE), gateway / internet / DNS / HTTPS all
+  working. Control after delete: peer reachable again.
+* Wireless-to-wireless on one AP is still unmeasured (`[VERIFY]` #2 above).
+
+### UniFi Objects (Object Oriented Networking)  [Measured]
+
+Settings → Policy Engine → Objects, introduced in Network 9.4 (release
+notes / LazyAdmin, not tested on 9.4 itself). House Arrest requires 9.0+, so
+9.0–9.3 users lack it.
+
+* API: POST `v2/api/site/{site}/object-oriented-network-config` (201), GET
+  `…/object-oriented-network-configs`, DELETE `…-config/{id}` (204). All with
+  the toolkit API key. Delete removes every generated rule.
+* Compact document: `targets: [{type: "MAC", value}]`, `target_type:
+  "CLIENTS"`, `secure.internet.mode` ∈ {TURN_OFF_INTERNET, ALLOWLIST,
+  BLOCKLIST} with `everything: true` + `apps/domains/ip_addresses/regions`
+  `{enabled, values}` and a `schedule`; `secure.local.mode` ∈ {INHERIT?,
+  BLOCKLIST, ALLOWLIST, QUARANTINE}. `route` and `qos` blocks are REQUIRED
+  even when disabled. Internet "allowed" is ALLOWLIST + everything;
+  BLOCKLIST + everything means block all. Minimal accepted create body
+  (as stored by the UI, `id` removed):
+
+  ```json
+  {"enabled": true, "name": "...", "target_type": "CLIENTS",
+   "targets": [{"type": "MAC", "value": "aa:bb:cc:dd:ee:ff"}],
+   "secure": {"enabled": true,
+     "internet": {"mode": "TURN_OFF_INTERNET", "schedule": {"mode": "ALWAYS"}},
+     "local": {"mode": "QUARANTINE"}},
+   "route": {"enabled": false,
+     "apps": {"enabled": false, "values": []}, "domains": {"enabled": false, "values": []},
+     "ip_addresses": {"enabled": false, "values": []}, "regions": {"enabled": false, "values": []}},
+   "qos": {"enabled": false, "all_traffic": true, "mode": "LIMIT",
+     "apps": {"enabled": false, "values": []}, "domains": {"enabled": false, "values": []},
+     "ip_addresses": {"enabled": false, "values": []}, "regions": {"enabled": false, "values": []},
+     "download_limit": {"burst": "DISABLED", "enabled": false, "limit": 10000},
+     "upload_limit": {"burst": "DISABLED", "enabled": false, "limit": 10000}}}
+  ```
+
+  An internet ALLOWLIST/BLOCKLIST block instead carries `"everything": true`
+  plus the same four `{enabled, values}` lists.
+* One Object expands into many `predefined: true` firewall policies
+  (`origin_type: object_firewall_rule`, `origin_id` = object id, BLOCK by
+  client MAC across every zone pair incl. **Internal → Gateway**) plus one
+  predefined ACL (`origin_type: object_acl_rule`, device → **Any**, no
+  gateway allow). No+Quarantine produced 13 policies; Quarantine-only 9.
+  Quarantine-only produced **no Internal → Internal policy** — whether other
+  VLANs in the same zone stay reachable is `[VERIFY]` (untestable from
+  Guests, which is already isolated).
+* **UniFi's Quarantine tooltip ("Isolate targets from the local network.
+  Internet is unaffected.") is wrong on this setup.** Quarantine-only
+  (internet ALLOWLIST + everything) killed gateway, internet and DNS in the
+  same second it was saved, and peers ~30 s later when the ACL landed. Same
+  result as No Internet + Quarantine. One device, on an isolated network —
+  repeat on a non-isolated network before stating it publicly.
+* Firewall rules land within ~4 s; the ACL half within ~30 s.
+
+### Objects preset mapping, tested 2026-09-29 (afternoon)  [Measured]
+
+`secure.local` has no INHERIT value: "Inherit" in the UI = the `local` key
+omitted. Local ALLOWLIST/BLOCKLIST take `everything: true` plus `devices`,
+`networks`, `mac_addresses`, `ip_addresses` `{enabled, values}` lists. All
+three Objects below were created via the API with the toolkit key (201).
+
+| Object | Generated | Peer | Gateway ping | Internet | DNS (Pi-hole) |
+|---|---|---|---|---|---|
+| No Internet, local omitted ("LAN only") | 3 BLOCK → External, no ACL | ok | ok | **blocked** | ok |
+| Internet ALLOWLIST+everything, Local BLOCKLIST+everything ("Internet only") | 9 BLOCK (incl. Internal → Gateway, no Internal → Internal) + ACL pair | **blocked** | **blocked** | ok | ok |
+| Quarantine (either internet mode) | 9–13 BLOCK + ACL device → Any | blocked | blocked | **blocked** | blocked |
+
+* Local BLOCKLIST generates the ALLOW-then-BLOCK ACL pair automatically, and
+  more completely than the hand-built one: the ALLOW lists the gateway's MAC
+  on every network, broadcast `ff:ff:ff:ff:ff:ff`, and IPv6 multicast
+  `33:33:00:00:00:02` / `33:33:00:01:00:02`. Quarantine omits the ALLOW —
+  that is why it is a total cutoff.
+* Local BLOCKLIST's Internal → Gateway BLOCK sits after only "Allow mDNS" in
+  that pair, so traffic to the gateway itself is blocked — **including DHCP
+  [Measured 2026-09-29]**. Under the Object, `sudo nmcli con up` failed
+  ("IP configuration could not be reserved"; NM journal 12:22:38 "no lease").
+  Object deleted 12:23:13; NM's own 5-minute auto-retry at 12:27:38 got a
+  lease at once. So an "Internet only" device under Local Blocklist works
+  until its lease expires (~24 h here), then has no address until the Object
+  is removed. Any House Arrest use of Local Blocklist must add a DHCP allow
+  (or not use it). Correction recorded: an earlier same-session report said
+  the device "did not recover on its own"; the reachability poll had simply
+  ended 79 s before NM's retry.
+* Timing: firewall part ~4–10 s after save; ACL part ~10–30 s.
+* Candidate mapping: LAN only → No Internet (local omitted) — matches exactly.
+  Internet only → Allowlist+everything + Local Blocklist — matches except the
+  gateway question. Full lockdown → No Internet + Local Blocklist — untested.
+  "Let others still reach it" (block NEW only) — no Objects equivalent found.
+
+### Objects on a NON-isolated network (HA-Test, VLAN 24)  [Measured 2026-09-29]
+
+Repeat of the preset mapping with both Pis on HA-Test (192.168.3.0/24,
+Internal zone, isolation off; DHCP hands out the GATEWAY as DNS — the UniFi
+default). `testclient` 192.168.3.73 on Pro Max p3, NOMAD10 .74 on Ultra p3.
+"Default LAN" = ping Pihole1 192.168.200.50 (another VLAN, same zone).
+Created/deleted via API; 70 s hold, 50 s recovery; full recovery each time.
+
+| Object | Peer | Gateway | Default LAN | Internet | DNS @gw | DNS @Pi-hole | HTTPS |
+|---|---|---|---|---|---|---|---|
+| Quarantine (internet allowed) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Local Blocklist (internet allowed) | ✗ | ✗ | **✓** | ✓ | **✗** | ✓ | **✗** |
+| No Internet + Local Blocklist | ✗ | ✗ | **✓** | ✗ | ✗ | ✓ | ✗ |
+
+* **Quarantine's "Internet is unaffected" is wrong on a normal network too**
+  — now measured on both an isolated and a non-isolated VLAN. Safe to say.
+* **"Local" in Objects means the device's own VLAN plus the gateway — NOT
+  your other networks.** Local Blocklist left a different VLAN in the same
+  zone fully reachable (no Internal → Internal policy is generated). So
+  "No Internet + Local Blocklist" is NOT House Arrest's Full lockdown, which
+  blocks the whole Internal zone.
+* **Local Blocklist breaks name resolution on a default UniFi network.** It
+  blocks the gateway itself, and by default DHCP advertises the gateway as
+  the DNS server — so internet by IP works but anything using a hostname
+  fails (HTTPS 000). On Guests it only looked fine because Guests' DHCP hands
+  out the Pi-holes. Together with the DHCP block above, Local Blocklist is
+  not a safe "Internet only" engine as shipped.
+* Firewall part lands in ~2–5 s after save, ACL part in ~20 s; recovery after
+  delete within ~10 s.
+
+**Net for the engine decision:** only "LAN only" (No Internet, local omitted)
+maps cleanly onto an Object. The other presets would need Objects plus
+House Arrest's own allow rules (DHCP + gateway DNS) and its own Internal →
+Internal blocks — at which point the Object is not simplifying anything.
+Keep House Arrest's own enforcement for Internet only / Full lockdown; use the
+hand-built ALLOW-gateway + BLOCK-Any ACL pair (with broadcast added, per the
+list UniFi itself generates) for the optional same-VLAN block.
+
+### Switch ACLs and Wi-Fi clients  [Measured 2026-09-29]
+
+`testclient` wlan0 (dc:a6:32:08:36:43, IDIoT, AP U6+) vs VENGEANCE Wi-Fi
+(IDIoT, AP U7-Pro-Max Attic). Uplink paths: U6+ → Ultra 210W → USW
+Industrial; U7 Attic → USW Industrial; both → Pro Max [ACL] → Pro XG [ACL] →
+gateway. The two APs meet at the Industrial, which has no ACL capability.
+
+| ACL on testclient's Wi-Fi MAC | Wi-Fi peer | Gateway | Internet |
+|---|---|---|---|
+| none (baseline + control) | ok | ok | ok |
+| ALLOW gw/broadcast + BLOCK Any | ok | ok | ok |
+| BLOCK Any only (positive control) | **ok** | **blocked** (ARP INCOMPLETE) | blocked |
+
+* Switch ACLs DO match Wi-Fi clients' traffic — but only where it crosses an
+  ACL-capable switch. This answers `[VERIFY]` #2 of the ACL section: the
+  "coverage = path" rule holds for wireless too.
+* Consequence: a Wi-Fi device's coverage depends on where its peers' APs
+  meet. Two devices on the SAME AP (not tested — predicted never to touch a
+  switch) or on APs joined below any ACL switch are not covered; per-SSID
+  Client Isolation is the only control for those.
+* A coverage verdict must therefore be computed per device PAIR/path, or
+  stated conservatively per device: "covered only for traffic that crosses
+  <switch>". The honest one-line UI version is probably the conservative one.
+
+### Port Isolation (per switch port)  [Measured + UI text]
+
+`port_overrides[].isolation` on the switch device. UI (UniFi Devices → switch
+→ port → Port settings): "Allows you to prohibit traffic between isolated
+ports. This only applies to ports on the same device." Measured: with only
+NOMAD10's USW Ultra port isolated, `testclient` on the Pro Max reached it
+normally. The Ultra honours it (`port_table.isolation: true`) even though it
+has no ACL capability. Out of scope for House Arrest (decided 2026-09-29).
+
+### Consequence for the product (decided 2026-09-29)
+
+House Arrest's value is being the easy, one-place front end and the honesty
+layer — not the enforcement engine. The video stays "you can do all of this
+in UniFi, but this makes it easy". Candidate direction, not yet built:
+
+* Per-device lockdown could be expressed as a UniFi Object (so the UniFi UI
+  and the tool can never disagree — the same principle as network
+  isolation), BUT Quarantine as shipped over-blocks, so a "cut it off from
+  its neighbours" option should use the measured ALLOW-gateway + BLOCK-Any
+  ACL pair, not Quarantine, until UniFi's behaviour matches its tooltip.
+* Coverage must be reported per device from `switch_caps` + uplink path, in
+  one plain sentence. No ACL vocabulary in the UI.
+* DNS Lockdown, the audit matrix, coverage verdicts and blocked-traffic
+  attribution are the things UniFi does not provide; they are the product.
+* Other controls surfaced by the settings walk, not yet evaluated: firewall
+  destinations by App / Domain / Region; Simple App Blocking; Region
+  Blocking; per-SSID PPSK, MAC filter and mDNS proxy; `lan/mdns` service
+  filter (mDNS proxy passes only the selected service types); Default
+  Security Posture (Allow All / Block All). Raw API dumps were kept out of
+  the repo (home-network detail); re-dump rather than trust old copies.
+
+## BUILT 2026-09-29: Device isolation column + per-device neighbour block
+
+Local build for UI polish; not yet on `:edge`.
+
+* **Networks matrix → "Device isolation" column.** Editable for local
+  (`corporate`/`guest`) networks only — UniFi's own picker offers nothing
+  else; VPN / transit rows show "—". Writes the site-wide
+  `global_switch.acl_device_isolation` list (read-modify-write, poll-verified,
+  `set_device_isolation_networks`). The cell never says a bare "On" when
+  coverage is incomplete: "On · N of M", amber, from `switch_caps` + each
+  online client's switch / AP uplink path (`network_isolation_coverage`).
+  Verified end to end on HA-Test: toggled on from the tool, the Pro Max Pi lost
+  its neighbour (0/3) and kept the gateway; toggled off, 3/3.
+* **Devices tab → "Also cut it off from devices on its own network"**
+  (Full lockdown and Internet only; LAN only refuses it, server-side too).
+  Writes the measured ACL pair per network: ALLOW device → gateway LAN MACs +
+  broadcast + IPv6 multicast (`acl_index` n), BLOCK device → Any (n+1), named
+  `[HouseArrest] <label>` (32-char cap). Written after the firewall policies;
+  any failure rolls back everything. Release deletes BLOCK before ALLOW and
+  stops if a BLOCK delete fails, so a lone BLOCK (total cutoff) can never be
+  left behind. State reports `neighbours` ok / broken / disabled and flags a
+  lone rule as broken. Coverage verdicts (covered / partial / none / unknown)
+  shown in the picker before applying and on the lockdown card, in plain
+  sentences. Verified end to end: Internet only + neighbour block on
+  `testclient` → neighbour and Default LAN blocked, gateway / internet / HTTPS
+  working, card "Fully enforced"; release removed all 3 rules, connectivity
+  restored. DHCP renewal under the pair not measured (needs sudo on the Pi);
+  the pair allows gateway MACs + broadcast and House Arrest never blocks the
+  Gateway zone, so it is expected to work `[VERIFY]`.
+* Tests: `tests/test_house_arrest_acl.py` (23) on the measured topology.
+* **Open for the polish pass:** the scenario infographics still draw "Same
+  VLAN" green; a neighbour-block variant of each `(preset, inbound)` image is
+  needed or the picture contradicts the list. Version must be bumped before
+  `:edge` (asset cache-busting is keyed to it).
+
+### Added 2026-09-29 (later): honest coverage on networks that can't do it
+
+* **No capable switch on the site** (`site_acl_capable()` False — read from
+  every device's `switch_caps`, never a model list): Device isolation cells
+  read "Not supported" (grey, locked, even if switched on in UniFi); the
+  neighbour checkbox is disabled with the reason and the Wi-Fi client
+  isolation alternative; the toggle endpoint returns 409 and the lockdown
+  endpoint refuses the neighbour block. None (unreadable) is unknown, never
+  "not supported". Verified end to end against the live controller with a
+  wrapper that zeroed every `switch_caps` (read + dry run only).
+* **Capable switches exist but none of the selected devices are reached
+  through one**: the lockdown endpoint refuses rather than writing rules that
+  do nothing. Not exercised live (every device here reaches the Pro Max).
+* **Shared switch port** → "Partly blocked": another wired client on the same
+  `sw_mac` + `sw_port` means unmanaged gear or a VM host that UniFi can't see.
+  Measured on this network: `bignas2` and `homeassistant` share one Pro Max
+  port (HA as a VM on the NAS), so the wording names both causes.
+* **Unfollowable uplink path → "Unknown", not "Not blocked".** Measured: the
+  "UK Ultra Shed" AP still names "USW-Lite-8-PoE Tall Desk" as its uplink,
+  a switch absent from every device list. Five devices were being reported
+  "not covered"; they now read Unknown with the reason.
+* Live distribution after these fixes: 80 online devices → 8 fully, 67 partly,
+  5 unknown.
+
+### Added 2026-09-29 (later): network settings vs per-device lockdowns
+
+* **Decision: the Devices tab never writes an ALLOW.** Custom ALLOWs (10000s)
+  evaluate before UniFi's predefined "Isolated Networks" BLOCK (30004), so a
+  per-device exception would reopen an isolated network. The unused
+  `build_exception` / `build_inbound_exception` were deleted.
+* **Networks tab → isolation exceptions.** `isolation_exceptions()` lists every
+  enabled custom ALLOW that gets through a network's isolation: outbound
+  (source can be this network, destination another local network or "Any")
+  and inbound (destination named inside this network; its generated
+  "(Return)" policy sits ahead of the isolation block). The cell stays a green
+  "On"; the hover names each one. Live on this network: Guests 3, IDIoT 4,
+  OpenClaw 3 — including a leftover "TEST ANY to Elgato2" that opens
+  192.168.107.133:8123 to every local network. Only the DNS-allow hole was
+  measured (Guests → Pi-hole :53); the rest follow from rule ordering.
+* **Devices tab → network-aware verdicts.** Each picker client carries its
+  network's isolation / internet / Device Isolation flags and exception
+  count. When every selected device's network agrees, the rows show the real
+  result ("Blocked by its network settings, except 4 rules listed on the
+  Networks tab"; "Only from its own network"); mixed selections get one note;
+  a preset that can't deliver (Internet only on a no-internet network, LAN
+  only on an isolated one) gets a warning under the preset choice.
+
+## MEASURED 2026-10-01: the neighbour block cuts DNS to a same-VLAN resolver
+
+Rig: `nomad10` (d8:3a:dd:d1:e4:cf, wired, Default 192.168.200.197, USW Ultra,
+coverage "Partly blocked") resolving through Pihole1/Pihole2
+(192.168.200.50/.51, same VLAN, on a USW Flex 2.5G; path crosses the
+USW-Pro-Max-16-PoE). Preset: Internet only + neighbour block, allow_inbound
+on. Applied and released three times via the toolkit API; every release
+deleted all 3 rules and SSH returned within ~10 s.
+
+| Check (cache flushed before name tests) | Before | Locked |
+|---|---|---|
+| Control: dig @1.1.1.1 over the internet | PASS | PASS |
+| Gateway ping | PASS | PASS |
+| DNS @Pihole1 / @Pihole2 (same VLAN), UDP and TCP | PASS | **FAIL** |
+| DNS @gateway (.1) | PASS | PASS |
+| System resolver (resolvectl, .50/.51) | PASS | **FAIL** |
+| Internet by IP (ping 1.1.1.1) | PASS | PASS |
+| HTTPS by name | PASS | **FAIL** |
+
+Packet capture on nomad10 under the lockdown: queries leave addressed to
+the Pi-hole's real MAC (dc:a6:32:2b:88:66) and nothing comes back, so the
+block is at L2 on the Pro Max, as designed. ICMP and SSH to the Pi-hole fail
+the same way. A same-VLAN neighbour (the workstation, 192.168.200.230) lost
+SSH to nomad10 within ~30 s of applying.
+
+* **Consequence:** "Internet only keeps its internet access" is false with
+  the neighbour block on whenever the device's resolver sits on its own VLAN,
+  the most common Pi-hole layout. The card still shows "Fully enforced".
+  Before this was measured, the Devices tab checked no resolvers at all
+  (resolver logic exists only in DNS Lockdown).
+* **Failed probe, recorded so it isn't repeated:** the first probe scored DNS
+  as PASS under lockdown. It checked `dig +short ... | grep -q .`, and dig
+  prints its ";; communications error ... timed out" line to stdout, so a dead
+  resolver matched. Name-based tests also passed off systemd-resolved's cache
+  from the baseline run. A DNS check must require dig exit 0 AND an address
+  in the answer, with the cache flushed (rule 9: a result is only evidence
+  once the command is known to work).
+* **Not measured, same shape `[VERIFY]`:** Internet only's firewall "no LAN"
+  block should also cut DNS to a resolver on a *different* VLAN in the same
+  zone, for a device on a network without a DNS Lockdown allow ahead of it.
+  (Guests and IDIoT here both carry House Arrest DNS allows at lower indexes,
+  which would mask it.) Disproof: Internet only on a device whose network
+  advertises a cross-VLAN Pi-hole and has no DNS Lockdown; resolve by name.
+* False alarm, same session: a policy name looked mojibaked (`â€”`) in
+  output. It was the Windows pipe decoding UTF-8 as cp1252; decoded
+  properly, the stored name is `—`.
+
+### FIXED 2026-10-01: same-VLAN resolvers join the neighbour block's ALLOW  [Measured]
+
+`same_network_resolvers()` reads the network's DHCP DNS (`dhcpd_dns_1..4`,
+gated by `dhcpd_dns_enabled`), keeps the ones inside its own `ip_subnet`, and
+maps each to a live client's MAC. Those MACs join the ALLOW beside the
+gateway's. Resolvers on other networks need nothing here (they are routed
+via the gateway, which the ALLOW already covers). A same-subnet resolver with
+no known MAC (offline) makes the apply REFUSE with a plain reason, rather than
+silently cut DNS. The picker (`neighbour_dns_note`) and card
+(`neighbours_dns_note`, read back from the stored ALLOW rule by
+`acl_allowed_resolvers()`, so it reports what is enforced) both say "DNS keeps
+working: it can still reach pihole1 and pihole2 on its own network", plus
+the honest caveat that an L2 rule can't filter by port.
+
+Re-measured on the same rig, 14:58: under Internet only + neighbour block,
+DNS @Pihole1/2, system resolver (cache flushed), and HTTPS by name all PASS;
+gateway and internet PASS; the control held (the workstation, a same-VLAN
+non-resolver neighbour, still timed out SSHing to nomad10 at 14:58:50,
+between the two locked runs).
+
+Side observation, unresolved: the controller placed nomad10 on USW Ultra
+Behind Network Rack at ~14:30 and on USW-Pro-Max-16-PoE port 7 from 14:58
+(the Ultra uplinks on Pro Max port 14, so p7 is a direct attachment). Either
+it was moved or the earlier `sw_mac` was stale. Coverage verdicts follow
+whatever `stat/sta` says at the time.

@@ -60,13 +60,39 @@ Version is maintained in THREE files — keep them in sync:
 - Network isolation uses UniFi's native `network_isolation_enabled` /
   `internet_access_enabled` flags, NOT parallel policies, so the tool and the
   UniFi UI can never disagree.
-- **Same-VLAN peer traffic is the tool's permanent blind spot** and the UI says so
-  at full size on the Devices tab, not in a footnote. It never passes the gateway,
-  so no firewall policy sees it. Only a dedicated VLAN assigned natively in
-  UniFi (which removes the peers) or per-SSID Client Isolation addresses it.
-  Do not let any copy imply otherwise. The Quarantine preset that moved devices
-  itself was REMOVED 2026-09-17 — see the quirk below on the wired
-  virtual-network override half-applying.
+- **Same-VLAN peer traffic never passes the gateway, so no FIREWALL POLICY sees
+  it** — the tool's firewall-based presets cannot block it, and the Devices tab
+  says so at full size. CORRECTED 2026-09-29: it is NOT unblockable in UniFi.
+  Wired peers can be blocked by **switch ACLs** (site-level Device Isolation, or
+  per-device MAC ACL rules), but only where an ACL-capable switch lies in the
+  traffic path; Wi-Fi peers need per-SSID Client Isolation; a dedicated VLAN
+  removes the peers. The earlier "only a dedicated VLAN or Client Isolation"
+  wording was wrong. Details + measurements: design doc "MEASURED 2026-09-29".
+  The Quarantine preset that moved devices was REMOVED 2026-09-17 (see the
+  wired virtual-network override quirk). Do not confuse it with UniFi's own
+  Objects "Quarantine", which is a different thing (see quirks below).
+- **Direction (2026-09-29):** House Arrest is the easy one-place front end and
+  honesty layer over UniFi's own controls, not a parallel enforcement engine.
+  The video framing is "you can do all of this in UniFi, but this makes it
+  easy". Keep switch ACLs, Objects, isolation lists etc. out of the UI
+  vocabulary — one plain option and one plain coverage sentence.
+- **IPv6 is out of scope for House Arrest** (decided 2026-09-29).
+- **The Devices tab only ever ADDS restrictions — it never writes an ALLOW
+  that could reopen something the Networks tab closed** (decided 2026-09-29).
+  Custom ALLOWs evaluate before UniFi's "Isolated Networks" block, so a
+  per-device exception silently punches through network isolation. The unused
+  `build_exception` / `build_inbound_exception` builders were deleted for this
+  reason. Users who need a hole write the firewall rule themselves; the
+  Networks tab's isolation hover then lists it as an exception
+  (`isolation_exceptions()`). The neighbour block's ACL ALLOW is L2-only and
+  only to the gateway plus the network's own same-VLAN DHCP DNS servers, so
+  it can't reopen anything across networks.
+- **The neighbour block must allow same-VLAN resolvers** (measured
+  2026-10-01): without them, BLOCK device → Any cut a same-VLAN Pi-hole and
+  Internet only lost name resolution while the card said "Fully enforced".
+  `same_network_resolvers()` adds them; an unknown resolver MAC refuses the
+  apply. When testing DNS, require `dig` exit 0 AND an address, with the
+  resolver cache flushed: `dig +short` prints its timeout error to stdout.
 - **Never stack a lockdown on itself.** `dns_locked_network_ids()` and
   `arrested_macs()` guard both apply paths; the DNS picker also greys out networks
   that already have one. This was a real bug — a 5-rule lockdown got applied twice.
@@ -314,6 +340,14 @@ CHANGELOG.md and `docs/house-arrest-design.md`.
   `pip install -r requirements.txt` before digging deeper.
 - **House Arrest mounts at `/arrest/`**, not `/house-arrest` (see the
   `app.mount` calls in `app/main.py` for all tool paths).
+- **`/api/debug-info` returns every `gateway` field as null** on both the local
+  instance and NOMAD2 even while the controller is connected (seen
+  2026-09-29). It is not a sign of a lost connection — use `/api/system-status`
+  (`connected`, `gateway_model`) for that. Likely a debug-info bug; unfixed.
+- **Bash heredocs choke on apostrophes in inline Python/JS** in this
+  environment (`unexpected EOF while looking for matching '`). For any script
+  with quotes in it, write it to the scratchpad with the Write tool and run
+  the file.
 
 - **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
   "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.
@@ -444,3 +478,46 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
   `undefined`** (only an explicit `false` removes it). A state object replaced by
   an API response lacking the bound key stays disabled forever — set the key
   explicitly. (This dead-disabled the House Arrest re-read button.)
+- **A null result proves only where you looked.** "No Device Isolation field"
+  was recorded as Measured after checking `rest/networkconf` only; the field
+  was in `rest/setting` → `global_switch` all along, and the UI had it. Write
+  negatives as "not on X, checked DATE". When a control is suspected, find it
+  in the UniFi UI first, then trace which request the page makes.
+- **Device Isolation (ACL)** = `global_switch.acl_device_isolation` (list of
+  network ids; `acl_l3_isolation` beside it). Writable via PUT of the whole
+  `global_switch` doc. Enforced only by switches with
+  `switch_caps.max_custom_mac_acls > 0` — read that, never hardcode models.
+- **MAC ACL rules (`v2/acl-rules`)**: "device → Any" also blocks the GATEWAY
+  (total cutoff). Per-device peer isolation that keeps internet = ALLOW device
+  → gateway MAC *for that network* (not the device MAC the controller shows)
+  at `acl_index` 0, then BLOCK device → Any at 1. Enforced by any ACL-capable
+  switch the traffic crosses, not just the edge port. No description field;
+  32-char name limit.
+- **UniFi Objects (`v2/object-oriented-network-config[s]`, Network 9.4+)** are
+  fully API-writable and expand into many read-only `predefined` policies
+  (`origin_type: object_*`, `origin_id`). **Objects "Quarantine" cut gateway,
+  internet and DNS on 2026-09-29 despite its "Internet is unaffected" tooltip**
+  (one device, isolated network — repeat before stating publicly). Local
+  **Blocklist** is the well-behaved one: internet + DNS kept, peers blocked, via
+  an auto ALLOW-gateway/broadcast + BLOCK-Any ACL pair — but it also blocks the
+  gateway itself, **including DHCP (measured: no lease under the Object)** —
+  the device drops off at lease expiry — and gateway DNS, which is the
+  default DHCP-advertised resolver (HTTPS fails by name). "Local" also means
+  only the device's own VLAN + gateway: other VLANs in the same zone stay
+  reachable. "Inherit" = omit `secure.local`. Net (2026-09-29): only "No
+  Internet, local omitted" maps cleanly onto a House Arrest preset (LAN only).
+  **Decided 2026-09-29: House Arrest does not use Objects at all.**
+- **The gateway's LAN MAC is not its device MAC.** LAN devices ARP the gateway
+  as `network_table[].mac` (`…e3:85`, the same on every LAN here), not the
+  `…e3:80` the controller reports as the device MAC. `ethernet_table[].mac`
+  lists every interface. `P.gateway_lan_macs()` reads both — never match the
+  gateway at L2 by the device MAC alone. (Corrects an earlier note that said
+  the MAC "differs per network".)
+- **Static assets are cache-busted by the tool version** (`app.js?v=0.13.0`).
+  Changing JS/CSS without bumping House Arrest's version serves new templates
+  with stale scripts to anyone who has loaded the page before (measured: Alpine
+  "neighbourOffered is not defined"). Bump the version with any frontend change
+  that ships.
+- **UniFi's mDNS proxy filters by service type** (`v2/lan/mdns`, "Service
+  Scope: Specific"). "mDNS on" in the matrix does not mean every service
+  crosses.

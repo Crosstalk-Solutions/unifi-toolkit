@@ -156,7 +156,7 @@
                     <tr>
                         <th class="net-col">Network</th>
                         <template x-for="c in (inspection && inspection.matrix ? inspection.matrix.columns : [])" :key="c.key">
-                            <th>
+                            <th :class="'col-' + c.key">
                                 <span class="col-label" x-text="c.label"></span>
                                 <span class="col-help" x-text="c.help"></span>
                             </th>
@@ -180,7 +180,7 @@
                                     @keydown.enter.prevent="cellEditable(r, c) && openToggle(r, c)"
                                     @keydown.space.prevent="cellEditable(r, c) && openToggle(r, c)"
                                     :aria-label="r.name + ' — ' + c.label + ': ' + (r.cells[c.key] ? r.cells[c.key].label + '. ' + r.cells[c.key].detail : '') + (cellEditable(r, c) ? ' Activate to change this setting.' : '')">
-                                    <span class="cell-label" x-text="r.cells[c.key] ? r.cells[c.key].label : '—'"></span>
+                                    <span class="cell-label" :class="{ 'cell-label--list': c.key === 'dns' }" x-text="r.cells[c.key] ? r.cells[c.key].label : '—'"></span>
                                     <span class="cell-edit" x-show="cellEditable(r, c)" aria-hidden="true">✎</span>
                                     <span class="tip" role="tooltip">
                                         <strong x-text="r.name + ' · ' + c.label"></strong>
@@ -774,6 +774,12 @@
             </template>
         </div>
 
+        <!-- A preset that can't deliver what its name says, because the
+             device's network (Networks tab) already took that access away. -->
+        <template x-for="msg in presetConflicts()" :key="msg">
+            <p class="notice warn preset-conflict" x-text="msg"></p>
+        </template>
+
         <!-- Deliberately not "let ME reach it". The rule cannot tell one person
              from another: it blocks what the DEVICE starts, so anything able to
              route to the device can still open a connection to it. Saying "me"
@@ -781,14 +787,50 @@
         <label class="inline-check">
             <input type="checkbox" x-model="allowInbound" @change="preview = null">
             <span>
-                <strong x-text="selectedMacs.length > 1 ? 'Let other devices still reach these devices' : 'Let other devices still reach this device'"></strong>
-                <span class="hint" style="margin-top:0.15rem">
-                    It can't start connections out, but it can still answer when
-                    something contacts it — so a camera or smart bulb stays usable.
-                    This is not limited to your computer: anything that can already
-                    route to the device, on any VLAN a firewall rule doesn't stop,
-                    can reach in. Uncheck for absolute isolation in both directions.
+                <strong x-text="(neighbourBlockActive() ? 'Let devices on your other networks still reach ' : 'Let other devices still reach ') + (selectedMacs.length > 1 ? 'these devices' : 'this device')"></strong>
+                <span class="hint" style="margin-top:0.15rem"
+                      x-text="(selectedMacs.length > 1
+                        ? 'They can\'t start connections to anything this preset blocks, but they can still answer when another device contacts them, so a camera or smart bulb stays usable. This applies to every device on your network, not only your own computer. Untick it to stop devices on your other networks from contacting them too.'
+                        : 'It can\'t start connections to anything this preset blocks, but it can still answer when another device contacts it, so a camera or smart bulb stays usable. This applies to every device on your network, not only your own computer. Untick it to stop devices on your other networks from contacting it too.')
+                        + (neighbourBlockActive()
+                          ? (selectedMacs.length > 1
+                              ? ' Devices on their own networks still can\'t reach them, because the neighbour block below cuts them off.'
+                              : ' Devices on its own network still can\'t reach it, because the neighbour block below cuts them off.')
+                          : '')"></span>
+            </span>
+        </label>
+
+        <!-- The neighbour block. Enforced by switches, not the gateway, so it is
+             offered with each selected device's coverage verdict up front: the
+             user decides knowing how much of it will actually hold. Hidden for
+             LAN only, whose whole point is keeping local access. -->
+        <label class="inline-check" x-show="neighbourOffered()"
+               :class="{ 'is-disabled': !neighbourSupported() }">
+            <input type="checkbox" x-model="blockNeighbours" @change="preview = null"
+                   :disabled="!neighbourSupported()">
+            <span>
+                <strong x-text="selectedMacs.length > 1 ? 'Also cut them off from devices on their own networks' : 'Also cut it off from devices on its own network'"></strong>
+                <span class="hint" style="margin-top:0.15rem"
+                      x-text="selectedMacs.length > 1
+                        ? 'Stops these devices and the other devices on their networks from reaching each other. The neighbour block only works on UniFi switch models that support it, so how well it works depends on where each device is connected. House Arrest checks each device and shows the result below. Casting and printing between them and their neighbours stop working too.'
+                        : 'Stops this device and the other devices on its network from reaching each other. The neighbour block only works on UniFi switch models that support it, so how well it works depends on where the device is connected. House Arrest checks and shows the result below. Casting and printing between it and its neighbours stop working too.'"></span>
+                <span class="hint unsupported-note" x-show="!neighbourSupported()">
+                    None of your UniFi switches support the neighbour block, so it
+                    isn't available. For Wi-Fi devices, turn on Wi-Fi client
+                    isolation for their network instead.
                 </span>
+                <template x-if="neighbourBlockActive() && neighbourCoverage().length">
+                    <ul class="coverage-list">
+                        <template x-for="c in neighbourCoverage()" :key="c.mac">
+                            <li :class="'coverage-' + c.status">
+                                <strong x-text="c.name"></strong>
+                                <span class="coverage-chip" x-text="coverageLabel(c.status)"></span>
+                                <span class="coverage-note" x-text="c.note"></span>
+                                <span class="coverage-note" x-show="c.dns" x-text="c.dns"></span>
+                            </li>
+                        </template>
+                    </ul>
+                </template>
             </span>
         </label>
 
@@ -823,7 +865,7 @@
                                      <svg> is lifted out by the HTML parser and the
                                      group never renders. The cross also carries the
                                      blocked state without relying on red vs green. -->
-                                <g x-show="path.verdict === 'block'"
+                                <g x-show="path.verdict === 'block' || path.verdict === 'switch'"
                                    stroke="var(--state-broken)" stroke-width="2.5" stroke-linecap="round">
                                     <line x1="32" y1="3" x2="42" y2="17" />
                                     <line x1="42" y1="3" x2="32" y2="17" />
@@ -872,13 +914,20 @@
                 <!-- The same four verdicts, drawn. One image per preset AND per
                      inbound setting: the inbound direction is a checkbox, so a
                      single picture per preset would start contradicting the list
-                     the moment it was unticked. Width/height are set so swapping
-                     the image never shifts the layout. -->
-                <figure class="paths-figure">
+                     the moment it was unticked. The neighbour block gets its own
+                     set too (-neighbours). When the device's network settings
+                     rewrite a row, no picture matches, so it is hidden.
+                     Width/height are set so swapping the image never shifts
+                     the layout. -->
+                <figure class="paths-figure" x-show="scenarioMatchesRows()">
                     <img :src="scenarioImage()" :alt="scenarioAlt()"
                          width="900" height="713" decoding="async">
                     <figcaption x-text="scenarioCaption()"></figcaption>
                 </figure>
+                <p class="hint" x-show="!scenarioMatchesRows()">
+                    Its network settings change some of these results, so
+                    there's no picture for this one. The list is accurate.
+                </p>
             </div>
 
             <!-- The diagram draws the firewall's view: the same-VLAN path is
@@ -886,9 +935,10 @@
                  own SSID already has Client Isolation on, reality is stricter
                  than the picture — say so instead of letting the diagram
                  overstate what its neighbours can reach. -->
-            <p class="hint" x-show="isolatedSelected().length"
+            <p class="hint" x-show="isolatedSelected().length && !neighbourBlockActive() && scenarioMatchesRows()"
                x-text="isolatedSelectedNote()"></p>
 
+            <p class="path-note" x-show="networkSettingsNote()" x-text="networkSettingsNote()"></p>
             <p class="path-note" x-text="pathNote()"></p>
 
             <!-- The one thing a firewall genuinely cannot do, stated at full
@@ -898,32 +948,47 @@
                  Leaving it as a grey footnote under the diagram let the page
                  imply a completeness it does not have. -->
             <div class="blindspot">
-                <h4>What no firewall rule here can stop</h4>
-                <p>
-                    <strong x-text="selectedNames() || 'This device'"></strong>
-                    can still see and profile everything sharing
-                    <span x-text="selectedMacs.length > 1 ? 'their own VLANs' : 'its own VLAN'"></span> —
-                    discovery traffic between neighbours never passes the gateway,
-                    so no policy on this page ever sees it. A smart TV doing this
-                    is what the recent LG reporting describes.
+                <h4>What no firewall rule can stop</h4>
+                <!-- With the neighbour block ticked, the flat "can still see
+                     everything" would contradict the verdicts right above it. -->
+                <p x-show="neighbourBlockActive()">
+                    With the neighbour block on,
+                    <strong x-text="selectedNames() || 'this device'"></strong>
+                    is cut off from its neighbours wherever the switches in between
+                    support it. The results above show any gaps. Traffic between
+                    neighbours never passes through your gateway, so the neighbour
+                    block is the only part of this lockdown that can block it.
                 </p>
-                <p class="blindspot-fix">Two things actually stop it:</p>
+                <p x-show="!neighbourBlockActive()">
+                    <strong x-text="selectedNames() || 'This device'"></strong>
+                    can still see and profile every device on
+                    <span x-text="selectedMacs.length > 1 ? 'their own VLANs' : 'its own VLAN'"></span>.
+                    Traffic between neighbours never passes through the gateway, so
+                    no firewall rule ever sees it. A smart TV doing this is what the
+                    recent LG reporting describes.
+                </p>
+                <p class="blindspot-fix">What actually stops it:</p>
                 <ul>
-                    <li>
-                        <strong>Give it a dedicated VLAN of its own, in UniFi
-                        itself</strong> — assign the device's switch port (wired)
-                        or a dedicated Wi-Fi network (wireless) to a VLAN nothing
-                        else lives on. That doesn't filter peer traffic; it
-                        removes the peers. Then lock that VLAN down from the
-                        Networks and DNS tabs here. House Arrest deliberately
-                        doesn't move devices between VLANs itself — a per-client
-                        move can leave a device half-connected, which is worse
-                        than either state.
+                    <li x-show="neighbourSupported()">
+                        <strong>The neighbour block above</strong>, for the selected
+                        devices only. It only works on UniFi switch models that
+                        support it, and the result shown for each device tells you
+                        how well it will work.
                     </li>
                     <li>
-                        <strong>Turn on Client Isolation for its Wi-Fi network</strong>,
-                        on the Networks tab. Wireless only, and it applies to every
-                        device on that SSID.
+                        <strong>Give it a VLAN of its own in UniFi.</strong> Assign
+                        the device's switch port (wired) or a dedicated Wi-Fi network
+                        (wireless) to a VLAN with nothing else on it. That removes
+                        the neighbours instead of blocking them. Then lock that VLAN
+                        down from the Networks and DNS tabs here. House Arrest doesn't
+                        move devices between VLANs itself, because moving a single
+                        device can leave it half-connected, which is worse than
+                        either state.
+                    </li>
+                    <li>
+                        <strong>Turn on Wi-Fi client isolation for its Wi-Fi
+                        network</strong> on the Networks tab. It only affects
+                        wireless devices, and it applies to every device on that SSID.
                     </li>
                 </ul>
             </div>
@@ -1032,6 +1097,14 @@
                                 </span>
                             </template>
                         </span>
+                        <template x-if="a.neighbours">
+                            <span class="arrest-neighbours" :title="[a.neighbours_note, a.neighbours_dns_note].filter(Boolean).join(' ')">
+                                Neighbours:
+                                <span class="coverage-chip"
+                                      :class="'coverage-' + (a.neighbours === 'ok' ? (a.neighbours_coverage || 'unknown') : 'none')"
+                                      x-text="a.neighbours === 'ok' ? coverageLabel(a.neighbours_coverage) : (a.neighbours === 'disabled' ? 'Switched off in UniFi' : 'Broken')"></span>
+                            </span>
+                        </template>
                     </span>
                     <span class="state" :class="a.status">
                         <span class="dot"

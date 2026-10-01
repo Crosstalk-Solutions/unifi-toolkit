@@ -35,6 +35,21 @@ class ClientInfo(BaseModel):
     online: bool = False
     fixed_ip: Optional[str] = None
     locally_administered: bool = False
+    # How well switch ACLs could separate this device from its neighbours,
+    # shown before the neighbour block is applied. covered|partial|none|unknown.
+    neighbour_coverage: Optional[str] = None
+    neighbour_coverage_note: Optional[str] = None
+    # Same-VLAN DNS servers the neighbour block keeps reachable (or why it can't).
+    neighbour_dns_note: Optional[str] = None
+    # Network-wide settings on this device's network (Networks tab). These
+    # apply whatever the device lockdown says, so the Devices tab reads them
+    # to avoid promising access the network has already taken away.
+    network_isolated: Optional[bool] = None
+    network_internet_off: Optional[bool] = None
+    network_device_isolation: Optional[bool] = None
+    # Custom ALLOW rules that get through that network's isolation (the
+    # Networks tab lists them). >0 means "blocked by its network" is not total.
+    network_isolation_exceptions: int = 0
     # Wireless context, so the Devices tab can say when an SSID's Client
     # Isolation already covers the same-VLAN path the diagram shows as open.
     essid: Optional[str] = None
@@ -100,6 +115,13 @@ class ArrestSummary(BaseModel):
     # something, rather than merely existing. Window is blocked_window_hours.
     blocked_count: int = 0
     blocked_window_hours: int = 24
+    # Neighbour block (switch ACL pair): None = not requested, else
+    # "ok" | "broken" | "disabled". Coverage is a verdict, not a promise:
+    # covered | partial | none | unknown, plus one plain sentence.
+    neighbours: Optional[str] = None
+    neighbours_coverage: Optional[str] = None
+    neighbours_note: Optional[str] = None
+    neighbours_dns_note: Optional[str] = None
 
 
 class PrecedenceWarning(BaseModel):
@@ -188,6 +210,9 @@ class StateResponse(BaseModel):
     precedence_warnings: List[PrecedenceWarning] = Field(default_factory=list)
     # Gateway-level DNS interception (CyberSecure). None = could not read,
     # which the UI must treat as unknown, never as off.
+    # Does any switch on the site support switch ACLs? None = could not read.
+    # False disables the neighbour block and Device Isolation in the UI.
+    switch_acl_supported: Optional[bool] = None
     encrypted_dns_on: Optional[bool] = None
     ad_blocking_on: Optional[bool] = None
     content_filtered_network_ids: List[str] = Field(default_factory=list)
@@ -260,6 +285,9 @@ class LockdownRequest(BaseModel):
     # Keep the device reachable from your other networks. Blocks the device
     # from initiating outward, but lets it answer when you contact it.
     allow_inbound: bool = True
+    # Optional per-device switch-ACL pair that also cuts same-network
+    # neighbours (Full lockdown / Internet only only). Off by default.
+    block_neighbours: bool = False
     dry_run: bool = True
 
 

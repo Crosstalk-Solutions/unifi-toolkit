@@ -57,6 +57,9 @@ function houseArrest() {
         label: '',
         networkId: '',
         allowInbound: true,
+        // Optional per-device switch-ACL neighbour block. Off by default: it
+        // also breaks casting/printing between the device and its neighbours.
+        blockNeighbours: false,
         preview: null,
         previewCaveats: [],
 
@@ -351,20 +354,59 @@ function houseArrest() {
         pathRows() {
             const p = this.currentPreset();
             const effects = p ? p.effects : { internet: 'block', networks: 'block', peers: 'allow' };
+            const neighbours = this.neighbourBlockActive();
             const rows = ['internet', 'networks', 'peers'].map(key => ({
                 key,
                 label: this.pathLabels[key] || key,
-                verdict: effects[key],
-                fixed: key === 'peers'
+                // The neighbour block is enforced by switches, and only as far
+                // as they can reach, so it gets its own verdict rather than a
+                // flat "Blocked" that would overclaim.
+                verdict: (key === 'peers' && neighbours) ? 'switch' : effects[key],
+                fixed: key === 'peers' && !this.neighbourOffered()
             }));
+            // Network-wide settings (Networks tab) apply whatever this preset
+            // says. Where every selected device's network agrees, show the
+            // real result; mixed selections get one note under the rows.
+            const iso = this.netFact('network_isolated');
+            const noNet = this.netFact('network_internet_off');
+            const devIso = this.netFact('network_device_isolation');
+            rows.forEach(r => {
+                if (r.key === 'internet' && r.verdict === 'allow' && noNet === 'all') {
+                    r.verdict = 'block'; r.text = 'Blocked by its network settings';
+                }
+                if (r.key === 'networks' && r.verdict === 'allow' && iso === 'all') {
+                    // Rules that get through the isolation (listed on the
+                    // Networks tab) mean "blocked" is not the whole story.
+                    const holes = Math.max(...this.selectedClients()
+                        .map(c => c.network_isolation_exceptions || 0));
+                    r.verdict = 'block';
+                    r.text = holes
+                        ? 'Blocked by its network settings, except ' + holes +
+                          (holes === 1 ? ' rule' : ' rules') + ' listed on the Networks tab'
+                        : 'Blocked by its network settings';
+                }
+                if (r.key === 'peers' && r.verdict === 'allow' && devIso === 'all') {
+                    r.verdict = 'switch'; r.text = 'Blocked by its network\'s Device isolation, on switches that support it';
+                }
+            });
             // The inbound direction is a choice, not a preset property, so it
             // is appended rather than living in PRESET_EFFECTS.
             rows.push({
                 key: 'inbound',
-                label: this.pathLabels['inbound'] || 'You reaching in to it',
+                label: neighbours
+                    ? 'Devices on other networks reaching in to it'
+                    : (this.pathLabels['inbound'] || 'Other devices reaching in to it'),
                 verdict: this.allowInbound ? 'allow' : 'block',
                 fixed: false
             });
+            const inRow = rows[rows.length - 1];
+            if (inRow.verdict === 'allow' && iso === 'all') {
+                if (neighbours) {
+                    inRow.verdict = 'block'; inRow.text = 'Blocked by its network settings';
+                } else {
+                    inRow.text = 'Only from its own network (its network is isolated)';
+                }
+            }
             return rows;
         },
 
@@ -531,8 +573,16 @@ function houseArrest() {
 
         EDITABLE: {
             isolation: { on: 'On', off: 'Off' },
+            device_isolation: { on: 'On', off: 'Off' },
             internet:  { on: 'Allowed', off: 'Blocked' },
             mdns:      { on: 'On', off: 'Off' },
+        },
+
+        // A cell can qualify its state ("On · 4 of 41"), so "is it on" means
+        // the label is the on-word, alone or followed by that qualifier.
+        cellIsOn(cell, spec) {
+            const label = (cell && cell.label) || '';
+            return label === spec.on || label.startsWith(spec.on + ' ·');
         },
 
         // The server decides per cell, not per column. Editability can depend
@@ -551,7 +601,7 @@ function houseArrest() {
             const spec = this.EDITABLE[col.key];
             if (!spec || !this.cellEditable(row, col)) return;
             const cell = row.cells[col.key] || {};
-            const isOn = cell.label === spec.on;
+            const isOn = this.cellIsOn(cell, spec);
             const next = !isOn;
 
             // The isolation diagrams are keyed to flag combinations, so the
@@ -611,9 +661,13 @@ function houseArrest() {
                     'Every device on this network loses internet access, now and in future.',
                     'Devices here get internet access back.',
                 ],
+                device_isolation: [
+                    'Devices on this network will be able to reach each other again.',
+                    'Devices on this network will stop reaching each other. Device isolation only fully works for wired devices plugged into a UniFi switch model that supports it, and hovering the cell shows how many devices that is. Wi-Fi devices are only partly blocked, so turn on Wi-Fi client isolation for those as well. Casting, AirPlay, and printing between devices on this network will stop working.',
+                ],
                 mdns: [
-                    'Removes this network from the site-wide Gateway mDNS Proxy list — the one shared list all networks use. Devices here stop discovering, and being discovered by, devices on your other mDNS-enabled networks. Casting and AirPlay across this boundary will break.',
-                    'Adds this network to the site-wide Gateway mDNS Proxy list — the one shared list all networks use. Service discovery (casting, AirPlay) will cross this boundary, which also advertises what lives here to your other networks.',
+                    'Removes this network from the Gateway mDNS Proxy list, a single list shared by every network on the site. Devices here will stop discovering, and being discovered by, devices on your other mDNS-enabled networks. Casting and AirPlay between them will stop working.',
+                    'Adds this network to the Gateway mDNS Proxy list, a single list shared by every network on the site. Casting and AirPlay will work between this network and your other mDNS-enabled networks, which also means those networks can see what devices are here.',
                 ],
             };
             const pair = W[key];
@@ -694,7 +748,15 @@ function houseArrest() {
         scenarioKey() {
             const preset = this.preset ||
                 (this.presets.length ? this.presets[0].value : 'full_lockdown');
-            return preset + '-' + (this.allowInbound ? 'inbound' : 'noinbound');
+            return preset + '-' + (this.allowInbound ? 'inbound' : 'noinbound') +
+                (this.neighbourBlockActive() ? '-neighbours' : '');
+        },
+
+        // Rows rewritten by the device's own network settings carry their own
+        // text, and no picture draws those combinations. Hide it rather than
+        // show one that contradicts the list.
+        scenarioMatchesRows() {
+            return !this.pathRows().some(r => r.text);
         },
 
         scenarioImage() {
@@ -715,32 +777,134 @@ function houseArrest() {
         scenarioCaption() {
             const p = this.currentPreset();
             const name = p ? p.label : 'This lockdown';
+            if (this.neighbourBlockActive()) {
+                return name + (this.allowInbound
+                    ? ' — devices on your other networks can still reach in to it'
+                    : ' — nothing can reach in to it');
+            }
             return name + (this.allowInbound
                 ? ' — other devices can still reach in to it'
                 : ' — nothing can reach in to it');
         },
 
         pathStroke(verdict) {
-            if (verdict === 'block') return 'var(--state-broken)';
+            if (verdict === 'block' || verdict === 'switch') return 'var(--state-broken)';
             if (verdict === 'moved') return 'var(--state-rotated)';
             return 'var(--state-enforcing)';
         },
 
         verdictText(path) {
+            if (path.text) return path.text;
             if (path.verdict === 'block') return 'Blocked';
             // "moved" is deliberately not "blocked": relocating a device changes
             // which peers it can reach, it does not cut peer traffic.
             if (path.verdict === 'moved') return 'Changes with the VLAN';
+            if (path.verdict === 'switch') return 'Blocked, on switches that support it';
             return 'Still reachable';
         },
 
         pathNote() {
-            return 'Devices on the same VLAN talk to each other without passing the ' +
-                   'gateway, so no firewall policy can separate them. UniFi can do it ' +
-                   'at the switch, via Device Isolation on the network — but that ' +
-                   'applies to every device on that VLAN, not just this one. For one ' +
-                   'device alone, give it a dedicated VLAN in UniFi itself (its switch ' +
-                   'port or a dedicated Wi-Fi network), then lock that VLAN down here.';
+            const why = 'Devices on the same network talk to each other directly, ' +
+                        'without going through your gateway, so firewall rules can\'t ' +
+                        'block that. ';
+            if (this.neighbourBlockActive()) {
+                return why + 'The neighbour block works on your switches instead ' +
+                       'of the gateway, which is how it reaches that traffic.';
+            }
+            if (!this.neighbourOffered()) {
+                return why + 'LAN only keeps local access on purpose, so it doesn\'t ' +
+                       'offer the neighbour block.';
+            }
+            if (!this.neighbourSupported()) {
+                return why + 'None of your UniFi switches support the neighbour ' +
+                       'block either. For Wi-Fi devices, use Wi-Fi client isolation.';
+            }
+            return why + 'To block it for this device, tick "Also cut it off from ' +
+                   'devices on its own network" above.';
+        },
+
+        // ---- the selected devices' own network settings ----
+
+        // 'all' | 'some' | 'none' of the selected devices sit on a network
+        // with this setting. Unknown (null) counts as not set.
+        netFact(key) {
+            const cs = this.selectedClients();
+            if (!cs.length) return 'none';
+            const n = cs.filter(c => c[key] === true).length;
+            return n === 0 ? 'none' : (n === cs.length ? 'all' : 'some');
+        },
+
+        networkSettingsNote() {
+            const mixed = ['network_isolated', 'network_internet_off', 'network_device_isolation']
+                .some(k => this.netFact(k) === 'some');
+            return mixed
+                ? 'Some of the selected devices are on networks with their own settings ' +
+                  '(isolated, no internet, or device isolation) that block more than ' +
+                  'shown here.'
+                : '';
+        },
+
+        // A preset that cannot deliver what its name promises, because the
+        // device's network has already taken that access away.
+        presetConflicts() {
+            const p = this.currentPreset();
+            if (!p) return [];
+            const one = this.selectedMacs.length <= 1;
+            const out = [];
+            if (p.effects.internet === 'allow' && this.netFact('network_internet_off') !== 'none') {
+                out.push((one ? 'Its network has' : 'Some of these devices are on networks with') +
+                    ' internet turned off on the Networks tab, so ' + p.label +
+                    ' can\'t give ' + (one ? 'it' : 'those devices') + ' internet access.');
+            }
+            if (p.effects.networks === 'allow' && this.netFact('network_isolated') !== 'none') {
+                out.push((one ? 'Its network is' : 'Some of these devices are on networks that are') +
+                    ' isolated on the Networks tab, so ' + p.label + ' can\'t let ' +
+                    (one ? 'it' : 'those devices') + ' reach your other networks, only ' +
+                    'devices on ' + (one ? 'its' : 'their') + ' own network.');
+            }
+            return out;
+        },
+
+        // ---- neighbour block (switch ACL pair) ----
+
+        neighbourOffered() {
+            const p = this.currentPreset();
+            return !!(p && p.neighbour_block);
+        },
+
+        // False only when the controller says NO switch on the site supports
+        // switch ACLs. Unknown (null) still offers it; the server re-checks.
+        neighbourSupported() {
+            const ok = this.state.switch_acl_supported !== false;
+            // Never leave a tick in a box that cannot apply.
+            if (!ok && this.blockNeighbours) this.blockNeighbours = false;
+            return ok;
+        },
+
+        neighbourBlockActive() {
+            return this.blockNeighbours && this.neighbourOffered() && this.neighbourSupported();
+        },
+
+        // One coverage verdict per selected device, from the picker data, so
+        // the choice is made knowing how much of it will actually hold.
+        neighbourCoverage() {
+            return this.selectedClients().map(c => ({
+                mac: c.mac,
+                name: c.name || c.mac,
+                status: c.neighbour_coverage || 'unknown',
+                dns: c.neighbour_dns_note || '',
+                note: c.neighbour_coverage_note ||
+                      'UniFi doesn\'t currently know where this device is connected (it may be offline), so House Arrest can\'t tell how well the neighbour block will work.',
+            }));
+        },
+
+        coverageLabel(status) {
+            return {
+                covered: 'Fully blocked',
+                partial: 'Partly blocked',
+                none: 'Not blocked',
+                unknown: 'Unknown',
+            }[status] || 'Unknown';
         },
 
         canReview() {
@@ -840,9 +1004,12 @@ function houseArrest() {
         },
 
         reviewTitle() {
-            const n = this.preview ? this.preview.length : 0;
-            return 'Review: ' + n + (n === 1 ? ' policy' : ' policies') +
-                   ' will be added to your gateway';
+            const all = this.preview || [];
+            const sw = all.filter(p => p.acl_index !== undefined).length;
+            const fw = all.length - sw;
+            let t = 'Review: ' + fw + (fw === 1 ? ' policy' : ' policies') + ' for your gateway';
+            if (sw) t += ' and ' + sw + ' rules for your switches';
+            return t;
         },
 
         reviewLines() {
@@ -854,7 +1021,12 @@ function houseArrest() {
                 if (!rows.length) lines.push('Nothing blocked by this preset');
             }
             (this.preview || []).forEach(pol => {
-                lines.push('Policy "' + pol.name + '" at index ' + pol.index);
+                if (pol.acl_index !== undefined) {
+                    lines.push('Switch rule "' + pol.name + '" — ' +
+                        (pol.action === 'ALLOW' ? 'keeps the gateway reachable' : 'blocks its neighbours'));
+                } else {
+                    lines.push('Policy "' + pol.name + '" at index ' + pol.index);
+                }
             });
             return lines;
         },
@@ -872,6 +1044,7 @@ function houseArrest() {
                         label: this.label,
                         network_id: this.networkId || null,
                         allow_inbound: this.allowInbound,
+                        block_neighbours: this.neighbourBlockActive(),
                         dry_run: true
                     })
                 });
@@ -901,6 +1074,7 @@ function houseArrest() {
                         label: this.label,
                         network_id: this.networkId || null,
                         allow_inbound: this.allowInbound,
+                        block_neighbours: this.neighbourBlockActive(),
                         dry_run: false
                     })
                 });
@@ -911,13 +1085,14 @@ function houseArrest() {
                     this.message = {
                         kind: 'ok',
                         text: this.label + ' is under house arrest — ' +
-                              data.created.length + ' policies written to your gateway.'
+                              data.created.length + (data.created.length === 1 ? ' rule' : ' rules') + ' written.'
                     };
                     this.preview = null;
                     this.selectedMacs = [];
                     this.labelTouched = false;
                     this.label = '';
                     this.networkId = '';
+                    this.blockNeighbours = false;
                     await this.refresh(true);
                 }
             } finally {
