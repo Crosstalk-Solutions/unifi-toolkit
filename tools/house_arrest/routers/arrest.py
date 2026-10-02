@@ -126,6 +126,71 @@ def _device_zone(
     return zone_id, None
 
 
+def _device_network_ids(
+    macs: List[str], known_by_mac: Dict[str, Dict], live: Dict[str, Dict]
+) -> List[str]:
+    """
+    Networks these devices are on: the live record first, then the network
+    the controller last saw them on (offline devices). Unattributable MACs
+    simply contribute nothing.
+    """
+    out: List[str] = []
+    for mac in macs or []:
+        m = mac.lower()
+        nid = (live.get(m) or {}).get("network_id") or \
+            (known_by_mac.get(m) or {}).get("last_connection_network_id")
+        if nid and nid not in out:
+            out.append(nid)
+    return out
+
+
+async def _requeue_shadowing_blocks(client) -> Tuple[List[str], List[str]]:
+    """
+    Re-create any device "no LAN" block that sits ahead of a DNS allow meant
+    for that device, so the allow evaluates first.
+
+    MEASURED 2026-10-01 (test B): a DNS Lockdown applied after a device
+    lockdown got the next index in the zone pair, landing BEHIND the device's
+    block, and the device lost DNS with both tabs green. Policies can't be
+    placed by index (the controller assigns it), but creation order is kept,
+    so a fresh copy of the block lands after the allow.
+
+    The copy is created and its stored position checked BEFORE the original
+    is deleted, so the device is never unprotected in between.
+
+    Returns (labels moved, labels that could not be moved).
+    """
+    policies = await client.get_firewall_policies()
+    try:
+        known_by_mac = {(c.get("mac") or "").lower(): c
+                        for c in await client.get_known_clients() or []}
+        live = await client.get_clients()
+    except Exception:
+        known_by_mac, live = {}, {}
+    moved, failed = [], []
+    for block in [p for p in policies if P._blocks_lan_for(p)]:
+        nets = _device_network_ids(P.policy_macs(block), known_by_mac, live)
+        if not P.shadowed_dns_allows(block, policies, nets):
+            continue
+        label = P._label_from_policy(block) or "a device"
+        idx = P.next_free_index(policies, 1)[0]
+        copy = await client.create_firewall_policy(P.recreate_payload(block, idx))
+        if copy is None:
+            failed.append(label)
+            continue
+        policies = await client.get_firewall_policies()
+        stored = next((p for p in policies if p.get("_id") == copy.get("_id")), copy)
+        if P.shadowed_dns_allows(stored, policies, nets):
+            # Still behind: keep the original, drop the copy, and report it.
+            await client.delete_firewall_policy(copy.get("_id"))
+            failed.append(label)
+            continue
+        await client.delete_firewall_policy(block.get("_id"))
+        policies = [p for p in policies if p.get("_id") != block.get("_id")]
+        moved.append(label)
+    return moved, failed
+
+
 async def _client_or_error():
     client = await get_shared_client()
     if client is None:
@@ -246,6 +311,24 @@ async def get_state():
                     "(Policy Table, ACL Rules). Turn them back on there, or "
                     "release the lockdown and apply it again."
                 )
+
+    # A lockdown whose own block sits ahead of a DNS allow meant for the same
+    # device is cutting that device's DNS (measured 2026-10-01, test B), even
+    # though every rule is present and enabled. Apply-time code prevents it;
+    # this catches anything that drifts later, e.g. rules reordered in UniFi.
+    if grouped:
+        known_by_mac = {(c.get("mac") or "").lower(): c for c in known_clients or []}
+        for summary in grouped.values():
+            if summary.status != P.OK:
+                continue
+            nets = _device_network_ids(summary.macs, known_by_mac, active_now)
+            mine = [p for p in ours if p.get("_id") in set(summary.policy_ids)]
+            if any(P.shadowed_dns_allows(b, all_policies, nets) for b in mine):
+                summary.status = P.DNS_BLOCKED
+                summary.suggestion = (
+                    "This lockdown's block runs before a rule that lets the "
+                    "device reach its DNS servers, so the device can't look up "
+                    "names. Release the lockdown and apply it again to fix the order.")
 
     # Blocked-traffic counts: only worth a round trip when something is
     # actually locked down.
@@ -457,7 +540,7 @@ async def list_clients(online_only: bool = False):
         found, missing = P.same_network_resolvers(net or None, active)
         found = [r for r in found if r["mac"] != mac]
         if missing:
-            dns_note = ("Its network hands out " + ", ".join(missing) + " for DNS, "
+            dns_note = ("This device's network hands out " + ", ".join(missing) + " for DNS, "
                         "which is on the same network, but UniFi doesn't currently "
                         "know that device's MAC address. The neighbour block can't "
                         "be applied until it does, or this device would lose DNS.")
@@ -973,19 +1056,21 @@ async def dns_lockdown(req: DnsLockdownRequest):
     # that actually breaks the network.
     caveats = P.dhcp_dns_conflicts(chosen, req.resolver_ips)
     caveats += [
-        f"{u} — traffic to it never passes the gateway, so these rules cannot "
-        f"police it." for u in unreachable
+        f"{u} is on the same network as the devices it would serve, so "
+        f"traffic to {u} never passes the gateway and DNS Lockdown can't "
+        f"control it." for u in unreachable
     ]
     caveats += list(P.DNS_CAVEATS)
     if wan_resolvers:
         caveats.append(
             f"{', '.join(wan_resolvers)} "
             + ("is" if len(wan_resolvers) == 1 else "are")
-            + " out on the internet, so "
-            + ("it gets" if len(wan_resolvers) == 1 else "they get")
-            + " its own allow rule on the internet side. Queries to "
+            + " on the internet, so DNS Lockdown adds a separate allow rule "
+              "on the internet side for "
+            + ("that DNS server" if len(wan_resolvers) == 1 else "those DNS servers")
+            + ". DNS queries to "
             + ("it" if len(wan_resolvers) == 1 else "them")
-            + " leave your network in the clear, as ordinary DNS always does."
+            + " leave your network unencrypted, as ordinary DNS always does."
         )
     if client_zone_id != internal_id:
         caveats.append(
@@ -996,10 +1081,11 @@ async def dns_lockdown(req: DnsLockdownRequest):
     for f in foreign_resolvers:
         caveats.append(
             f"{f['ip']} lives on {f['network']} in the "
-            f"\"{P.zone_name(zones, f['zone_id'])}\" zone — a different zone "
-            "than the locked networks. No rule is needed (or written) for it: "
-            "these rules do not block that zone pair at all, which also means "
-            "every OTHER DNS server in that zone stays reachable too."
+            f"\"{P.zone_name(zones, f['zone_id'])}\" zone, a different zone "
+            "than the locked networks. DNS Lockdown doesn't need or write a rule "
+            "for that DNS server, because its rules don't cover that zone at "
+            "all. That also means every other DNS server in that zone stays "
+            "reachable."
         )
     try:
         caveats += P.dns_interception_caveats(
@@ -1059,7 +1145,26 @@ async def dns_lockdown(req: DnsLockdownRequest):
             ),
         )
 
-    return DnsLockdownResponse(dry_run=False, created=created, caveats=caveats)
+    # A device lockdown applied earlier on these networks would now sit ahead
+    # of the new allow and cut its DNS (measured, test B). Move those blocks
+    # behind it.
+    try:
+        moved, failed = await _requeue_shadowing_blocks(client)
+    except Exception as e:
+        moved, failed = [], [f"(couldn't check: {e})"]
+    notices: List[str] = []
+    if moved:
+        notices.append(
+            "Re-created the device lockdown for " + ", ".join(moved) + " so this "
+            "DNS Lockdown's allow rule runs first and those devices keep their DNS.")
+    if failed:
+        notices.append(
+            "Couldn't move the device lockdown for " + ", ".join(failed) + " behind "
+            "this DNS Lockdown, so those devices can't reach the approved DNS "
+            "servers. Release that lockdown on the Devices tab and apply it again.")
+
+    return DnsLockdownResponse(dry_run=False, created=created, caveats=caveats,
+                               notices=notices, notices_failed=bool(failed))
 
 
 @router.post("/dns-release", response_model=DnsLockdownResponse)
@@ -1335,15 +1440,55 @@ async def lockdown(req: LockdownRequest):
         )
 
     try:
-        indexes = P.next_free_index(existing, P.policy_count(req.preset))
-        payloads = P.build_lockdown(
+        live = await client.get_clients()
+    except Exception:
+        live = {}
+    known_by_mac = {(c.get("mac") or "").lower(): c for c in known_clients or []}
+    nets_by_id = {n.get("_id"): n for n in networks if n.get("_id")}
+    device_net_ids = _device_network_ids(req.macs, known_by_mac, live)
+
+    # Internet only keeps the DNS servers its network hands out on other
+    # VLANs (measured 2026-10-01: the "no LAN" block cut them). The allow is
+    # created FIRST so it lands ahead of the block; the order is verified
+    # after creation.
+    dns_ips: List[str] = []
+    if req.preset == P.INTERNET_ONLY:
+        dns_ips, skipped = P.device_dns_resolvers(
+            [nets_by_id[n] for n in device_net_ids if n in nets_by_id],
+            networks, zones, client_zone_id)
+        dns_locked = P.dns_locked_network_ids(existing)
+        for nid in skipped:
+            if nid not in dns_locked:
+                name = (nets_by_id.get(nid) or {}).get("name") or "This device's network"
+                caveats.append(
+                    f"{name} is isolated and hands out a DNS server on another "
+                    "network. Isolation already blocks that, so this device has no "
+                    "DNS unless you add a DNS Lockdown for that network on the DNS "
+                    "Lockdown tab, which allows it.")
+        if dns_ips:
+            caveats.append(
+                "DNS keeps working: this device can still reach " + ", ".join(dns_ips) +
+                " on port 53, the DNS servers its network hands out. Nothing "
+                "else on your network is reachable.")
+
+    try:
+        count = P.policy_count(req.preset) + (1 if dns_ips else 0)
+        indexes = P.next_free_index(existing, count)
+        payloads = []
+        if dns_ips:
+            payloads.append(P.build_device_dns_allow(
+                req.macs, req.label, client_zone_id, dns_ips, indexes[0]))
+            indexes = indexes[1:]
+        payloads += P.build_lockdown(
             preset=req.preset,
             macs=req.macs,
             device_label=req.label,
             client_zone_id=client_zone_id,
             external_zone_id=external_id,
             indexes=indexes,
-            allow_inbound=req.allow_inbound,
+            # Fixed by the preset since 2026-10-02 (the checkbox was removed):
+            # Quarantine lets nothing in, every other preset still answers.
+            allow_inbound=P.inbound_for(req.preset),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1351,7 +1496,7 @@ async def lockdown(req: LockdownRequest):
     # "No LAN" is one block in the device's own zone pair. Where the console
     # has further LAN zones, say out loud that those stay reachable rather
     # than letting the preset name overclaim.
-    if req.preset in (P.FULL_LOCKDOWN, P.INTERNET_ONLY):
+    if req.preset in (P.CUT_OFF, P.FULL_LOCKDOWN, P.INTERNET_ONLY):
         others = P.other_lan_zones(zones, client_zone_id)
         if others:
             names = ", ".join(f"\"{z.get('name') or 'unnamed'}\"" for z in others)
@@ -1362,108 +1507,120 @@ async def lockdown(req: LockdownRequest):
                 "networks in those other zones stay reachable from this device."
             )
 
-    # Optional neighbour block: a switch-ACL pair per network the devices sit
-    # on. Built here (before the dry-run return) so the preview shows it.
+    # Neighbour block: a switch-ACL pair per network the devices sit on.
+    # Quarantine always applies it; Internet only applies it when ticked.
+    # Built here (before the dry-run return) so the preview shows it.
+    #
+    # A failure is handled by who asked for it. Ticked on Internet only, it is
+    # an error: the user chose it and should know it can't be done. Part of
+    # Quarantine, the rest of the lockdown still applies and the caveat says
+    # plainly that neighbours can still reach the device.
     acl_payloads: List[Dict] = []
-    if req.block_neighbours:
-        if req.preset not in P.NEIGHBOUR_BLOCK_PRESETS:
-            raise HTTPException(
-                status_code=400,
-                detail="The neighbour block is only available with Full lockdown and Internet only.",
-            )
+    always = req.preset in P.NEIGHBOUR_ALWAYS_PRESETS
+    if req.block_neighbours and req.preset not in P.NEIGHBOUR_BLOCK_PRESETS:
+        raise HTTPException(
+            status_code=400,
+            detail="The neighbour block is only available with Quarantine and Internet only.",
+        )
+    want_neighbours = always or req.block_neighbours
+    neighbour_problem: Optional[str] = None
+    verdicts: Dict[str, Dict] = {}
+    if want_neighbours:
         try:
             acl_rules = await client.get_acl_rules()
             devices = await client.get_devices_raw()
-            live = await client.get_clients()
         except Exception as e:
             return LockdownResponse(dry_run=req.dry_run, error=str(e))
-        if acl_rules is None or not devices:
-            return LockdownResponse(
-                dry_run=req.dry_run,
-                error=("Could not read your switches from the controller, so the "
-                       "neighbour block cannot be set up safely. Nothing was changed."),
-            )
-        if P.site_acl_capable(devices) is False:
-            return LockdownResponse(
-                dry_run=req.dry_run,
-                error=("None of your UniFi switches support the neighbour block, "
-                       "so it would have no effect. Untick it and apply again. For "
-                       "Wi-Fi devices, use Wi-Fi client isolation instead."),
-            )
-        verdicts = {m.lower(): P.client_coverage(live.get(m.lower()), devices, live)
-                    for m in req.macs}
-        if all(v["status"] == P.NOT_COVERED for v in verdicts.values()):
-            return LockdownResponse(
-                dry_run=req.dry_run,
-                error=("None of the selected devices are connected through a switch "
-                       "that supports the neighbour block, so it would have no "
-                       "effect. Untick it and apply again."),
-            )
-        if P.neighbour_acls_for(acl_rules, req.macs):
-            return LockdownResponse(
-                dry_run=req.dry_run,
-                error=("A neighbour block already exists for this device. Release "
-                       "it first, then apply again."),
-            )
-        gw_macs = P.gateway_lan_macs(devices)
-        known_by_mac = {(c.get("mac") or "").lower(): c for c in known_clients or []}
         by_network: Dict[str, List[str]] = {}
         unplaced = []
         for mac in req.macs:
             m = mac.lower()
-            nid = (live.get(m) or {}).get("network_id") or \
-                (known_by_mac.get(m) or {}).get("last_connection_network_id")
+            nid = (live.get(m) or {}).get("network_id") or                 (known_by_mac.get(m) or {}).get("last_connection_network_id")
             if nid:
                 by_network.setdefault(nid, []).append(m)
             else:
                 unplaced.append(m)
-        if unplaced:
-            return LockdownResponse(
-                dry_run=req.dry_run,
-                error=("Could not tell which network " + ", ".join(unplaced) +
-                       " is on, so its neighbours cannot be blocked. Bring the "
-                       "device online and try again, or untick the neighbour block."),
-            )
-        # DNS servers on the device's own VLAN go in the ALLOW beside the
-        # gateway (measured 2026-10-01: without this the neighbour block cut a
-        # same-VLAN Pi-hole and names stopped resolving). One that can't be
-        # matched to a MAC can't be allowed, so refuse rather than silently
-        # break DNS.
-        nets_by_id = {n.get("_id"): n for n in networks if n.get("_id")}
-        resolver_macs: Dict[str, List[str]] = {}
-        for nid in by_network:
-            found, missing = P.same_network_resolvers(nets_by_id.get(nid), live)
-            if missing:
+        if acl_rules is None or not devices:
+            neighbour_problem = ("House Arrest couldn't read your switches from the "
+                                 "controller, so the neighbour block can't be set up "
+                                 "safely.")
+        elif P.site_acl_capable(devices) is False:
+            neighbour_problem = ("None of your UniFi switches support the neighbour "
+                                 "block. For Wi-Fi devices, use Wi-Fi client "
+                                 "isolation instead.")
+        else:
+            verdicts = {m.lower(): P.client_coverage(live.get(m.lower()), devices, live)
+                        for m in req.macs}
+            if all(v["status"] == P.NOT_COVERED for v in verdicts.values()):
+                neighbour_problem = ("None of the selected devices are connected "
+                                     "through a switch that supports the neighbour "
+                                     "block.")
+            elif P.neighbour_acls_for(acl_rules, req.macs):
                 return LockdownResponse(
                     dry_run=req.dry_run,
-                    error=("This device's network hands out "
-                           + ", ".join(missing)
-                           + " for DNS, which is on the same network, but UniFi "
-                             "doesn't currently know that device's MAC address "
-                             "(it may be offline). The neighbour block would cut "
-                             "this device off from it, and websites and apps "
-                             "would stop loading by name. Bring that DNS server "
-                             "online and try again, or untick the neighbour block."),
+                    error=("A neighbour block already exists for this device. Release "
+                           "it first, then apply again."),
                 )
-            resolver_macs[nid] = [r["mac"] for r in found]
-            note = P.resolver_note(found)
-            if note:
-                caveats.append(note)
-        indexes = P.next_acl_indexes(acl_rules, 2 * len(by_network))
-        try:
-            for i, (nid, macs) in enumerate(sorted(by_network.items())):
-                acl_payloads.extend(P.build_neighbour_acls(
-                    macs, nid, gw_macs, req.label, indexes[2 * i: 2 * i + 2],
-                    resolver_macs=resolver_macs.get(nid)))
-        except ValueError as e:
-            return LockdownResponse(dry_run=req.dry_run, error=str(e))
-        caveats.extend(P.NEIGHBOUR_CAVEATS)
-        for mac in req.macs:
-            cov = verdicts[mac.lower()]
-            who = req.label or mac
+            elif unplaced:
+                neighbour_problem = ("House Arrest couldn't tell which network "
+                                     + ", ".join(unplaced) + " is on, so its "
+                                     "neighbours can't be blocked. Bring the device "
+                                     "online and try again.")
+        # DNS servers on the device's own VLAN go in the ALLOW beside the
+        # gateway, for Internet only (measured 2026-10-01: without this the
+        # neighbour block cut a same-VLAN Pi-hole). Quarantine has no
+        # internet, so a hole to a resolver would only be an opening.
+        resolver_macs: Dict[str, List[str]] = {}
+        if not neighbour_problem and req.preset == P.INTERNET_ONLY:
+            for nid in by_network:
+                found, missing = P.same_network_resolvers(nets_by_id.get(nid), live)
+                if missing:
+                    return LockdownResponse(
+                        dry_run=req.dry_run,
+                        error=("This device's network hands out "
+                               + ", ".join(missing)
+                               + " for DNS, which is on the same network, but UniFi "
+                                 "doesn't currently know that device's MAC address "
+                                 "(it may be offline). The neighbour block would cut "
+                                 "this device off from it, and websites and apps "
+                                 "would stop loading by name. Bring that DNS server "
+                                 "online and try again, or untick the neighbour block."),
+                    )
+                resolver_macs[nid] = [r["mac"] for r in found]
+                note = P.resolver_note(found)
+                if note:
+                    caveats.append(note)
+        if neighbour_problem and not always:
+            return LockdownResponse(
+                dry_run=req.dry_run,
+                error=neighbour_problem + " Untick the neighbour block and apply again.",
+            )
+        if neighbour_problem:
             caveats.append(
-                f"{who} ({P.COVERAGE_LABELS[cov['status']].lower()}): "
-                f"{P.coverage_sentence(cov)}")
+                "The neighbour block isn't part of this Quarantine. "
+                + neighbour_problem
+                + " Other devices on the same network can still reach this device.")
+        else:
+            gw_macs = P.gateway_lan_macs(devices)
+            acl_indexes = P.next_acl_indexes(acl_rules, 2 * len(by_network))
+            try:
+                for i, (nid, macs) in enumerate(sorted(by_network.items())):
+                    acl_payloads.extend(P.build_neighbour_acls(
+                        macs, nid, gw_macs, req.label, acl_indexes[2 * i: 2 * i + 2],
+                        resolver_macs=resolver_macs.get(nid)))
+            except ValueError as e:
+                return LockdownResponse(dry_run=req.dry_run, error=str(e))
+            caveats.extend(P.NEIGHBOUR_CAVEATS)
+            for mac in req.macs:
+                cov = verdicts[mac.lower()]
+                who = req.label or mac
+                caveats.append(
+                    f"{who} ({P.COVERAGE_LABELS[cov['status']].lower()}): "
+                    f"{P.coverage_sentence(cov)}")
+
+    # The preset's measured caveats travel with every preview and result, so
+    # the review step shows them beside everything else this lockdown does.
+    caveats = caveats + P.caveats_for(req.preset)
 
     if req.dry_run:
         return LockdownResponse(
@@ -1492,6 +1649,27 @@ async def lockdown(req: LockdownRequest):
                 error=f"Failed to create policy {payload.get('name')!r}; rolled back",
             )
         created.append(result)
+
+    # The DNS allow was created first so it should sit ahead of the block. The
+    # controller assigns stored indexes itself, so check what it stored rather
+    # than trusting creation order; a lockdown that cuts its own DNS is the
+    # bug this exists to prevent.
+    if dns_ips:
+        try:
+            stored = {p.get("_id"): p for p in await client.get_firewall_policies()}
+        except Exception:
+            stored = {}
+        mine = [stored.get(c.get("_id"), c) for c in created]
+        blocks = [p for p in mine if P._blocks_lan_for(p)]
+        allows = [p for p in mine if P.is_device_dns_allow(p)]
+        if any(P.shadowed_dns_allows(b, allows, device_net_ids) for b in blocks) or not allows:
+            await roll_back()
+            return LockdownResponse(
+                dry_run=False, created=[],
+                error=("The gateway placed this device's DNS rule after its block, "
+                       "which would cut its DNS, so House Arrest undid the "
+                       "lockdown. Try applying it again."),
+            )
 
     # ALLOW is always written before its BLOCK (payload order), so a failure
     # can never leave a lone BLOCK behind — which would cut the device off

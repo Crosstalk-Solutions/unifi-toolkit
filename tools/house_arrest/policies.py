@@ -47,17 +47,39 @@ LAN_ONLY = "lan_only"
 # this tool can then isolate and DNS-lock reliably.
 QUARANTINE = "quarantine"
 
-# The presets the tool OFFERS. Quarantine stays out of this tuple but keeps its
-# PRESET_LABELS / PRESET_EFFECTS entries so preset_from_policy() still
-# recognises a pre-removal quarantine and release still clears its VLAN
-# override instead of stranding the device.
-PRESETS = (FULL_LOCKDOWN, INTERNET_ONLY, LAN_ONLY)
+# ADDED 2026-10-02: the complete lockdown, shown to users as "Quarantine".
+# Deliberately NOT the "quarantine" key above: that key still means the
+# removed VLAN-move preset, and release() clears a VLAN override for it
+# (requires_network). Reusing the key would make releasing a new Quarantine
+# try to undo a move that never happened.
+CUT_OFF = "cut_off"
+
+# The presets the tool OFFERS, in the order the UI shows them: most to least
+# permissive (Chris, 2026-10-02). Internet only and LAN only each cut one
+# thing; No internet cuts both of theirs; Quarantine cuts everything. Internet
+# only leads as the most-used. The legacy
+# Quarantine stays out of this tuple but keeps its PRESET_LABELS /
+# PRESET_EFFECTS entries so preset_from_policy() still recognises a
+# pre-removal quarantine and release still clears its VLAN override instead
+# of stranding the device.
+PRESETS = (INTERNET_ONLY, LAN_ONLY, FULL_LOCKDOWN, CUT_OFF)
 
 PRESET_LABELS = {
-    FULL_LOCKDOWN: "Full lockdown",
+    CUT_OFF: "Quarantine",
+    # RENAMED 2026-10-02 from "Full lockdown": next to Quarantine, a "full"
+    # lockdown that still lets other devices in was the confusing one. The key
+    # is unchanged so existing lockdowns keep working.
+    FULL_LOCKDOWN: "No internet",
     INTERNET_ONLY: "Internet only",
     LAN_ONLY: "LAN only",
     QUARANTINE: "Quarantine + VLAN move",
+}
+
+# Labels older lockdowns were written with. preset_from_policy() reads the
+# label back out of a policy's description, so a lockdown created before a
+# rename must still be recognised (and released) under its old name.
+LEGACY_PRESET_LABELS = {
+    FULL_LOCKDOWN: ("Full lockdown",),
 }
 
 # What each preset actually does to the three traffic paths a device has.
@@ -77,23 +99,39 @@ PRESET_LABELS = {
 # "moved": relocating the device changes WHICH peers it has, it does not cut
 # peer traffic. Claiming otherwise would be the exact lie this tool exists to
 # avoid.
+#
+# `inbound` is whether your other networks can still start connections to the
+# device (allow_inbound). It used to be a checkbox; since 2026-10-02 each
+# preset fixes it, and Quarantine is the "nothing reaches it" choice.
 PRESET_EFFECTS = {
+    CUT_OFF: {
+        "internet": "block",
+        "networks": "block",
+        "peers": "allow",
+        "inbound": False,
+        "summary": "Nothing in or out. Cut off from the internet, your other "
+                   "networks, and other devices on the same network.",
+    },
     FULL_LOCKDOWN: {
         "internet": "block",
         "networks": "block",
         "peers": "allow",
-        "summary": "Cut off from the internet and every other network.",
+        "inbound": True,
+        "summary": "Can't reach the internet or your other networks, but you "
+                   "can still reach this device.",
     },
     INTERNET_ONLY: {
         "internet": "allow",
         "networks": "block",
         "peers": "allow",
+        "inbound": True,
         "summary": "Can reach the internet, nothing else on your network.",
     },
     LAN_ONLY: {
         "internet": "block",
         "networks": "allow",
         "peers": "allow",
+        "inbound": True,
         "summary": "Can reach local devices, but never phones home.",
     },
     QUARANTINE: {
@@ -113,31 +151,37 @@ LOCKDOWN_CAVEATS = [
     "Connections already open keep running. Measured: a download in progress "
     "continued after the lockdown was applied, while new connections failed "
     "immediately. The gateway's connection tracking lets established sessions "
-    "finish, so a streaming device won't stop mid-stream — reconnect it, or "
+    "finish, so a streaming device won't stop mid-stream. Reconnect it, or "
     "wait for the session to end.",
-    "Your gateway stays reachable — DHCP and the gateway's own services are "
+    "Your gateway stays reachable. DHCP and the gateway's own services are "
     "not blocked, so the device keeps its address and stays on the network.",
     "DNS keeps working if your resolver is on the device's own VLAN. Verified "
     "on a locked-down device: names still resolved through a same-VLAN "
-    "resolver, which forwards upstream — so a determined device still has a "
+    "resolver, which forwards upstream, so a determined device still has a "
     "path out over DNS.",
 ]
 
 
-# Presets that may add the optional neighbour block. LAN only is excluded on
-# purpose: its whole point is keeping local access, and cutting neighbours
-# would contradict the preset's name.
-NEIGHBOUR_BLOCK_PRESETS = (FULL_LOCKDOWN, INTERNET_ONLY)
+# Presets that use the neighbour block (a per-device switch-ACL pair).
+# Quarantine always applies it; Internet only offers it as the one remaining
+# checkbox, because it has a real cost (casting and printing with neighbours
+# stop). No internet and LAN only don't offer it: LAN only's whole point is
+# keeping local access, and Quarantine is the "cut everything" choice.
+NEIGHBOUR_BLOCK_PRESETS = (CUT_OFF, INTERNET_ONLY)
+NEIGHBOUR_ALWAYS_PRESETS = (CUT_OFF,)
 
 NEIGHBOUR_CAVEATS = [
-    "The neighbour block works in both directions, so devices on its own "
-    "network can't reach this device either. The \"Let devices on your other "
-    "networks still reach this device\" option only applies to your other "
-    "networks.",
+    "The neighbour block works in both directions, so other devices on the "
+    "same network can't reach this device either.",
     "The neighbour block only works on UniFi switch models that support it. "
     "House Arrest works out where each device is connected and shows how well "
     "the block will work for each one.",
 ]
+
+
+def inbound_for(preset: str) -> bool:
+    """Whether the preset lets your other networks start connections to it."""
+    return bool(PRESET_EFFECTS.get(preset, {}).get("inbound", True))
 
 
 def caveats_for(preset: str) -> List[str]:
@@ -146,9 +190,27 @@ def caveats_for(preset: str) -> List[str]:
     internet access need them; the others don't make that claim.
     """
     effects = PRESET_EFFECTS.get(preset, {})
-    if effects.get("internet") == "block":
-        return list(LOCKDOWN_CAVEATS)
-    return []
+    if effects.get("internet") != "block":
+        return []
+    if preset in NEIGHBOUR_ALWAYS_PRESETS:
+        # The neighbour block also cuts a same-VLAN resolver wherever the
+        # switches cover the device (measured 2026-10-01), so the plain
+        # "DNS keeps working on its own VLAN" caveat would overclaim here.
+        # Quarantine's rules match every connection state (allow_inbound
+        # False), so open connections are cut too, unlike the other presets.
+        keep = [c for c in LOCKDOWN_CAVEATS
+                if not c.startswith(("DNS keeps working", "Connections already open"))]
+        return keep + [
+            "Quarantine also cuts connections that are already open, because "
+            "its rules match every connection, not just new ones.",
+            "A quarantined device can still look up names: the gateway's own "
+            "DNS stays reachable, and so do your approved DNS servers if its "
+            "network has a DNS Lockdown. It can't connect to anything on the "
+            "internet, but because those DNS servers look up names on the "
+            "internet for it, a determined device still has a slow path out "
+            "over DNS.",
+        ]
+    return list(LOCKDOWN_CAVEATS)
 
 
 def requires_network(preset: str) -> bool:
@@ -165,8 +227,8 @@ def requires_network(preset: str) -> bool:
 PATH_LABELS = {
     "internet": "The internet",
     "networks": "Your other networks",
-    "peers": "Devices on its own network",
-    "inbound": "Other devices reaching in to it",
+    "peers": "Other devices on the same network",
+    "inbound": "Your other networks connecting to this device",
 }
 
 
@@ -183,6 +245,9 @@ def preset_catalog() -> List[Dict]:
             "requires_network": requires_network(value),
             "caveats": caveats_for(value),
             "neighbour_block": value in NEIGHBOUR_BLOCK_PRESETS,
+            # Quarantine applies the neighbour block without asking.
+            "neighbour_always": value in NEIGHBOUR_ALWAYS_PRESETS,
+            "inbound": inbound_for(value),
         }
         for value in PRESETS
     ]
@@ -724,7 +789,7 @@ def dhcp_dns_conflicts(networks: List[Dict], resolver_ips: List[str]) -> List[st
             out.append(
                 f"{name} hands out {', '.join(handed)} over DHCP, and none of "
                 f"those are approved. Devices there will be told to use a "
-                f"resolver this lockdown blocks, so they will lose DNS until "
+                f"DNS server this lockdown blocks, so those devices will lose DNS until "
                 f"you change the DHCP name servers to {', '.join(sorted(approved))} "
                 f"in Settings -> Networks -> {name}."
             )
@@ -734,7 +799,7 @@ def dhcp_dns_conflicts(networks: List[Dict], resolver_ips: List[str]) -> List[st
                 f"{', '.join(stale)} "
                 + ("is" if len(stale) == 1 else "are")
                 + " not approved and will be blocked, so devices there fall "
-                  "back to whichever handed-out resolver is still allowed. "
+                  "back to whichever DHCP DNS server is still allowed. "
                   "Tidier to match the DHCP name servers to the approved list."
             )
     return out
@@ -781,10 +846,10 @@ def dns_interception_caveats(
         out.append(
             "UniFi's Encrypted DNS is ON (Settings -> CyberSecure -> Threat "
             "Management -> Encrypted DNS). The gateway intercepts DNS and "
-            "resolves through its own encrypted upstreams, so devices may "
-            "never reach the resolvers you approve here no matter what these "
-            "rules say. Turn it off if you want your own resolvers to "
-            "actually be used."
+            "sends it to its own encrypted DNS servers, so devices may "
+            "never reach your approved DNS servers, whatever the DNS Lockdown "
+            "rules say. Turn Encrypted DNS off if you want your approved DNS "
+            "servers to actually be used."
         )
 
     filtered = set(content_filtered_ids(content_filters))
@@ -794,15 +859,16 @@ def dns_interception_caveats(
             "CyberSecure Content Filter is on for "
             + ", ".join(hit)
             + " (Settings -> CyberSecure -> Content Filter). UniFi redirects "
-            "a filtered network's DNS through its own filtering resolvers, "
-            "which competes with the resolvers you approve here."
+            "a filtered network's DNS through UniFi's filtering DNS servers, "
+            "which conflicts with your approved DNS servers."
         )
 
     if (ips_setting or {}).get("ad_blocking_enabled"):
         out.append(
             "UniFi's Ad Blocking is on, which also intercepts DNS at the "
-            "gateway. It usually coexists with a custom resolver, but if "
-            "results look wrong, it is part of the resolution path."
+            "gateway. Ad Blocking usually works alongside your own DNS "
+            "servers, but if lookups look wrong, Ad Blocking is part of "
+            "the path."
         )
     return out
 
@@ -921,13 +987,13 @@ def dns_label_from_policy(policy: Dict) -> str:
 
 
 DNS_CAVEATS = [
-    "DNS-over-HTTPS is not covered. A device that resolves over HTTPS on port "
-    "443 bypasses this entirely, and blocking that needs a maintained list of "
-    "DoH server addresses — out of scope here.",
-    "A device using a resolver on its OWN network is unaffected: that traffic "
-    "never reaches the gateway, so no firewall policy can see it.",
-    "Existing connections keep running. A device already talking to another "
-    "resolver continues until that conversation ends.",
+    "DNS-over-HTTPS is not covered. A device that looks up names over HTTPS "
+    "on port 443 gets past DNS Lockdown entirely, and blocking DoH would need "
+    "a maintained list of DoH server addresses, which is out of scope here.",
+    "A device using a DNS server on the same network isn't affected, because "
+    "that traffic never reaches the gateway and no firewall rule can see it.",
+    "Existing connections keep running. A device already talking to a "
+    "different DNS server keeps doing so until that connection ends.",
 ]
 
 
@@ -1223,7 +1289,7 @@ def build_lockdown(
     for pol in (block_internet, block_lan):
         pol.update(connection_state(allow_inbound))
 
-    if preset in (FULL_LOCKDOWN, QUARANTINE):
+    if preset in (CUT_OFF, FULL_LOCKDOWN, QUARANTINE):
         return [block_internet, block_lan]
     if preset == INTERNET_ONLY:
         return [block_lan]
@@ -1234,11 +1300,159 @@ def build_lockdown(
 
 def policy_count(preset: str) -> int:
     """How many policies a preset writes. Used to pre-allocate indexes."""
-    if preset in (FULL_LOCKDOWN, QUARANTINE):
+    if preset in (CUT_OFF, FULL_LOCKDOWN, QUARANTINE):
         return 2
     if preset in (INTERNET_ONLY, LAN_ONLY):
         return 1
     raise ValueError(f"Unknown preset: {preset!r}")
+
+
+# ----------------------------------------------------------------------
+# DNS under Internet only (MEASURED 2026-10-01, design doc)
+#
+# Internet only's "no LAN" BLOCK (device -> its own zone, NEW/INVALID) also
+# stops DNS to a resolver on ANOTHER VLAN in that zone, so a device whose
+# DHCP points at a Pi-hole on the main LAN lost name resolution while its
+# card said "Enforcing". And because new policies are appended to the end of
+# their zone pair, a DNS Lockdown applied AFTER a device lockdown landed its
+# allow behind the device's block: same result, both tabs green.
+
+DEVICE_DNS_SUFFIX = "DNS to its resolvers"
+
+
+def device_dns_resolvers(
+    device_networks: List[Dict],
+    networks: List[Dict],
+    zones: Optional[List[Dict]],
+    client_zone_id: str,
+) -> Tuple[List[str], List[str]]:
+    """
+    DNS servers an Internet only device must keep reaching through its block.
+
+    Takes the DHCP DNS of each network the devices are on, and keeps the ones
+    that sit on a DIFFERENT network in the device's own zone (those are the
+    ones the "no LAN" block cuts). Resolvers on the device's own subnet never
+    pass the gateway, and internet resolvers are allowed by Internet only
+    anyway, so neither needs anything.
+
+    Isolated networks are skipped on purpose: an allow there would punch
+    through the isolation the Networks tab set (custom allows run before
+    UniFi's Isolated Networks block). Their DNS to another VLAN only works
+    through a DNS Lockdown, which is the caller's to report.
+
+    Returns (resolver IPs to allow, ids of isolated networks skipped that
+    hand out such a resolver).
+    """
+    allow: List[str] = []
+    skipped: List[str] = []
+    for net in device_networks or []:
+        handed = dhcp_dns_of(net) if net.get("dhcpd_dns_enabled") is not False else []
+        lan, _wan, _foreign = classify_resolvers(handed, networks, zones, client_zone_id)
+        cross = [ip for ip in lan if not _ip_in_subnet(ip, net.get("ip_subnet"))]
+        if not cross:
+            continue
+        if net.get(NET_FLAG_ISOLATION):
+            skipped.append(net.get("_id"))
+            continue
+        for ip in cross:
+            if ip not in allow:
+                allow.append(ip)
+    return allow, skipped
+
+
+def build_device_dns_allow(
+    macs: List[str],
+    device_label: str,
+    client_zone_id: str,
+    resolver_ips: List[str],
+    index: int,
+) -> Dict:
+    """
+    ALLOW device -> its DHCP DNS servers on port 53, inside its own zone.
+
+    The one ALLOW the Devices tab writes, and it is deliberately narrow: only
+    the locked device as source, only port 53, only the resolvers its own
+    network's DHCP already hands it, and never on an isolated network (see
+    device_dns_resolvers). It must be CREATED before the "no LAN" block, so it
+    lands ahead of it; the caller verifies the stored order.
+    """
+    if not resolver_ips:
+        raise ValueError("At least one resolver is required")
+    label = device_label or "device"
+    return _base_policy(
+        name=f"{NAME_PREFIX}{label} — {DEVICE_DNS_SUFFIX}",
+        action="ALLOW",
+        index=index,
+        source=client_source(macs, client_zone_id),
+        destination=_dns_dest(client_zone_id, DNS_PORT, resolver_ips),
+        description=describe(f"{PRESET_LABELS[INTERNET_ONLY]} for {label}"),
+    )
+
+
+def is_device_dns_allow(policy: Dict) -> bool:
+    return (is_house_arrest(policy) and policy.get("action") == "ALLOW"
+            and (policy.get("name") or "").endswith(DEVICE_DNS_SUFFIX))
+
+
+def _blocks_lan_for(block: Dict) -> bool:
+    """A device "no LAN" block: our BLOCK, client source, own-zone destination."""
+    if not is_house_arrest(block) or block.get("action") != "BLOCK":
+        return False
+    if is_dns_policy(block) or is_network_policy(block):
+        return False
+    if (block.get("source") or {}).get("matching_target") != "CLIENT":
+        return False
+    src_zone, dst_zone = zone_pair_of(block)
+    return bool(src_zone) and src_zone == dst_zone
+
+
+def dns_allows_for_device(
+    policies: List[Dict], macs: List[str], network_ids: List[str]
+) -> List[Dict]:
+    """
+    House Arrest ALLOWs that exist to carry this device's DNS: its own
+    Internet-only DNS allow, and any DNS Lockdown allow covering its network.
+    """
+    want_macs = {m.lower() for m in macs or []}
+    want_nets = set(network_ids or [])
+    out = []
+    for p in policies or []:
+        if not is_house_arrest(p) or p.get("action") != "ALLOW" or not p.get("enabled", True):
+            continue
+        if is_device_dns_allow(p) and want_macs & set(policy_macs(p)):
+            out.append(p)
+        elif is_dns_policy(p) and want_nets & set((p.get("source") or {}).get("network_ids") or []):
+            out.append(p)
+    return out
+
+
+def shadowed_dns_allows(
+    block: Dict, policies: List[Dict], network_ids: List[str]
+) -> List[Dict]:
+    """
+    DNS allows for this block's devices that sit BEHIND it in its zone pair.
+
+    Lower index evaluates first, so any of these means the device's DNS is
+    being cut by its own lockdown. Used by the health check (shown as
+    "blocking its DNS") and to decide which blocks to re-create after a DNS
+    Lockdown is applied.
+    """
+    if not _blocks_lan_for(block) or not isinstance(block.get("index"), int):
+        return []
+    pair = zone_pair_of(block)
+    return [
+        a for a in dns_allows_for_device(policies, policy_macs(block), network_ids)
+        if zone_pair_of(a) == pair and isinstance(a.get("index"), int)
+        and a["index"] > block["index"]
+    ]
+
+
+def recreate_payload(policy: Dict, index: int) -> Dict:
+    """A copy of one of our policies, ready to POST, at a new index."""
+    drop = {"_id", "site_id", "origin_id", "origin_type"}
+    out = {k: v for k, v in policy.items() if k not in drop}
+    out["index"] = index
+    return out
 
 
 # REMOVED 2026-09-29: build_exception / build_inbound_exception. They built
@@ -1528,9 +1742,9 @@ MATRIX_COLUMNS = [
     {"key": "isolation", "label": "Network isolation",
      "help": "Blocks this network from reaching your other networks."},
     {"key": "device_isolation", "label": "Device isolation",
-     "help": "Stops devices on this network from reaching each other. It only "
-             "fully works for wired devices plugged into a UniFi switch model "
-             "that supports it."},
+     "help": "Stops devices on this network from reaching each other. Device "
+             "isolation only fully works for wired devices plugged into a UniFi "
+             "switch model that supports it."},
     {"key": "internet", "label": "Internet access",
      "help": "Whether devices here can reach the internet at all."},
     {"key": "mdns", "label": "mDNS forwarding",
@@ -1671,11 +1885,12 @@ def build_isolation_matrix(
                 "warn" if siblings else "good",
                 zname,
                 f"{name} is in the {zname} zone with {len(siblings)} other "
-                f"network(s). Traffic inside a zone is allowed unless a policy "
-                f"blocks it, so these can reach each other by default."
+                f"network(s). Traffic inside a zone is allowed unless a firewall "
+                f"rule blocks it, so these networks can reach each other by "
+                f"default."
                 if siblings else
-                f"{name} is alone in the {zname} zone, so nothing else shares "
-                f"its default-allow boundary."
+                f"{name} is the only network in the {zname} zone, so no other "
+                f"network can reach {name} by default."
             )
         else:
             cells["zone"] = _cell("neutral", "—", "No zone membership reported.")
@@ -1731,7 +1946,7 @@ def build_isolation_matrix(
             cells["device_isolation"] = _cell(
                 "neutral", "Unknown",
                 "House Arrest couldn't read the Device isolation setting from "
-                "the controller, so it can't show or change it here.")
+                "the controller, so it can't show or change that setting here.")
         else:
             cells["device_isolation"] = device_isolation_cell(
                 nid in device_isolation_ids,
@@ -1744,8 +1959,7 @@ def build_isolation_matrix(
         cells["internet"] = _cell(
             "warn" if inet is not False else "good",
             "Allowed" if inet is not False else "Blocked",
-            f"internet_access_enabled={inet!r}. "
-            + ("Devices here can reach the internet."
+            ("Devices here can reach the internet."
                if inet is not False else
                "Devices here have no internet access at the network level."),
             editable=True,
@@ -1766,14 +1980,14 @@ def build_isolation_matrix(
         cells["mdns"] = _cell(
             "warn" if mdns else "good",
             "On" if mdns else "Off",
-            f"mdns_enabled={mdns!r}. "
-            + ("Service discovery crosses this boundary. Often wanted for "
-               "casting, but it does advertise what lives here."
-               if mdns else
-               "Service discovery does not cross this boundary.")
+            ("Service discovery crosses this boundary. Often wanted for "
+             "casting, but it also lets your other networks see the devices "
+             "on this network."
+             if mdns else
+             "Service discovery does not cross this boundary.")
             + " mDNS is one site-wide list (Settings -> Networks -> Gateway "
-              "mDNS Proxy -> Custom). Toggling it here adds or removes this "
-              "network from that shared list — the same edit the UniFi UI "
+              "mDNS Proxy -> Custom). Changing this cell adds or removes this "
+              "network from that shared list, the same edit the UniFi UI "
               "makes.",
             editable=True,
         )
@@ -1795,26 +2009,28 @@ def build_isolation_matrix(
                 "warn", ", ".join(servers),
                 f"{', '.join(local)} "
                 + ("is" if len(local) == 1 else "are")
-                + f" on this network's own subnet. Queries to "
-                + ("it" if len(local) == 1 else "them")
-                + " never pass the gateway, so no firewall policy can filter "
-                  "them — a device locked down here can still resolve names, "
-                  "and the resolver forwards upstream. Measured on a real "
-                  "locked-down device."
+                + f" on this network's own subnet, so DNS queries to "
+                + ("that DNS server" if len(local) == 1 else "those DNS servers")
+                + " never pass the gateway and no firewall rule can filter "
+                  "them. A device locked down on this network can still look "
+                  "up names, and the DNS server looks them up on the internet. "
+                  "Measured on a real locked-down device."
             )
         elif servers:
             cells["dns"] = _cell(
                 "neutral", ", ".join(servers),
                 f"DHCP hands out {', '.join(servers)}, which "
                 + ("is" if len(servers) == 1 else "are")
-                + " outside this network. Those queries cross the gateway, so "
-                  "a lockdown here can filter them."
+                + " outside this network. DNS queries to "
+                + ("that server" if len(servers) == 1 else "those servers")
+                + " cross the gateway, so a DNS Lockdown on this network can "
+                  "control them."
             )
         else:
             cells["dns"] = _cell(
                 "good", "Gateway",
-                "Devices here use the gateway as resolver, so DNS can be "
-                "controlled at the gateway."
+                "Devices here use the gateway as their DNS server, so DNS "
+                "can be controlled at the gateway."
             )
 
         rows.append({
@@ -2026,28 +2242,28 @@ def coverage_sentence(cov: Dict) -> str:
     where = cov.get("attached_to") or "its switch"
     via = cov.get("enforcer") or "a switch that supports it"
     if status == COVERED:
-        return f"It's plugged into {where}, which supports the neighbour block."
+        return f"Plugged into {where}, which supports the neighbour block."
     if status == PARTIAL and cov.get("shared_port"):
-        return (f"It's plugged into {where}, which supports the neighbour block, "
+        return (f"Plugged into {where}, which supports the neighbour block, "
                 f"but other devices share the same switch port. That usually "
                 f"means there's another switch in between, or a computer running "
-                f"virtual machines. Devices sharing that port may still reach it.")
+                f"virtual machines. Devices sharing that port may still reach this device.")
     if status == PARTIAL and cov.get("wired"):
-        return (f"It's plugged into {where}, which doesn't support the neighbour "
+        return (f"Plugged into {where}, which doesn't support the neighbour "
                 f"block. Devices whose traffic passes through {via} are blocked, "
                 f"but other devices on {where}, or on other switches that don't "
-                f"support it, may still reach it.")
+                f"support it, may still reach this device.")
     if status == PARTIAL:
-        return (f"It's connected to Wi-Fi through {where}. Devices whose traffic "
+        return (f"Connected to Wi-Fi through {where}. Devices whose traffic "
                 f"passes through {via} are blocked, but other Wi-Fi devices, "
-                f"especially ones on the same access point, may still reach it. "
-                f"Turn on Wi-Fi client isolation for its network to close that gap.")
+                f"especially ones on the same access point, may still reach this device. "
+                f"Turn on Wi-Fi client isolation for this device's network to close that gap.")
     if status == NOT_COVERED:
         return (f"None of the switches between {where} and the rest of your "
                 f"network support the neighbour block, so it would have no "
                 f"effect on this device.")
     if cov.get("attached_to"):
-        return (f"It's connected to {where}, but UniFi can't show the full path "
+        return (f"Connected to {where}, but UniFi can't show the full path "
                 f"from there to your gateway because a device along the way isn't "
                 f"listed in UniFi. House Arrest can't tell how well the neighbour "
                 f"block will work.")
@@ -2100,15 +2316,16 @@ def device_isolation_cell(
     # WOULD do, so nothing in it reads as already happening.
     if enabled:
         what = ("Device isolation stops devices on this network from reaching "
-                "each other. It only fully works for wired devices plugged into "
-                "a UniFi switch model that supports it. Wi-Fi devices are only "
+                "each other. Device isolation only fully works for wired devices "
+                "plugged into a UniFi switch model that supports it. Wi-Fi devices are only "
                 "partly blocked, so turn on Wi-Fi client isolation for those as "
                 "well. Casting, AirPlay, and printing between devices on this "
                 "network don't work while it is on.")
     else:
         what = ("Turning on Device isolation would stop devices on this network "
-                "from reaching each other. It only fully works for wired devices "
-                "plugged into a UniFi switch model that supports it. Wi-Fi "
+                "from reaching each other. Device isolation only fully works for "
+                "wired devices plugged into a UniFi switch model that supports "
+                "it. Wi-Fi "
                 "devices would only be partly blocked, so turn on Wi-Fi client "
                 "isolation for those as well. Casting, AirPlay, and printing "
                 "between devices on this network would stop working.")
@@ -2207,8 +2424,8 @@ def resolver_note(found: List[Dict]) -> Optional[str]:
         return None
     names = [r["name"] for r in found]
     joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
-    return (f"DNS keeps working: it can still reach {joined} on its own "
-            f"network. Switch rules can't filter by port, so it can reach "
+    return (f"DNS keeps working: this device can still reach {joined} on the "
+            f"same network. Switch rules can't filter by port, so this device can reach "
             f"{'that device' if len(found) == 1 else 'those devices'} on any "
             f"port, not only DNS.")
 
@@ -2458,8 +2675,16 @@ def preset_from_policy(policy: Dict) -> Optional[str]:
     if MARKER not in desc:
         return None
     body = desc.replace(MARKER, "").strip()
-    for value, label in PRESET_LABELS.items():
-        if body.startswith(label):
+    # Match "<label> for " exactly. A bare startswith() let "Quarantine"
+    # (the new preset) swallow "Quarantine + VLAN move for X" (the legacy
+    # one) depending on dict order, and then release would skip clearing the
+    # legacy VLAN override: the same failure as the 2026-09-16 shadow bug.
+    # Longest label first, so no label can be a prefix match for another.
+    candidates = [(v, lbl) for v, lbl in PRESET_LABELS.items()]
+    for v, olds in LEGACY_PRESET_LABELS.items():
+        candidates.extend((v, lbl) for lbl in olds)
+    for value, label in sorted(candidates, key=lambda c: -len(c[1])):
+        if body.startswith(label + " for "):
             return value
     return None
 
@@ -2480,6 +2705,10 @@ ROTATED = "rotated"
 # which is exactly the state this tool must never paint green (it happened
 # for real: a paused DNS rule kept showing "Enforcing" for a day).
 DISABLED = "disabled"
+# Every rule present and enabled, but the lockdown's own block runs before a
+# DNS allow meant for the device, so it can't resolve names (measured
+# 2026-10-01, test B). Set by get_state via shadowed_dns_allows().
+DNS_BLOCKED = "dns_blocked"
 
 
 def check_breakage(ours: List[Dict], known: Dict[str, str]) -> List[Dict]:

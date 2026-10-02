@@ -538,9 +538,12 @@ class TestInboundAccess:
         assert ([p["destination"]["zone_id"] for p in on]
                 == [p["destination"]["zone_id"] for p in off])
 
-    def test_inbound_is_not_a_preset_property(self):
-        for preset in P.PRESETS:
-            assert "inbound" not in P.PRESET_EFFECTS[preset]
+    def test_inbound_is_fixed_by_the_preset(self):
+        # CHANGED 2026-10-02: the inbound checkbox was removed. Quarantine is
+        # the "nothing reaches it" preset; every other preset still answers.
+        assert P.inbound_for(P.CUT_OFF) is False
+        for preset in (P.FULL_LOCKDOWN, P.INTERNET_ONLY, P.LAN_ONLY):
+            assert P.inbound_for(preset) is True
 
     def test_path_labels_cover_the_inbound_row(self):
         assert "inbound" in P.PATH_LABELS
@@ -625,7 +628,7 @@ class TestDnsLockdown:
         assert any("HTTPS" in c for c in P.DNS_CAVEATS)
 
     def test_same_network_resolver_limitation_is_disclosed(self):
-        assert any("OWN network" in c for c in P.DNS_CAVEATS)
+        assert any("DNS server on the same network" in c for c in P.DNS_CAVEATS)
 
 
 class TestZoneResolution:

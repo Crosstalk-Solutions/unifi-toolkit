@@ -10,7 +10,7 @@ House Arrest is three tools sharing one page:
 |---|---|
 | **Networks** | An editable table of your VLANs (network isolation, device isolation, internet access, mDNS, DNS), plus per-SSID Wi-Fi client isolation |
 | **DNS Lockdown** | Force chosen networks to use only the DNS servers you approve, and block every other DNS server |
-| **Devices** | Per-device lockdown presets by MAC address: Full lockdown, Internet only, or LAN only |
+| **Devices** | Per-device lockdown presets by MAC address: Internet only, LAN only, No internet, or Quarantine |
 
 ## Requirements
 
@@ -30,9 +30,10 @@ explains most of what you'll see in the UI:
 
 - Every change is previewed before it is applied. You always get a dry run
   first.
-- After a DNS lockdown is applied, the stored rule order is read back and
-  verified. If the gateway placed the allow rule after the blocks, which
-  would kill DNS on those networks, everything is rolled back automatically.
+- After a DNS Lockdown or an Internet only lockdown is applied, the stored
+  rule order is read back and verified. If the gateway placed an allow rule
+  after the block it has to beat, which would cut DNS, House Arrest undoes
+  the change automatically.
 - Every rule House Arrest creates carries a `[HouseArrest]` marker in its
   description. Release deletes exactly those rules and refuses to touch
   anything else, so it can never delete a rule you made yourself.
@@ -65,41 +66,46 @@ network will be set up after you confirm.
   that shared list, and the confirm dialog says so before you apply it.
 - **DNS** is read-only in the table. Change it from the DNS Lockdown tab.
 
-**Wi-Fi client isolation** is listed below the table, one row per SSID. It
-stops wireless devices on the same SSID from reaching each other. It has no
-effect on wired devices, so use Device isolation for those.
+**Wi-Fi client isolation** is listed below the table, one row per SSID.
+Client isolation stops wireless devices on the same SSID from reaching each
+other. Wired devices aren't affected, so use Device isolation for those.
 
 ## DNS Lockdown tab
 
-DNS Lockdown lets devices on the networks you pick use only the DNS servers
-you approve, and blocks every other DNS server.
+DNS Lockdown lets devices on the networks you pick use only your approved
+DNS servers, and blocks every other DNS server.
 
-**WARNING: this will break any device with hardcoded DNS server settings.**
-That is usually why you want it, but check the "what each network hands out
+**WARNING: DNS Lockdown will break any device with a hardcoded DNS server.**
+That is usually why you want it, but check the "What each network hands out
 now" table before applying.
 
 Options and safeguards:
 
-- **Also point DHCP at these resolvers.** Recommended. DHCP decides which
-  resolver devices are told to use, and the firewall rules decide which they
-  may use. If DHCP keeps advertising a resolver the rules block, devices on
-  that network lose DNS at their next lookup. The tab highlights exactly
-  this conflict before you apply.
-- **Also block DNS-over-TLS (port 853).** A device that can't reach 853
-  usually falls back to plain DNS on 53, which the rules then catch.
+- **Also point DHCP at your approved DNS servers.** Recommended. DHCP tells
+  devices which DNS server to use, and DNS Lockdown decides which DNS servers
+  devices are allowed to use. If DHCP keeps handing out a DNS server that DNS
+  Lockdown blocks, devices on that network lose DNS. The tab highlights this
+  conflict before you apply.
+- **Also block DNS-over-TLS (port 853).** A device that can't reach port 853
+  usually falls back to ordinary DNS on port 53, which DNS Lockdown then
+  controls.
 - Public DNS servers such as 1.1.1.1 can be approved just like one on your
   own network.
-- Networks already under a DNS lockdown are greyed out in the picker.
-  Stacking a second lockdown on top of the first is refused rather than
-  silently doubled up.
+- Networks that already have a DNS Lockdown are greyed out in the picker.
+  A second DNS Lockdown on the same network is refused rather than silently
+  doubled up.
+- If a device on one of these networks is already under a Devices-tab
+  lockdown, House Arrest re-creates that device's block after the new DNS
+  rules, so the device keeps reaching your approved DNS servers. The result
+  message says which devices were moved.
 
 ### What DNS Lockdown cannot stop: DNS-over-HTTPS
 
 DoH is DNS wrapped in ordinary HTTPS on port 443. At the firewall it is
 indistinguishable from any other web traffic, so there is no rule this tool
 (or any port-based firewall) can write that blocks DoH without blocking the
-web itself. A browser with "secure DNS" turned on, or a device with a DoH
-resolver built in, can resolve names right past a DNS lockdown.
+web itself. A browser with "secure DNS" turned on, or a device with DoH
+built in, can look up names right past a DNS Lockdown.
 
 Blocking DoH by destination is a losing game: it means maintaining a list of
 every DoH provider's addresses, the list is never complete, and popular
@@ -110,13 +116,15 @@ What actually works:
 
 - Turn off secure DNS in the browser or app itself (Chrome, Edge, and
   Firefox all have a setting for it).
-- For a device you don't trust to behave, don't fight its resolver. Use a
-  Devices-tab preset that cuts its internet access entirely. If the device
-  needs to reach one specific service, write that allow rule yourself in
-  UniFi. House Arrest never creates allow rules on the Devices tab, because
-  an allow rule can quietly reopen a network you isolated.
-- Some resolvers and firewalls handle Firefox specifically through its
-  canary domain (`use-application-dns.net`); that only affects Firefox, and
+- For a device you don't trust to behave, don't fight its DNS settings. Use
+  a Devices-tab preset that cuts its internet access entirely (No internet or
+  Quarantine). If the device needs to reach one specific service, write that
+  allow rule yourself in UniFi. The Devices tab only ever writes one kind of
+  allow rule, the narrow DNS rule described under "DNS under Internet only"
+  below, because a broader allow rule could quietly reopen a network you
+  isolated.
+- Some DNS servers and firewalls handle Firefox specifically through its
+  canary domain (`use-application-dns.net`). That only affects Firefox, and
   only when Firefox chooses to honor it.
 
 The UI states this limitation on the DNS Lockdown tab itself, so nobody has
@@ -124,25 +132,38 @@ to find it here first.
 
 ## Devices tab
 
-Pick one or more devices (search by name, IP, or MAC), then choose a preset:
+Pick one or more devices (search by name, IP, or MAC), then choose a preset.
+The presets run from most to least permissive:
 
-| Preset | Internet | Your other networks | Same-VLAN neighbours |
-|---|---|---|---|
-| **Full lockdown** | Blocked | Blocked | Still reachable, unless you turn on the neighbour block |
-| **Internet only** | Allowed | Blocked | Still reachable, unless you turn on the neighbour block |
-| **LAN only** | Blocked | Allowed | Still reachable |
+| Preset | This device can reach the internet | This device can reach your other networks | Your other networks can reach this device | Other devices on the same network |
+|---|---|---|---|---|
+| **Internet only** | Allowed | Blocked | Allowed | Allowed, or blocked with the checkbox |
+| **LAN only** | Blocked | Allowed | Allowed | Allowed |
+| **No internet** | Blocked | Blocked | Allowed | Allowed |
+| **Quarantine** | Blocked | Blocked | Blocked | Blocked, on supported switches only |
 
-**"Let other devices still reach this device"** is on by default. With it
-on, the locked device can't start connections to anything its preset
-blocks, but it can still answer when another device contacts it, so a
-camera or smart bulb stays usable. Untick it to also stop devices on your
-other networks from starting connections to it.
+The same grid is on the page under **Compare the presets**. **What this
+blocks** sums up the preset you picked in one sentence, and opens to show a
+diagram.
 
-**"Also cut it off from devices on its own network"** (the neighbour block)
-is offered with Full lockdown and Internet only. It stops the device and the
-other devices on its VLAN from reaching each other in either direction,
-which no firewall rule can do. The preset still applies as usual, so a
-device under Internet only keeps its internet access.
+"Your other networks can reach this device" means devices on your other
+networks can start a connection to this device, on any port, so the app or
+web page you control it with keeps working. This device can only answer
+them. Quarantine is the preset that blocks this too.
+
+Lockdowns made with earlier versions keep working and can still be
+released. Earlier versions had a "Let other devices still reach this
+device" checkbox and a preset called Full lockdown, which is now No
+internet.
+
+### Other devices on the same network
+
+No firewall rule can block traffic between devices on the same network,
+because that traffic never passes through the gateway. House Arrest blocks it
+with switch rules instead (the neighbour block). **Quarantine** always
+includes the neighbour block. **Internet only** offers it as a checkbox,
+**Also block other devices on the same network**, because it has a cost:
+casting and printing between this device and its neighbours stop working.
 
 The neighbour block uses the same switch capability as Device isolation. It
 only works on UniFi switch models that support MAC-based ACLs, and only for
@@ -150,26 +171,40 @@ traffic that passes through one of those switches. House Arrest attempts to
 work out where each selected device is connected, and shows one result per
 device before you apply:
 
-- **Fully blocked**: every path between the device and its neighbours
+- **Fully blocked**: every path between this device and its neighbours
   passes through a switch that can block it.
-- **Partly blocked**: some neighbours connect to the device through a switch
-  that can't block it, so those neighbours can still reach it.
-- **Not blocked**: none of the switches between the device and its
+- **Partly blocked**: some neighbours connect to this device through a
+  switch that can't block it, so those neighbours can still reach this
+  device.
+- **Not blocked**: none of the switches between this device and its
   neighbours can block it.
-- **Unknown**: UniFi doesn't currently know where the device is connected,
+- **Unknown**: UniFi doesn't currently know where this device is connected,
   usually because it is offline.
 
-If the device gets its DNS from a server on its own network, such as a
-Pi-hole, the neighbour block still lets the device reach that server, so
-websites and apps keep loading by name. Switch rules can't filter by port, so
-the device can reach that DNS server on any port, not only DNS. If UniFi
-doesn't know the DNS server's MAC address (usually because it's offline),
-House Arrest won't apply the neighbour block, because the device would lose
-DNS.
+If none of your switches support ACLs, the checkbox is greyed out, and
+Quarantine says that other devices on the same network can still reach this
+device.
 
-If none of your switches support ACLs, the neighbour block is greyed out.
-While it is on, casting, printing, and anything else between the device and
-its neighbours stop working too.
+### DNS under Internet only
+
+Internet only keeps this device's DNS working, including when its DNS server
+is on another network:
+
+- If the network hands out a DNS server on **another VLAN** (a Pi-hole on
+  your main network, for example), Internet only adds one narrow allow rule:
+  this device to those DNS servers, on port 53 only. The rule is created
+  before the block, and its position is checked after applying. It is never
+  added on an isolated network, because there it would punch through the
+  isolation. On an isolated network, DNS to another VLAN only works through
+  a DNS Lockdown, and the review step says so.
+- If the DNS server is on **the same network** and you tick the neighbour
+  block, the neighbour block still lets this device reach that DNS server.
+  Switch rules can't filter by port, so this device can reach that DNS server
+  on any port, not only DNS. If UniFi doesn't know the DNS server's MAC
+  address (usually because it's offline), House Arrest won't apply the
+  neighbour block, because this device would lose DNS.
+
+Quarantine adds none of these DNS rules. A quarantined device can still look up names, through the gateway and through your approved DNS servers if its network has a DNS Lockdown, but it can't connect to anything on the internet.
 
 The **blocked traffic view** shows what each lockdown stopped in the last 24
 hours. It only counts traffic blocked by House Arrest's own rules, never
@@ -186,9 +221,11 @@ next to the feature it qualifies. Collected here:
   (wireless devices), or use Device isolation or the neighbour block (wired
   devices, on switches that support ACLs). Two wired devices plugged into
   the same switch that doesn't support ACLs can still reach each other.
-- **Connections already open keep running** when a lockdown is applied. The
-  gateway's connection tracking lets established sessions finish. New
-  connections are blocked immediately.
+- **Connections already open keep running** when a lockdown is applied,
+  except under Quarantine. The gateway's connection tracking lets established
+  sessions finish, and new connections are blocked immediately. Quarantine's
+  rules match every connection, not just new ones, so Quarantine cuts open
+  connections too.
 - **DNS-over-HTTPS (port 443) is not covered** by DNS Lockdown, and cannot
   be. At this layer it looks like any other HTTPS traffic. See the DoH
   section under DNS Lockdown above for what actually works.
@@ -208,18 +245,23 @@ next to the feature it qualifies. Collected here:
   the new MAC, or turn off MAC randomization for your own network on that
   device.
 - **A lockdown shows "disabled in UniFi".** One or more of its rules was
-  toggled off in the UniFi UI. Re-enable it there, or release and re-apply.
-- **Devices ignore your approved resolvers entirely, and nothing here
+  toggled off in the UniFi UI. Re-enable the rule there, or release the
+  lockdown and apply it again.
+- **A lockdown says it is blocking the device's DNS.** The lockdown's block
+  runs before a rule meant to let the device reach its DNS servers, for
+  example after rules were reordered in UniFi. Release the lockdown and
+  apply it again, which puts the rules back in the right order.
+- **Devices ignore your approved DNS servers entirely, and nothing here
   shows red.** Check Settings, CyberSecure in UniFi. With Encrypted DNS
-  enabled, the gateway intercepts DNS and resolves through its own encrypted
-  upstreams, so your Pi-hole or AdGuard never sees the queries no matter
-  what the firewall rules say. Content Filter and Ad Blocking also put the
+  enabled, the gateway intercepts DNS and sends it to its own encrypted DNS
+  servers, so your Pi-hole or AdGuard never sees the queries, whatever the
+  firewall rules say. Content Filter and Ad Blocking also put the
   gateway in the resolution path for covered networks. The DNS Lockdown tab
   warns about all three when it can read those settings.
-- **A network lost DNS entirely after a lockdown.** Its DHCP was advertising
-  a resolver the rules now block, and devices were still using it. Tick
-  "Also point DHCP at these resolvers" and wait for lease renewal, or
-  release the lockdown.
+- **A network lost DNS entirely after a DNS Lockdown.** Its DHCP was handing
+  out a DNS server that DNS Lockdown now blocks, and devices were still using
+  it. Tick "Also point DHCP at your approved DNS servers" and wait for the
+  DHCP leases to renew, or release the DNS Lockdown.
 - When reporting an issue, use the **Debug Info** link in the dashboard
   footer and copy it into the report. It includes the gateway model,
   firmware, and toolkit version, which is the first thing needed to diagnose

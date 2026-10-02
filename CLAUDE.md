@@ -86,7 +86,30 @@ Version is maintained in THREE files — keep them in sync:
   Networks tab's isolation hover then lists it as an exception
   (`isolation_exceptions()`). The neighbour block's ACL ALLOW is L2-only and
   only to the gateway plus the network's own same-VLAN DHCP DNS servers, so
-  it can't reopen anything across networks.
+  it can't reopen anything across networks. The ONE firewall ALLOW the
+  Devices tab writes (since 2026-10-02) is Internet only's DNS rule: this
+  device -> its network's DHCP DNS servers on other VLANs, port 53 only,
+  created before the block and index-verified after. It is never written on
+  an isolated network (`device_dns_resolvers()` skips those), so it still
+  can't reopen anything the Networks tab closed.
+- **Devices tab presets (redesigned 2026-10-02):** Internet only, LAN only,
+  No internet, Quarantine (most to least permissive). The inbound checkbox
+  is gone; `PRESET_EFFECTS[...]["inbound"]` fixes it per preset (only
+  Quarantine is False). Quarantine always applies the neighbour block;
+  Internet only offers it as a checkbox. **Quarantine's key is `cut_off`,
+  NOT `quarantine`** - that key still means the removed VLAN-move preset, and
+  release() clears a VLAN override for it. "No internet" is the old
+  `full_lockdown` key, relabelled; `LEGACY_PRESET_LABELS` keeps old "Full
+  lockdown" descriptions recognised. `preset_from_policy()` matches
+  "<label> for " exactly, longest label first (a bare startswith let
+  "Quarantine" swallow "Quarantine + VLAN move").
+- **A DNS allow must run before every device block it serves.** New
+  policies append to the end of their zone pair, so a DNS Lockdown applied
+  after a device lockdown landed behind it and cut the device's DNS
+  (measured 2026-10-01, test B). `_requeue_shadowing_blocks()` re-creates
+  such blocks after a DNS Lockdown (copy, verify, then delete the original);
+  `shadowed_dns_allows()` drives both that and the `dns_blocked` health
+  status.
 - **The neighbour block must allow same-VLAN resolvers** (measured
   2026-10-01): without them, BLOCK device → Any cut a same-VLAN Pi-hole and
   Internet only lost name resolution while the card said "Fully enforced".

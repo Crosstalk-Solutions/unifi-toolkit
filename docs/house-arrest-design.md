@@ -1641,8 +1641,127 @@ gateway and internet PASS; the control held (the workstation, a same-VLAN
 non-resolver neighbour, still timed out SSHing to nomad10 at 14:58:50,
 between the two locked runs).
 
-Side observation, unresolved: the controller placed nomad10 on USW Ultra
-Behind Network Rack at ~14:30 and on USW-Pro-Max-16-PoE port 7 from 14:58
-(the Ultra uplinks on Pro Max port 14, so p7 is a direct attachment). Either
-it was moved or the earlier `sw_mac` was stale. Coverage verdicts follow
-whatever `stat/sta` says at the time.
+Side observation, resolved: the controller placed nomad10 on USW Ultra
+Behind Network Rack at ~14:30 and on USW-Pro-Max-16-PoE port 7 from 14:58.
+Chris confirmed he physically moved it during the session, so `stat/sta` was
+correct both times (not a staleness bug). The move time wasn't recorded, so
+which of the pre-fix runs (14:40-14:52) were on which switch is unknown; the
+post-fix run (14:58) was on Pro Max p7 ("Fully blocked").
+
+## MEASURED 2026-10-01 (afternoon): Internet only cuts cross-VLAN DNS, and the result depends on click order
+
+Rig: `testclient` wired (dc:a6:32:08:36:42) on HA-Test (VLAN 24,
+192.168.3.0/24, Internal zone, network isolation OFF), USW-Pro-Max-16-PoE
+port 4. Pi-holes on Default (192.168.200.50/.51, same Internal zone, different
+VLAN). Probe: raw DNS queries bound to eth0 (192.168.3.73) so the Pi's Wi-Fi
+on IDIoT can't mask the result; a query passes only on a well-formed answer
+with an A record. Negative-controlled first (a dead address and an NXDOMAIN
+both score FAIL). Lockdown-live control: ping nomad10 (Default) must FAIL
+while the device block is in force. No caching resolver on the Pi.
+
+| Case | Rule order (Internal→Internal) | DNS @Pi-holes | System resolver / HTTPS by name | Internet by IP |
+|---|---|---|---|---|
+| 1. Internet only, no DNS Lockdown, DHCP DNS = gateway | block 10010 | **FAIL** | n/a (resolv.conf had the gateway first) | PASS |
+| A. DNS Lockdown on HA-Test (DHCP → Pi-holes) applied FIRST, then Internet only | DNS allow 10010, device block 10013 | PASS | PASS | PASS |
+| B. Internet only FIRST, then DNS Lockdown re-applied | device block 10013, **DNS allow 10014** | **FAIL** | **FAIL** | PASS |
+
+Times: case 1 locked 15:24:07–15:26:04 (5 passes), recovered 15:26:34.
+Case A locked 15:36:53–15:41:00 and again 15:59:23–16:00:07. Case B from
+16:00:35 (allow created 16:00:25).
+
+* **Case 1 confirms the `[VERIFY]` above:** Internet only's "no LAN" BLOCK
+  (device → Internal zone, NEW/INVALID) stops DNS to a resolver on another
+  VLAN in the same zone. A device whose DHCP points there loses name
+  resolution while its card says "Enforcing".
+* **Cases A and B: the same two features give opposite results depending on
+  which is applied first.** New policies are appended to the end of their
+  zone pair, so whichever rule is created later loses. DNS Lockdown verifies
+  its allow precedes its OWN blocks only; nothing compares it with House
+  Arrest's device blocks. In case B the device card said "Internet only,
+  Enforcing", the DNS Lockdown row said "Enforcing", and
+  `precedence_warnings` was silent (it only looks for USER allows ahead of
+  our blocks).
+* Guests and IDIoT avoid this today only because their DNS Lockdowns were
+  created before any device lockdown on them.
+* DNS Lockdown on HA-Test also blocks DNS to 1.1.1.1 (by design), so a
+  public resolver can't serve as the probe's control once it is on.
+
+## BUILT 2026-10-02: Devices tab redesign and the Internet only DNS fixes
+
+Decided with Chris after the measurements above. Measured results for the
+built code are still pending (see "Not yet measured" below).
+
+* **Presets** (most to least permissive): Internet only, LAN only, No
+  internet (the old `full_lockdown` key, relabelled from "Full lockdown"),
+  Quarantine (new key `cut_off`). The inbound checkbox was removed: each
+  preset fixes `inbound` in `PRESET_EFFECTS`; Quarantine is the only one that
+  blocks it (connection_state_type ALL on both blocks). Quarantine always
+  applies the neighbour block and degrades with a plain caveat when it can't
+  (no capable switch, device unplaced); Internet only keeps it as the one
+  checkbox and treats the same problems as errors, because the user chose it.
+  Quarantine never allows same-VLAN resolvers in its ACL ALLOW: with no
+  internet, a resolver hole is only an opening.
+* **Why `cut_off` and not `quarantine`:** release() calls
+  `requires_network(preset_from_policy(pol))` to clear the removed VLAN-move
+  preset's override. Reusing the key would make releasing a new Quarantine
+  try to undo a move that never happened. `preset_from_policy()` now matches
+  "<label> for " exactly, longest first, so "Quarantine for X" and
+  "Quarantine + VLAN move for X" can never be confused (the same shape as the
+  2026-09-16 shadow bug).
+* **Fix 1, ordering:** after a DNS Lockdown is created and its own order
+  verified, `_requeue_shadowing_blocks()` re-creates any device "no LAN"
+  block that sits ahead of a DNS allow covering that device's network (copy
+  created and position checked before the original is deleted). Results are
+  returned as `notices` and shown in the apply message.
+* **Fix 2, Internet only DNS allow:** `device_dns_resolvers()` takes the
+  device network's DHCP DNS, keeps resolvers on other networks in the same
+  zone, and skips isolated networks (reported instead). The allow is created
+  before the block; stored indexes are re-read and the lockdown rolled back
+  if the allow landed behind.
+* **Fix 3, health:** `get_state` flags a lockdown whose block sits ahead of
+  one of its own DNS allows as `dns_blocked`, with a release-and-reapply
+  suggestion.
+* **UI:** a collapsible **Compare the presets** grid under the preset cards
+  (built from preset effects); the verdict list + picture folded behind a
+  **What this blocks** one-line summary that names both directions. Six
+  scenario pictures instead of ten, all renamed from existing files. A
+  plain-language pass replaced bare it/its/them and "resolver" across all
+  three tabs (rule now in brand-voice.md, product docs mode).
+
+### MEASURED 2026-10-02 (Chris driving the GUI, v0.15.6)
+
+Rig as on 2026-10-01: wired `testclient` on HA-Test (DHCP DNS now the Default
+Pi-holes, from the DNS Lockdown's DHCP option), probe bound to eth0, plus one
+throttled HTTPS download started before Quarantine.
+
+* **Fix 2 works.** Internet only applied with no DNS Lockdown on HA-Test
+  created `testclient - DNS to its resolvers` (ALLOW, 10010) before its
+  block. At 09:55:20, block live (ping nomad10 FAIL), Pi-hole DNS, the
+  system resolver and HTTPS by name all PASS. Same setup failed 2026-10-01.
+* **Fix 1 works.** DNS Lockdown re-applied with testclient still locked
+  (test B order): allow created 09:55:40 at 10012, testclient's block
+  re-created 09:55:41 at 10014. DNS PASS on every pass 09:55:46-09:57:06.
+  The apply message read "Re-created the device lockdown for testclient so
+  this DNS Lockdown's allow rule runs first and those devices keep their
+  DNS." Test B failed on 2026-10-01.
+* **Quarantine** 10:08:07 to ~10:45 (49 passes): internet by IP, HTTPS by
+  IP and by name FAIL; other networks FAIL; neighbour block "Fully blocked";
+  release restored everything by 10:45:58.
+* **Quarantine cuts open connections (now Measured, was Inferred).** The
+  download grew steadily to 10:08:11 and froze by 10:08:21, never resuming.
+  (Earlier, an unlocked run of the same download ended by itself after 694 s,
+  most likely a server-side limit on slow connections: unrelated.)
+* **CORRECTION: Quarantine does not stop name lookups.** Gateway DNS PASS
+  (the gateway zone is never blocked, by design), and DNS to the Pi-holes on
+  Default PASS, because the HA-Test DNS Lockdown's network-scoped ALLOW
+  (10012) runs before the Quarantine block (10014), the order Fix 1
+  deliberately keeps. The doc line written earlier the same day, "Quarantine
+  deliberately keeps none of these DNS paths open", was wrong and is
+  replaced; the Quarantine caveat now says lookups still work and names the
+  DNS-tunnelling path. **Decided (Chris): no behaviour change.** A
+  quarantined device resolves names but cannot connect to anything on the
+  internet, which is the protection that matters.
+* Side note: `api/release` with kind=device and NO label would delete every
+  device rule AND every DNS Lockdown rule (DNS policies are not network
+  policies). The UI always sends a label, so it is unreached; worth
+  tightening before anything else calls the endpoint.

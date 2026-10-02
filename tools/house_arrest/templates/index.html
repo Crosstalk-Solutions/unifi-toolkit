@@ -102,7 +102,7 @@
             </span>
             <span class="tool-text">
                 <span class="tool-name">DNS Lockdown</span>
-                <span class="tool-sub">Manage approved DNS resolvers</span>
+                <span class="tool-sub">Manage approved DNS servers</span>
             </span>
         </button>
 
@@ -194,8 +194,9 @@
                 </tbody>
             </table>
             <p class="hint">
-                Hover or focus any cell for what it means on that network. Cells
-                marked <span class="cell-edit is-inline" aria-hidden="true">✎</span>
+                Hover over or focus any cell to see what that setting means for
+                that network. Cells marked
+                <span class="cell-edit is-inline" aria-hidden="true">✎</span>
                 are settings you can change from here.
             </p>
 
@@ -223,12 +224,12 @@
                             <span x-text="wlanToggle.client_count === 1 ? 'device' : 'devices'"></span>
                             on this SSID, not just the one you are worried about.
                             Casting, AirPlay, local printing and phone-to-speaker
-                            control between them will stop working. Wired devices
-                            are unaffected either way.
+                            control between those devices will stop working. Wired
+                            devices are unaffected either way.
                         </p>
                         <p class="modal-warn" x-show="!wlanToggle.next">
                             Devices on this SSID will be able to reach each other
-                            again — including discovering and profiling one another.
+                            again, including discovering and profiling one another.
                         </p>
 
                         <p class="notice danger" x-show="wlanToggle.error" x-text="wlanToggle.error"></p>
@@ -307,10 +308,9 @@
             <div class="subsection wifi-isolation is-first">
                 <h3>Wi-Fi client isolation</h3>
                 <p class="card-note">
-                    Stops devices on a Wi-Fi SSID from reaching each other. This
-                    is the only setting that can affect traffic between
-                    neighbours on the same VLAN. Wireless clients only; wired
-                    devices are unaffected.
+                    Stops wireless devices on the same SSID from reaching each
+                    other. Wired devices aren't affected; use Device isolation in
+                    the table above for those.
                 </p>
 
                 <p class="hint" x-show="wlansLoading">Reading SSIDs…</p>
@@ -344,7 +344,7 @@
                                         <span class="cell-label" x-text="w.client_count"></span>
                                         <span class="tip" role="tooltip">
                                             <strong x-text="w.name + ' · Clients'"></strong>
-                                            <span x-text="w.client_count + (w.client_count === 1 ? ' wireless device is' : ' wireless devices are') + ' on this SSID right now. Isolation applies to all of them.'"></span>
+                                            <span x-text="w.client_count + (w.client_count === 1 ? ' wireless device is' : ' wireless devices are') + ' on this SSID right now. Client isolation applies to every device on this SSID.'"></span>
                                         </span>
                                     </td>
                                     <td class="cell is-editable"
@@ -359,8 +359,8 @@
                                         <span class="tip" role="tooltip">
                                             <strong x-text="w.name + ' · Client isolation'"></strong>
                                             <span x-text="w.isolated
-                                                ? 'Devices on this SSID cannot reach each other. The only control here that touches same-VLAN peer traffic.'
-                                                : 'Devices on this SSID can reach — and discover and profile — each other.'"></span>
+                                                ? 'Devices on this SSID cannot reach each other. Wired devices are not affected.'
+                                                : 'Devices on this SSID can reach, discover and profile each other.'"></span>
                                             <span class="tip-cta">Click to change</span>
                                         </span>
                                     </td>
@@ -377,9 +377,9 @@
             <template x-if="state.legacy_network_policies && state.legacy_network_policies.length">
                 <div class="notice warn">
                     <strong>Leftover rules from an earlier version.</strong>
-                    House Arrest used to isolate networks with its own firewall
-                    policies, which do not show up in UniFi's own isolation setting.
-                    These can be removed:
+                    Earlier versions of House Arrest isolated networks with their
+                    own firewall rules, which don't show up in UniFi's own isolation
+                    setting. These leftover rules can be removed:
                     <span class="mono" x-text="state.legacy_network_policies.map(l => l.name).join(', ')"></span>
                     <div class="actions" style="margin-top:0.75rem">
                         <button class="btn btn-secondary btn-sm"
@@ -396,10 +396,10 @@
             <h2>DNS Lockdown</h2>
         </div>
         <p class="card-note">
-            Allow only specific DNS servers of your choosing and block all
-            non-authorized DNS resolution.
-            <strong class="warn-inline">WARNING:</strong> This will break any
-            devices with hardcoded DNS server settings.
+            Devices on the networks you choose can use only your approved DNS
+            servers. Every other DNS server is blocked.
+            <strong class="warn-inline">WARNING:</strong> DNS Lockdown will break
+            any device with a hardcoded DNS server.
         </p>
 
         <!-- The gateway itself can be in the resolution path (CyberSecure).
@@ -408,11 +408,12 @@
              anyone builds a lockdown on top of it. -->
         <template x-if="state.encrypted_dns_on">
             <div class="notice warn">
-                <strong>UniFi's Encrypted DNS is on, and it will fight this tool.</strong>
-                The gateway intercepts DNS and resolves through its own encrypted
-                upstreams (Settings &rarr; CyberSecure &rarr; Threat Management &rarr;
-                Encrypted DNS), so devices may never reach the resolvers you approve
-                here. Turn it off if you want your own resolvers to actually be used.
+                <strong>UniFi's Encrypted DNS is on, and it conflicts with DNS Lockdown.</strong>
+                The gateway intercepts DNS and sends it to its own encrypted DNS
+                servers (Settings &rarr; CyberSecure &rarr; Threat Management &rarr;
+                Encrypted DNS), so devices may never reach your approved DNS
+                servers. Turn Encrypted DNS off if you want your approved DNS
+                servers to actually be used.
             </div>
         </template>
 
@@ -423,7 +424,7 @@
                         <span class="arrest-id">
                             <span class="arrest-name" x-text="l.label"></span>
                             <span class="arrest-meta">
-                                <span x-text="'approved: ' + l.resolvers.join(', ')"></span>
+                                <span x-text="'Approved DNS servers: ' + l.resolvers.join(', ')"></span>
                                 <template x-if="l.blocks_dot">
                                     <span class="vlan-chip">DoT blocked</span>
                                 </template>
@@ -451,12 +452,12 @@
                 <input id="dns-resolvers" type="text" x-model="dnsResolvers"
                        @input="dnsPreview = null">
                 <div class="hint">
-                    One or more IP addresses, comma separated. Everything on the
-                    chosen networks will be forced to use these.
+                    One or more IP addresses, comma separated. Every device on the
+                    networks you choose below can use only these DNS servers.
                 </div>
             </div>
             <div class="dns-field">
-                <label>Networks that must use them</label>
+                <label>Networks that must use your approved DNS servers</label>
                 <div class="net-picker">
                     <template x-for="n in networks" :key="n.id">
                         <label class="net-option" :class="{ 'is-taken': dnsLockedIds().includes(n.id) }">
@@ -465,11 +466,11 @@
                                    @change="dnsPreview = null; dhcpPreview = null">
                             <span x-text="n.name + (n.vlan !== null ? ' (VLAN ' + n.vlan + ')' : ' (untagged)')"></span>
                             <span class="vlan-chip" x-show="(state.content_filtered_network_ids || []).includes(n.id)"
-                                  title="CyberSecure Content Filter is on for this network. UniFi redirects its DNS through the filtering resolvers, which competes with the resolvers you approve here.">
+                                  title="CyberSecure Content Filter is on for this network. UniFi sends this network's DNS through its filtering DNS servers, which conflicts with your approved DNS servers.">
                                 Content Filter
                             </span>
                             <span class="hint" x-show="dnsLockedIds().includes(n.id)">
-                                already locked down — release it first
+                                already has a DNS Lockdown.
                             </span>
                         </label>
                     </template>
@@ -485,11 +486,13 @@
         <label class="inline-check">
             <input type="checkbox" x-model="dnsFixDhcp" @change="dnsPreview = null; dhcpPreview = null">
             <span>
-                <strong>Also point DHCP at these resolvers</strong>
+                <strong>Also point DHCP at your approved DNS servers</strong>
                 <span class="hint" style="margin-top:0.15rem">
-                    Recommended. DHCP decides which resolver devices are TOLD to
-                    use; these rules decide which they MAY use. Applies on each
-                    device's next lease renewal.
+                    Recommended. DHCP tells devices which DNS server to use, and
+                    DNS Lockdown decides which DNS servers devices are allowed to
+                    use. If DHCP keeps handing out a DNS server that DNS Lockdown
+                    blocks, those devices lose DNS. The change reaches each device
+                    at its next DHCP lease renewal.
                 </span>
             </span>
         </label>
@@ -499,8 +502,8 @@
             <span>
                 <strong>Also block DNS-over-TLS (port 853)</strong>
                 <span class="hint" style="margin-top:0.15rem">
-                    A device that can't reach 853 usually falls back to ordinary
-                    DNS on 53, which these rules then catch.
+                    A device that can't reach port 853 usually falls back to
+                    ordinary DNS on port 53, which DNS Lockdown then controls.
                 </span>
             </span>
         </label>
@@ -513,7 +516,7 @@
             <li>
                 <strong>DNS-over-HTTPS is the one thing this tab cannot stop.</strong>
                 DoH is ordinary HTTPS on port 443, so no firewall rule here can
-                tell it apart from normal web traffic. A browser or device with
+                tell DoH apart from normal web traffic. A browser or device with
                 "secure DNS" switched on can resolve names right past this
                 lockdown. Turn secure DNS off in the browser or app itself, or
                 cut the device's internet entirely from the Devices tab.
@@ -530,7 +533,7 @@
                 <span x-text="dnsApplying ? 'Applying…' : 'Apply DNS lockdown'"></span>
             </button>
             <span class="muted small" x-show="!dnsPreview">
-                Review first — this affects every device on the chosen networks.
+                Review first. DNS Lockdown affects every device on the chosen networks.
             </span>
         </div>
 
@@ -561,8 +564,9 @@
                     </template>
                 </ul>
                 <p class="hint" x-show="dhcpChangesNeeded()">
-                    Every device on those networks is told to use these. Existing
-                    devices pick it up when their DHCP lease renews.
+                    Every device on those networks is told to use your approved
+                    DNS servers. Devices already connected pick up the change when
+                    their DHCP lease renews.
                 </p>
             </div>
         </template>
@@ -579,9 +583,10 @@
                     </template>
                 </ul>
                 <p class="small muted" style="margin:0">
-                    The allow rule has to evaluate before the blocks or these
-                    networks lose DNS completely. After applying, the real order
-                    is checked and everything is rolled back if it came out wrong.
+                    The allow rule has to run before the block rules, or these
+                    networks lose DNS completely. After applying, House Arrest
+                    checks the real order and undoes everything if the order came
+                    out wrong.
                 </p>
             </div>
         </template>
@@ -600,8 +605,8 @@
             <figure class="mechanism-figure">
                 <img src="/arrest/static/images/dns-lockdown.png?v={{ version }}"
                      width="620" height="492" decoding="async"
-                     alt="Devices on a locked network can reach the approved DNS resolver on port 53, while any other DNS server, encrypted DNS on port 853, and DNS hardcoded inside an app are all blocked.">
-                <figcaption>Approved resolver stays reachable; every other path to DNS is cut.</figcaption>
+                     alt="Devices on a locked network can reach the approved DNS server on port 53, while any other DNS server, encrypted DNS on port 853, and DNS hardcoded inside an app are all blocked.">
+                <figcaption>Your approved DNS servers stay reachable. Every other path to DNS is cut.</figcaption>
             </figure>
 
         <!-- What each network currently hands out. Choosing which networks to
@@ -648,8 +653,8 @@
                 <strong x-text="staleResolverCount()"></strong>
                 highlighted <span x-text="staleResolverCount() === 1 ? 'address is' : 'addresses are'"></span>
                 not on your approved list. Devices told to use
-                <span x-text="staleResolverCount() === 1 ? 'it' : 'them'"></span>
-                will lose DNS unless you also tick “Also point DHCP at these resolvers”.
+                <span x-text="staleResolverCount() === 1 ? 'that address' : 'those addresses'"></span>
+                will lose DNS unless you also tick “Also point DHCP at your approved DNS servers”.
             </p>
         </div>
         </aside>
@@ -670,7 +675,8 @@
             of your own ALLOW <span x-text="state.precedence_warnings.length === 1 ? 'rule sits' : 'rules sit'"></span>
             ahead of a House Arrest block:
             <span class="mono" x-text="state.precedence_warnings.map(w => w.name + ' (#' + w.index + ')').join(', ')"></span>.
-            If one of those matches this device, it wins. Worth checking in the UniFi UI.
+            If one of those rules matches a locked-down device, that rule wins
+            and the device isn't blocked. Worth checking in the UniFi UI.
         </div>
     </template>
 
@@ -762,7 +768,7 @@
 
         <!-- Presets as visible radios rather than a dropdown: four options, each
              with a consequence the user needs to weigh before choosing. -->
-        <label>What should it still be allowed to reach?</label>
+        <label>What should this device still be allowed to reach?</label>
         <div class="preset-grid">
             <template x-for="p in presets" :key="p.value">
                 <label class="preset-option" :class="{ 'is-selected': preset === p.value }">
@@ -774,65 +780,80 @@
             </template>
         </div>
 
+        <!-- The four presets side by side (Chris, 2026-10-02). Collapsed by
+             default. Generated from the same preset effects the server builds
+             rules from, so the grid can't drift from what a preset does. -->
+        <details class="preset-compare">
+            <summary class="preset-compare-title">
+                <span class="paths-summary-label">Compare the presets</span>
+                <span class="paths-summary">What each one blocks, side by side.</span>
+                <span class="paths-toggle compare-toggle" aria-hidden="true"></span>
+            </summary>
+            <div class="preset-compare-scroll">
+                <table class="preset-compare-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Preset</th>
+                            <template x-for="col in compareColumns()" :key="col.key">
+                                <th scope="col" x-text="col.label"></th>
+                            </template>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="p in presets" :key="p.value">
+                            <tr :class="{ 'is-selected': preset === p.value }">
+                                <th scope="row" x-text="p.label"></th>
+                                <template x-for="col in compareColumns()" :key="col.key">
+                                    <td :class="'compare-' + compareCell(p, col.key).kind"
+                                        x-text="compareCell(p, col.key).text"></td>
+                                </template>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </details>
+
         <!-- A preset that can't deliver what its name says, because the
              device's network (Networks tab) already took that access away. -->
         <template x-for="msg in presetConflicts()" :key="msg">
             <p class="notice warn preset-conflict" x-text="msg"></p>
         </template>
 
-        <!-- Deliberately not "let ME reach it". The rule cannot tell one person
-             from another: it blocks what the DEVICE starts, so anything able to
-             route to the device can still open a connection to it. Saying "me"
-             would promise a narrowness the firewall is not delivering. -->
-        <label class="inline-check">
-            <input type="checkbox" x-model="allowInbound" @change="preview = null">
-            <span>
-                <strong x-text="(neighbourBlockActive() ? 'Let devices on your other networks still reach ' : 'Let other devices still reach ') + (selectedMacs.length > 1 ? 'these devices' : 'this device')"></strong>
-                <span class="hint" style="margin-top:0.15rem"
-                      x-text="(selectedMacs.length > 1
-                        ? 'They can\'t start connections to anything this preset blocks, but they can still answer when another device contacts them, so a camera or smart bulb stays usable. This applies to every device on your network, not only your own computer. Untick it to stop devices on your other networks from contacting them too.'
-                        : 'It can\'t start connections to anything this preset blocks, but it can still answer when another device contacts it, so a camera or smart bulb stays usable. This applies to every device on your network, not only your own computer. Untick it to stop devices on your other networks from contacting it too.')
-                        + (neighbourBlockActive()
-                          ? (selectedMacs.length > 1
-                              ? ' Devices on their own networks still can\'t reach them, because the neighbour block below cuts them off.'
-                              : ' Devices on its own network still can\'t reach it, because the neighbour block below cuts them off.')
-                          : '')"></span>
-            </span>
-        </label>
-
-        <!-- The neighbour block. Enforced by switches, not the gateway, so it is
-             offered with each selected device's coverage verdict up front: the
-             user decides knowing how much of it will actually hold. Hidden for
-             LAN only, whose whole point is keeping local access. -->
-        <label class="inline-check" x-show="neighbourOffered()"
-               :class="{ 'is-disabled': !neighbourSupported() }">
-            <input type="checkbox" x-model="blockNeighbours" @change="preview = null"
-                   :disabled="!neighbourSupported()">
-            <span>
-                <strong x-text="selectedMacs.length > 1 ? 'Also cut them off from devices on their own networks' : 'Also cut it off from devices on its own network'"></strong>
-                <span class="hint" style="margin-top:0.15rem"
-                      x-text="selectedMacs.length > 1
-                        ? 'Stops these devices and the other devices on their networks from reaching each other. The neighbour block only works on UniFi switch models that support it, so how well it works depends on where each device is connected. House Arrest checks each device and shows the result below. Casting and printing between them and their neighbours stop working too.'
-                        : 'Stops this device and the other devices on its network from reaching each other. The neighbour block only works on UniFi switch models that support it, so how well it works depends on where the device is connected. House Arrest checks and shows the result below. Casting and printing between it and its neighbours stop working too.'"></span>
-                <span class="hint unsupported-note" x-show="!neighbourSupported()">
-                    None of your UniFi switches support the neighbour block, so it
-                    isn't available. For Wi-Fi devices, turn on Wi-Fi client
-                    isolation for their network instead.
-                </span>
-                <template x-if="neighbourBlockActive() && neighbourCoverage().length">
-                    <ul class="coverage-list">
-                        <template x-for="c in neighbourCoverage()" :key="c.mac">
-                            <li :class="'coverage-' + c.status">
-                                <strong x-text="c.name"></strong>
-                                <span class="coverage-chip" x-text="coverageLabel(c.status)"></span>
-                                <span class="coverage-note" x-text="c.note"></span>
-                                <span class="coverage-note" x-show="c.dns" x-text="c.dns"></span>
-                            </li>
-                        </template>
-                    </ul>
-                </template>
-            </span>
-        </label>
+        <!-- The neighbour block. Enforced by switches, not the gateway, so each
+             selected device's coverage verdict is shown up front. Quarantine
+             includes it (no checkbox); Internet only offers it as the one
+             remaining choice, because casting and printing with neighbours
+             stop. The inbound checkbox that used to sit above was removed
+             2026-10-02: each preset now fixes it, and Quarantine is the
+             "nothing reaches it" choice. -->
+        <div class="neighbour-block" x-show="neighbourOffered()"
+             :class="{ 'is-disabled': !neighbourSupported() }">
+            <label class="inline-check" x-show="!neighbourAlways()">
+                <input type="checkbox" x-model="blockNeighbours" @change="preview = null"
+                       :disabled="!neighbourSupported()">
+                <span><strong x-text="neighbourText().title"></strong>
+                    <span class="hint" style="margin-top:0.15rem" x-text="neighbourText().body"></span></span>
+            </label>
+            <div class="inline-check is-fixed" x-show="neighbourAlways()">
+                <span><strong x-text="neighbourText().title"></strong>
+                    <span class="hint" style="margin-top:0.15rem" x-text="neighbourText().body"></span></span>
+            </div>
+            <p class="hint unsupported-note" x-show="!neighbourSupported()"
+               x-text="neighbourText().unsupported"></p>
+            <template x-if="neighbourBlockActive() && neighbourCoverage().length">
+                <ul class="coverage-list">
+                    <template x-for="c in neighbourCoverage()" :key="c.mac">
+                        <li :class="'coverage-' + c.status">
+                            <strong x-text="c.name"></strong>
+                            <span class="coverage-chip" x-text="coverageLabel(c.status)"></span>
+                            <span class="coverage-note" x-text="c.note"></span>
+                            <span class="coverage-note" x-show="c.dns && preset === 'internet_only'" x-text="c.dns"></span>
+                        </li>
+                    </template>
+                </ul>
+            </template>
+        </div>
 
         <!-- The Quarantine + VLAN move preset used to put its VLAN picker here.
              Removed 2026-09-17: the per-client VLAN override was measured
@@ -842,11 +863,19 @@
              dedicated VLAN assigned natively in UniFi — see the blind-spot box
              below. -->
 
-        <!-- The mechanism, drawn. A preset name alone doesn't tell you what
-             happens to traffic; this does, and it keeps the same-VLAN caveat
-             in plain sight instead of in fine print. -->
-        <div class="paths">
-            <div class="paths-title">What this does to the device's traffic</div>
+        <!-- A warning, so it stays outside the collapsible chart below. -->
+        <p class="path-note" x-show="networkSettingsNote()" x-text="networkSettingsNote()"></p>
+
+        <!-- The mechanism, drawn. Collapsed by default since 2026-10-02 (it
+             took most of the screen), but the summary line always says what
+             is blocked and what is still reachable, so folding it away never
+             hides the verdict, only the detail. -->
+        <details class="paths">
+            <summary class="paths-title">
+                <span class="paths-summary-label">What this blocks</span>
+                <span class="paths-summary" x-text="pathsSummary()"></span>
+                <span class="paths-toggle" aria-hidden="true"></span>
+            </summary>
 
             <!-- Two columns: the verdict list reads as a compact left rail, and
                  the picture of the same thing sits beside it. The list used to
@@ -911,12 +940,11 @@
                     </div>
                 </div>
 
-                <!-- The same four verdicts, drawn. One image per preset AND per
-                     inbound setting: the inbound direction is a checkbox, so a
-                     single picture per preset would start contradicting the list
-                     the moment it was unticked. The neighbour block gets its own
-                     set too (-neighbours). When the device's network settings
-                     rewrite a row, no picture matches, so it is hidden.
+                <!-- The same four verdicts, drawn. One image per preset, plus
+                     Internet only with the neighbour block and Quarantine where
+                     the neighbour block can't apply (see scenarioKey). When the
+                     device's network settings rewrite a row, no picture
+                     matches, so it is hidden.
                      Width/height are set so swapping the image never shifts
                      the layout. -->
                 <figure class="paths-figure" x-show="scenarioMatchesRows()">
@@ -925,7 +953,7 @@
                     <figcaption x-text="scenarioCaption()"></figcaption>
                 </figure>
                 <p class="hint" x-show="!scenarioMatchesRows()">
-                    Its network settings change some of these results, so
+                    This device's network settings change some of these results, so
                     there's no picture for this one. The list is accurate.
                 </p>
             </div>
@@ -938,8 +966,7 @@
             <p class="hint" x-show="isolatedSelected().length && !neighbourBlockActive() && scenarioMatchesRows()"
                x-text="isolatedSelectedNote()"></p>
 
-            <p class="path-note" x-show="networkSettingsNote()" x-text="networkSettingsNote()"></p>
-            <p class="path-note" x-text="pathNote()"></p>
+            <p class="path-note" x-show="pathNote()" x-text="pathNote()"></p>
 
             <!-- The one thing a firewall genuinely cannot do, stated at full
                  size. Same-VLAN peer traffic never passes the gateway, so no
@@ -947,19 +974,12 @@
                  behaviour people are now worried about after the LG reporting.
                  Leaving it as a grey footnote under the diagram let the page
                  imply a completeness it does not have. -->
-            <div class="blindspot">
+            <!-- Shown only while devices on its own network can still reach it.
+                 With the neighbour block on, the verdict list and coverage
+                 results already say how far the block reaches. -->
+            <div class="blindspot" x-show="!neighbourBlockActive()">
                 <h4>What no firewall rule can stop</h4>
-                <!-- With the neighbour block ticked, the flat "can still see
-                     everything" would contradict the verdicts right above it. -->
-                <p x-show="neighbourBlockActive()">
-                    With the neighbour block on,
-                    <strong x-text="selectedNames() || 'this device'"></strong>
-                    is cut off from its neighbours wherever the switches in between
-                    support it. The results above show any gaps. Traffic between
-                    neighbours never passes through your gateway, so the neighbour
-                    block is the only part of this lockdown that can block it.
-                </p>
-                <p x-show="!neighbourBlockActive()">
+                <p>
                     <strong x-text="selectedNames() || 'This device'"></strong>
                     can still see and profile every device on
                     <span x-text="selectedMacs.length > 1 ? 'their own VLANs' : 'its own VLAN'"></span>.
@@ -967,40 +987,37 @@
                     no firewall rule ever sees it. A smart TV doing this is what the
                     recent LG reporting describes.
                 </p>
-                <p class="blindspot-fix">What actually stops it:</p>
+                <p class="blindspot-fix">What actually stops this:</p>
                 <ul>
                     <li x-show="neighbourSupported()">
-                        <strong>The neighbour block above</strong>, for the selected
-                        devices only. It only works on UniFi switch models that
-                        support it, and the result shown for each device tells you
-                        how well it will work.
+                        <strong>Quarantine, or Internet only with "Also block other
+                        devices on the same network"</strong>, for the selected devices only.
+                        Both only work on UniFi switch models that support them, and
+                        House Arrest shows how well they will work for each device.
                     </li>
                     <li>
-                        <strong>Give it a VLAN of its own in UniFi.</strong> Assign
+                        <strong>Give this device a VLAN of its own in UniFi.</strong> Assign
                         the device's switch port (wired) or a dedicated Wi-Fi network
                         (wireless) to a VLAN with nothing else on it. That removes
                         the neighbours instead of blocking them. Then lock that VLAN
                         down from the Networks and DNS tabs here. House Arrest doesn't
                         move devices between VLANs itself, because moving a single
-                        device can leave it half-connected, which is worse than
-                        either state.
+                        device can leave that device half-connected, which is worse
+                        than either state.
                     </li>
                     <li>
-                        <strong>Turn on Wi-Fi client isolation for its Wi-Fi
-                        network</strong> on the Networks tab. It only affects
-                        wireless devices, and it applies to every device on that SSID.
+                        <strong>Turn on Wi-Fi client isolation for this device's Wi-Fi
+                        network</strong> on the Networks tab. Client isolation only
+                        affects wireless devices, and it applies to every device on
+                        that SSID.
                     </li>
                 </ul>
             </div>
 
-            <!-- Measured caveats: paths that survive a lockdown. Shown next to
-                 the claim they qualify, not hidden in docs. -->
-            <ul class="caveats" x-show="currentPreset() && currentPreset().caveats.length">
-                <template x-for="(c, i) in (currentPreset() ? currentPreset().caveats : [])" :key="i">
-                    <li x-text="c"></li>
-                </template>
-            </ul>
-        </div>
+            <!-- The preset's measured caveats moved into the review step
+                 (2026-10-02): the server now returns them with every preview,
+                 next to the rest of what this exact lockdown will and won't do. -->
+        </details>
 
         <template x-if="randomizedClients().length">
             <div class="notice warn">

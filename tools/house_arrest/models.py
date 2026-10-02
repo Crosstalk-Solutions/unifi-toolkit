@@ -175,6 +175,11 @@ class DnsLockdownResponse(BaseModel):
     created: List[Dict] = Field(default_factory=list)
     payloads: List[Dict] = Field(default_factory=list)
     caveats: List[str] = Field(default_factory=list)
+    # What applying also did to existing device lockdowns (re-created behind
+    # the new allow, or couldn't be). Kept apart from caveats so the page can
+    # show it in the result instead of losing it in the preview text.
+    notices: List[str] = Field(default_factory=list)
+    notices_failed: bool = False
     error: Optional[str] = None
 
 

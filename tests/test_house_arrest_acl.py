@@ -333,10 +333,15 @@ class TestNeighbourAcls:
         assert P.next_acl_indexes([{"acl_index": 4}, {"acl_index": 9}], 2) == [10, 11]
         assert P.next_acl_indexes([], 2) == [0, 1]
 
-    def test_lan_only_does_not_offer_neighbour_block(self):
-        offered = {p["value"]: p["neighbour_block"] for p in P.preset_catalog()}
-        assert offered[P.LAN_ONLY] is False
-        assert offered[P.FULL_LOCKDOWN] and offered[P.INTERNET_ONLY]
+    def test_neighbour_block_belongs_to_quarantine_and_internet_only(self):
+        # Since 2026-10-02: Quarantine always applies it, Internet only offers
+        # it as the one checkbox; No internet and LAN only don't use it.
+        cat = {p["value"]: p for p in P.preset_catalog()}
+        assert cat[P.CUT_OFF]["neighbour_block"] and cat[P.CUT_OFF]["neighbour_always"]
+        assert cat[P.INTERNET_ONLY]["neighbour_block"]
+        assert not cat[P.INTERNET_ONLY]["neighbour_always"]
+        assert not cat[P.FULL_LOCKDOWN]["neighbour_block"]
+        assert not cat[P.LAN_ONLY]["neighbour_block"]
 
 
 # MEASURED 2026-10-01: the neighbour block cut a same-VLAN Pi-hole, so names

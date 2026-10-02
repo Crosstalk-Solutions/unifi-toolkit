@@ -471,6 +471,104 @@ select:focus, input[type="text"]:focus {
     margin-bottom: 0.875rem;
 }
 
+/* Collapsible since 2026-10-02. The summary line carries the verdict in one
+   sentence; the chart and picture open below it. */
+details.paths { padding: 0.875rem 1.25rem; }
+details.paths[open] { padding-bottom: 1.25rem; }
+details.paths > summary.paths-title {
+    cursor: pointer;
+    list-style: none;
+    margin-bottom: 0;
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+details.paths > summary.paths-title::-webkit-details-marker { display: none; }
+details.paths > summary.paths-title::before {
+    content: "\25B8";
+    color: var(--text-secondary);
+    flex: none;
+}
+details.paths[open] > summary.paths-title::before { content: "\25BE"; }
+details.paths[open] > summary.paths-title { margin-bottom: 0.875rem; }
+.paths-summary-label { color: var(--text-primary); flex: none; }
+.paths-summary { font-weight: 400; color: var(--text-secondary); flex: 1; }
+/* A visible control, not just the tiny marker: the summary line alone read
+   as plain text and the chart behind it went unfound (Chris, 2026-10-02). */
+.paths-toggle {
+    flex: none;
+    align-self: center;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--surface, #fff);
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+}
+.paths-toggle::after { content: "Show diagram"; }
+details.paths[open] .paths-toggle::after { content: "Hide diagram"; }
+
+/* Preset comparison grid (2026-10-02): directly under the four preset cards,
+   collapsed by default, same summary-line pattern as the diagram below. */
+details.preset-compare {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--surface-sunken);
+    padding: 0.875rem 1.25rem;
+    margin: -0.75rem 0 1.25rem;
+}
+details.preset-compare > summary.preset-compare-title {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+details.preset-compare > summary::-webkit-details-marker { display: none; }
+details.preset-compare > summary::before { content: "\25B8"; color: var(--text-secondary); flex: none; }
+details.preset-compare[open] > summary::before { content: "\25BE"; }
+details.preset-compare > summary:hover .paths-toggle { border-color: var(--text-secondary); }
+.compare-toggle::after { content: "Show comparison"; }
+details.preset-compare[open] .compare-toggle::after { content: "Hide comparison"; }
+.preset-compare-scroll { overflow-x: auto; margin-top: 0.875rem; }
+.preset-compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    background: var(--surface);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.preset-compare-table th,
+.preset-compare-table td {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+}
+.preset-compare-table thead th {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--surface-sunken);
+}
+.preset-compare-table tbody th { font-weight: 600; white-space: nowrap; }
+.preset-compare-table tbody tr:last-child th,
+.preset-compare-table tbody tr:last-child td { border-bottom: 0; }
+.preset-compare-table tr.is-selected th,
+.preset-compare-table tr.is-selected td {
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface));
+}
+.preset-compare-table tr.is-selected th { box-shadow: inset 3px 0 0 var(--primary-color); }
+.compare-block { color: var(--state-broken); }
+.compare-allow { color: var(--state-enforcing); }
+.compare-option { color: var(--text-secondary); }
+details.paths > summary.paths-title:hover .paths-toggle { border-color: var(--text-secondary); }
+
 /* Verdict list on the left, the picture of the same verdicts on the right.
    The list used to run the full width of the card, which parked each verdict
    an inch away from the label it described. */
@@ -740,6 +838,24 @@ pre.payload {
 }
 .arrest-neighbours .coverage-chip { margin-left: 0.2rem; }
 /* Offered but not possible on this network: greyed, with the reason shown. */
+/* The neighbour section is one bordered card holding the checkbox (Internet
+   only) or the fixed panel (Quarantine), the unsupported note, and the
+   per-device coverage list, so the results read as part of the option. */
+.neighbour-block {
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 1.25rem;
+}
+.neighbour-block .inline-check {
+    padding: 0;
+    border: 0;
+    margin-bottom: 0;
+}
+.neighbour-block .inline-check.is-fixed { cursor: default; }
+.neighbour-block .coverage-list { margin-top: 0.75rem; }
+.neighbour-block.is-disabled strong,
+.neighbour-block.is-disabled .inline-check .hint { opacity: 0.55; }
 .inline-check.is-disabled strong,
 .inline-check.is-disabled > span > .hint:not(.unsupported-note) { opacity: 0.55; }
 .inline-check.is-disabled input { cursor: not-allowed; }
