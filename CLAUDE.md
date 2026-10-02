@@ -195,6 +195,16 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 Beta announced on Discord 2026-09-22. Tag + GitHub Release come after the bake
 (docs/RELEASING.md). Hold Dependabot PRs #125–129 until then — a mid-beta
 dependency rebuild is how the v1.11.3 outage happened.
+- **House Arrest 0.15.6 (`7190e56`, 2026-10-02)** — Devices tab redesign:
+  four presets (Internet only, LAN only, No internet, Quarantine), inbound
+  checkbox removed, compare grid + collapsible diagram; Internet only DNS
+  fixes (cross-VLAN DNS allow, DNS Lockdown re-queues device blocks,
+  `dns_blocked` health); plain-language pass on all three tabs. All live
+  tests passed on testclient with Chris driving the GUI (design doc
+  "MEASURED 2026-10-02"). Quarantine still lets name lookups through
+  (gateway DNS, DNS Lockdown allows): decided acceptable, documented.
+- **House Arrest 0.14.0 (`6bec3ec`, 2026-10-01)** — Device isolation
+  column, per-device neighbour block, same-VLAN resolver fix.
 - **`WEBHOOK_ALLOW_PRIVATE_IPS` env var (#124)** — opt-in for LAN webhook
   targets (Home Assistant, n8n, ntfy). The SSRF validator in
   `shared/url_validator.py` now splits ALWAYS_BLOCKED ranges (link-local,
@@ -370,7 +380,22 @@ CHANGELOG.md and `docs/house-arrest-design.md`.
 - **Bash heredocs choke on apostrophes in inline Python/JS** in this
   environment (`unexpected EOF while looking for matching '`). For any script
   with quotes in it, write it to the scratchpad with the Write tool and run
-  the file.
+  the file. The same goes for Python one-liners that build JS strings: a
+  `\'` inside a heredoc can come out as a bare `'` and break app.js, so run
+  `node --check` on app.js after any scripted edit.
+- **Live test rig for House Arrest DNS/lockdown tests** (2026-10-02):
+  `testclient` wired on HA-Test (VLAN 24) at `csherwood@192.168.3.73`, key
+  `~/.ssh/claude_hapi`; no sudo, no `dig` (use a Python raw-DNS probe with a
+  negative control), and its Wi-Fi is also up on IDIoT, so bind probes to
+  `eth0`. A lockdown can cut the SSH session: start probes as `nohup` jobs
+  BEFORE applying and read the log after release.
+- **`pkill -f <pattern>` over SSH kills its own session** when the pattern
+  appears in the remote command line (it matched twice). Anchor it:
+  `pkill -f "^python3 /tmp/ha_probe3"`.
+- **`api/release` with `kind=device` and no `label` deletes every device
+  rule AND every DNS Lockdown rule** (DNS policies are not network
+  policies). The UI always sends a label, so it is unreached; tighten before
+  anything else calls the endpoint.
 
 - **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
   "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.
