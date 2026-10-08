@@ -423,6 +423,15 @@ async def get_state():
         if dest.get("port") == P.DOT_PORT:
             entry.blocks_dot = True
 
+    # A lockdown is only ever created with at least one network, so an empty
+    # or entirely unknown list means its networks were deleted. Skipped when
+    # the network read failed: unknown is not missing.
+    if all_networks:
+        live_ids = {n.get("_id") for n in all_networks}
+        for entry in dns_by_label.values():
+            if not any(nid in live_ids for nid in entry.network_ids):
+                entry.network_missing = True
+
     # Gateway-level DNS interception signals for the DNS tab. Each read is
     # independent and failure means unknown (None / empty), never "off".
     encrypted_dns_on = None

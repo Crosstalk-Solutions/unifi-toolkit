@@ -195,6 +195,10 @@ class DnsLockdownEntry(BaseModel):
     # Rules in this set toggled off in the UniFi UI. Anything above zero means
     # the lockdown is NOT fully enforcing and the row must not show green.
     disabled_count: int = 0
+    # Every network this lockdown covered has been deleted in UniFi, so the
+    # rules protect nothing and only need releasing. Seen 2026-10-08: the
+    # controller emptied the rules' network list and turned them off.
+    network_missing: bool = False
 
 
 class StateResponse(BaseModel):

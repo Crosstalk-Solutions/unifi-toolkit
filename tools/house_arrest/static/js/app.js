@@ -102,16 +102,32 @@ function houseArrest() {
 
         // ---- state ----
 
-        get brokenCount() {
-            const arrests = this.state.arrests.filter(a => a.status && a.status !== 'ok').length;
-            const dns = (this.state.dns_lockdowns || []).filter(l => l.disabled_count > 0).length;
-            return arrests + dns;
+        get brokenDevices() {
+            return this.state.arrests.filter(a => a.status && a.status !== 'ok').length;
         },
 
+        get brokenDns() {
+            return (this.state.dns_lockdowns || [])
+                .filter(l => l.disabled_count > 0 || l.network_missing).length;
+        },
+
+        get brokenCount() {
+            return this.brokenDevices + this.brokenDns;
+        },
+
+        // The strip sits above every tab, so it names the tab the problem is
+        // on. Without that, a DNS problem read as a Devices problem.
         headline() {
             if (!this.state.connected) return 'Controller unreachable';
-            if (this.brokenCount === 1) return '1 lockdown needs attention';
-            if (this.brokenCount > 1) return this.brokenCount + ' lockdowns need attention';
+            if (this.brokenCount) {
+                const n = this.brokenCount;
+                const what = n === 1 ? '1 lockdown needs' : n + ' lockdowns need';
+                const where = [];
+                if (this.brokenDevices) where.push('Devices');
+                if (this.brokenDns) where.push('DNS');
+                return what + ' attention on the ' + where.join(' and ') +
+                    (where.length > 1 ? ' tabs' : ' tab');
+            }
             if (this.state.arrests.length === 0) return 'Connected. Nothing is locked down.';
             return 'All lockdowns enforcing';
         },
@@ -282,6 +298,7 @@ function houseArrest() {
         // DNS lockdown row state. Any rule toggled off in the UniFi UI means
         // the set is not fully enforcing, and green would be a lie.
         dnsStateText(l) {
+            if (l.network_missing) return 'Network deleted in UniFi. Release this lockdown to remove its rules.';
             if (!l.disabled_count) return 'Enforcing';
             if (l.disabled_count >= l.policy_ids.length) return 'Disabled in UniFi — not enforcing';
             return l.disabled_count + ' of ' + l.policy_ids.length + ' rules disabled in UniFi';

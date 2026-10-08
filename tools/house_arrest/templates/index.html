@@ -430,9 +430,9 @@
                                 </template>
                             </span>
                         </span>
-                        <span class="state" :class="l.disabled_count ? '' : 'ok'">
+                        <span class="state" :class="(l.disabled_count || l.network_missing) ? '' : 'ok'">
                             <span class="dot"
-                                  :style="'background: var(--state-' + (l.disabled_count ? 'broken' : 'enforcing') + ')'"></span>
+                                  :style="'background: var(--state-' + ((l.disabled_count || l.network_missing) ? 'broken' : 'enforcing') + ')'"></span>
                             <span x-text="dnsStateText(l)"></span>
                         </span>
                         <span class="muted small" x-text="l.policy_ids.length + ' rules'"></span>
