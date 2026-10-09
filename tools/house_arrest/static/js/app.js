@@ -667,13 +667,26 @@ function houseArrest() {
                 // isolation On, and internet Allowed. So the value
                 // to write is simply the state being moved to.
                 value: next,
-                warning: this.toggleWarning(col.key, next),
+                warning: this.toggleWarning(col.key, next, row),
                 saving: false,
                 error: null,
             };
         },
 
-        toggleWarning(key, next) {
+        // mDNS and isolation interact (measured 2026-10-08): with both on,
+        // other networks see the devices here but cannot connect to them.
+        // Whichever of the two is being changed, the warning must not promise
+        // the opposite of what the other one does.
+        toggleWarning(key, next, row) {
+            const cells = (row && row.cells) || {};
+            const isolated = (cells.isolation || {}).label === 'On';
+            const mdnsOn = (cells.mdns || {}).label === 'On';
+            if (key === 'mdns' && next && isolated) {
+                return 'Adds this network to the Gateway mDNS Proxy list, a single list shared by every network on the site. Your other mDNS-enabled networks will see the devices here, but network isolation is on, so connecting to them will still fail. Casting and AirPlay will only work for a device that a firewall rule you added lets through.';
+            }
+            if (key === 'isolation' && next && mdnsOn) {
+                return 'Every device on this network loses access to your other networks, now and in future. mDNS forwarding is on, so your other networks will still see the devices here, but connecting to them will fail.';
+            }
             const W = {
                 isolation: [
                     'Devices on this network will be able to reach your other networks again.',
@@ -767,31 +780,50 @@ function houseArrest() {
                 ' at the Wi-Fi level, before these rules even apply.';
         },
 
-        // One picture per preset, plus Internet only with the neighbour block
-        // and Quarantine where the neighbour block can't apply (no capable
-        // switch). Since 2026-10-02 the preset fixes the inbound direction,
-        // so the old "-inbound/-noinbound" variants are gone.
-        scenarioKey() {
-            const preset = this.preset ||
-                (this.presets.length ? this.presets[0].value : 'cut_off');
-            if (preset === 'cut_off') {
-                return this.neighbourBlockActive() ? 'cut_off' : 'cut_off-noneighbours';
-            }
-            if (preset === 'internet_only' && this.neighbourBlockActive()) {
-                return 'internet_only-neighbours';
-            }
-            return preset;
+        // Each picture draws one RESULT: the four verdicts in pathRows() order
+        // (internet, other networks, same network, inbound). The picture is
+        // chosen from the rows, not the preset name, so a device whose own
+        // network settings change a row still gets the picture of what
+        // actually happens. Until 2026-10-08 it was chosen by preset and
+        // hidden whenever a row was rewritten, which on an isolated network
+        // hid it for every preset except Quarantine.
+        SCENARIOS: {
+            'allow,block,allow,allow':  'internet_only',
+            'allow,block,switch,allow': 'internet_only-neighbours',
+            'allow,block,allow,block':  'internet_only-isolated',
+            'allow,block,switch,block': 'internet_only-neighbours-isolated',
+            'block,allow,allow,allow':  'lan_only',
+            'block,block,allow,allow':  'full_lockdown',
+            'block,block,allow,block':  'cut_off-noneighbours',
+            'block,block,switch,block': 'cut_off',
         },
 
-        // Rows rewritten by the device's own network settings carry their own
-        // text, and no picture draws those combinations. Hide it rather than
-        // show one that contradicts the list.
+        SCENARIO_CAPTIONS: {
+            'internet_only': 'your other networks can still reach this device',
+            'internet_only-neighbours': 'other devices on the same network are blocked, and your other networks can still reach this device',
+            'internet_only-isolated': 'this device can reach the internet and devices on its own network, nothing else',
+            'internet_only-neighbours-isolated': 'this device can reach the internet and nothing else',
+            'lan_only': 'this device can reach your local devices, never the internet',
+            'full_lockdown': 'your other networks can still reach this device',
+            'cut_off-noneighbours': 'other devices on the same network can still reach this device',
+            'cut_off': 'nothing in or out',
+        },
+
+        // Null when no picture draws this result; the template then shows a
+        // hint rather than a picture that contradicts the list.
+        scenarioKey() {
+            const result = this.pathRows().map(r => r.verdict).join(',');
+            return this.SCENARIOS[result] || null;
+        },
+
         scenarioMatchesRows() {
-            return !this.pathRows().some(r => r.text);
+            return this.scenarioKey() !== null;
         },
 
         scenarioImage() {
-            return '/arrest/static/images/scenario-' + this.scenarioKey() + '.png' +
+            const key = this.scenarioKey();
+            if (!key) return '';
+            return '/arrest/static/images/scenario-' + key + '.png' +
                 (this.assetVersion ? '?v=' + this.assetVersion : '');
         },
 
@@ -805,21 +837,17 @@ function houseArrest() {
             return 'Diagram of ' + (p ? p.label : 'this lockdown') + '. ' + verdicts + '.';
         },
 
+        // Captions describe the picture, which describes the result. When the
+        // device's network settings changed a row, say so, or a "LAN only"
+        // caption over a Quarantine-shaped picture would look like a mistake.
         scenarioCaption() {
             const p = this.currentPreset();
             const name = p ? p.label : 'This lockdown';
-            if (this.preset === 'cut_off') {
-                return this.neighbourBlockActive()
-                    ? name + ': nothing in or out'
-                    : name + ': other devices on the same network can still reach this device';
-            }
-            if (this.preset === 'lan_only') {
-                return name + ': this device can reach your local devices, never the internet';
-            }
-            if (this.neighbourBlockActive()) {
-                return name + ', with other devices on the same network blocked';
-            }
-            return name + ': your other networks can still reach this device';
+            const key = this.scenarioKey();
+            if (!key) return '';
+            const changed = this.pathRows().some(r => r.text);
+            return name + (changed ? ' with this device\'s network settings' : '') +
+                ': ' + this.SCENARIO_CAPTIONS[key];
         },
 
         pathStroke(verdict) {
@@ -1004,8 +1032,8 @@ function houseArrest() {
                 return {
                     title: 'Other devices on the same network are blocked too',
                     body: (many
-                        ? 'Quarantine also stops these devices and the other devices on their networks from reaching each other. '
-                        : 'Quarantine also stops this device and the other devices on the same network from reaching each other. ') + limits,
+                        ? 'Quarantine also blocks traffic between these devices and the other devices on their networks, in both directions. The rest of each network is not changed: those other devices can still reach each other. '
+                        : 'Quarantine also blocks traffic between this device and the other devices on the same network, in both directions. The rest of the network is not changed: those other devices can still reach each other. ') + limits,
                     unsupported: 'None of your UniFi switches support this, so other devices on the same network can still reach ' +
                         
                         (many ? 'these devices' : 'this device') + '. Giving ' + (many ? 'these devices a VLAN' : 'this device a VLAN') +
@@ -1013,10 +1041,12 @@ function houseArrest() {
                 };
             }
             return {
-                title: 'Also block other devices on the same network',
+                title: many
+                    ? 'Also block these devices from the other devices on their networks'
+                    : 'Also block this device from the other devices on its network',
                 body: (many
-                    ? 'Stops these devices and the other devices on their networks from reaching each other. Casting and printing between them stop working too. '
-                    : 'Stops this device and the other devices on the same network from reaching each other. Casting and printing between them stop working too. ') + limits,
+                    ? 'Blocks traffic between these devices and the other devices on their networks, in both directions, so casting or printing to or from these devices also stops working. The rest of each network is not changed: those other devices can still reach each other. To block every device on a network from every other, use Device isolation on the Networks tab. '
+                    : 'Blocks traffic between this device and the other devices on its network, in both directions, so casting or printing to or from this device also stops working. The rest of the network is not changed: those other devices can still reach each other. To block every device on a network from every other, use Device isolation on the Networks tab. ') + limits,
                 unsupported: 'None of your UniFi switches support this, so this option isn\'t available. For Wi-Fi devices, turn on Wi-Fi client isolation for their network instead.',
             };
         },

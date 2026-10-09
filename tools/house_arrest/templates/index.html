@@ -588,6 +588,10 @@
                     checks the real order and undoes everything if the order came
                     out wrong.
                 </p>
+                <details class="raw">
+                    <summary>Show the exact firewall policies</summary>
+                    <pre class="payload" x-text="JSON.stringify(dnsPreview, null, 2)"></pre>
+                </details>
             </div>
         </template>
 
@@ -990,8 +994,8 @@
                 <p class="blindspot-fix">What actually stops this:</p>
                 <ul>
                     <li x-show="neighbourSupported()">
-                        <strong>Quarantine, or Internet only with "Also block other
-                        devices on the same network"</strong>, for the selected devices only.
+                        <strong>Quarantine, or Internet only with its "Also block" option
+                        ticked</strong>, for the selected devices only.
                         Both only work on UniFi switch models that support them, and
                         House Arrest shows how well they will work for each device.
                     </li>

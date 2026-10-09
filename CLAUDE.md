@@ -475,9 +475,12 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
   compare values, not truthiness, or `'8.8.8.8'` and `'1.1.1.1'` look equal.
 - **UPnP has a site-wide master switch** (`rest/setting/usg` → `upnp_enabled`). While
   it is off, a network's `upnp_lan_enabled` does nothing.
-- **`create_allow_respond` cannot be set on a policy you create when source and
-  destination share a zone** — `FirewallPolicyCreateRespondTrafficPolicyNotAllowed`.
-  UniFi's own isolation rules use it; custom ones cannot. Use connection-state
+- **`create_allow_respond` is sometimes refused when source and destination
+  share a zone** — `FirewallPolicyCreateRespondTrafficPolicyNotAllowed`.
+  CORRECTED 2026-10-08: not universal. A NETWORK → IP ALLOW in Internal →
+  Internal was accepted with it and UniFi generated a predefined `(Return)`
+  policy ahead of `Isolated Networks`. Which source shapes are refused is
+  unmeasured; check the stored result. Otherwise use connection-state
   scoping instead: `connection_state_type: ALL | RESPOND_ONLY | CUSTOM`,
   `connection_states: NEW | RELATED | INVALID | ESTABLISHED`.
 - **A saved per-client VLAN override is not a completed move.** A wired client keeps

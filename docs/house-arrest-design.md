@@ -1095,6 +1095,21 @@ whose picture did not is the tool claiming protection it is not delivering.
 The `alt` text is generated from the rendered verdicts rather than written by
 hand, so it stays correct on its own.
 
+**UPDATED 2026-10-08: pictures are chosen by RESULT, not preset.** The two
+invariants above are historical. `SCENARIOS` in `app.js` maps the four
+`pathRows()` verdicts (internet, other networks, same network, inbound) to an
+image, so a device whose own network settings rewrite a row still gets the
+picture of what actually happens. Before this, any rewritten row hid the
+picture, which on an isolated network hid it for every preset except
+Quarantine (reported while recording the video). LAN only and No internet on
+an isolated network now show the Quarantine (no neighbour block) picture with
+a caption naming the preset. Two images were added for Internet only on an
+isolated network (`-isolated`, `-neighbours-isolated`); they are the existing
+Internet only images with the inbound arrow swapped for Quarantine's blocked
+one in PIL, so the art cannot drift. A result with no entry still shows the
+"no picture for this one" hint. **If a preset's effects change, check every
+`SCENARIOS` entry it can produce, not just its own image.**
+
 Images were generated with Gemini (Nano Banana) and are flat-vector art on a
 white ground in both themes, framed in their own white card. They are cropped,
 resized to 900px wide and palette-quantised (~40 KB each).
@@ -1765,3 +1780,190 @@ throttled HTTPS download started before Quarantine.
   device rule AND every DNS Lockdown rule (DNS policies are not network
   policies). The UI always sends a label, so it is unreached; worth
   tightening before anything else calls the endpoint.
+
+---
+
+## MEASURED 2026-10-08: network isolation blocks by SOURCE, and a dual-homed host bypasses it
+
+Prompted by a question: do isolation and mDNS forwarding conflict on the same
+network? Tested from Chris's PC on Default (192.168.200.230) against IDIoT
+and OpenClaw, both isolated with mDNS on. Scripts: raw mDNS browse plus TCP
+connect, then a tshark capture of the handshakes.
+
+**What UniFi's isolation rule actually is** [Read, from the stored policy]:
+`Isolated Networks`, predefined, BLOCK, Internal -> Internal, index 30003,
+`connection_state_type: ALL`, **source** = the isolated subnets
+(192.168.10.0/24, 192.168.107.0/24, 192.168.14.0/24), destination = Any.
+There is no rule blocking traffic INTO an isolated network. Isolation works
+because the isolated device's reply is blocked (all states, so ESTABLISHED
+replies too). That is why a user ALLOW into an isolated network gets a
+hidden predefined companion, e.g. `ALLOW Default LAN to Home Assistant
+(Return)`: RESPOND_ONLY, RELATED/ESTABLISHED, index 30001, ahead of the block.
+
+**mDNS + isolation** [Measured]: 18 services on IDIoT and OpenClaw were
+discovered from Default (AirPlay, Cast, HomeKit, Spotify Connect, SMB). TCP
+connections to 17 of them timed out. Discovery crosses because the gateway
+proxy re-advertises it, and no firewall policy sees link-local multicast.
+Connections fail because the reply is blocked. Net effect: other networks
+see devices they cannot use, and the isolated network's device names leak
+out. Not wrong in itself: mDNS + isolation + one user ALLOW is the standard
+way to cast to a single IoT device. The matrix hover and both confirm
+dialogs (mDNS on, isolation on) now say this instead of "Casting and
+AirPlay will work".
+
+**The one that connected: a dual-homed NAS** [Measured]. `bignas2` has a
+port on Default (192.168.200.12, MAC 90:09:d0:4d:b0:73) and one on IDIoT
+(192.168.107.186). SMB to .107.186 connected. Capture: the SYN went to the
+gateway MAC (…e3:85), so the gateway let it INTO IDIoT (consistent with the
+rule above). The SYN-ACK came straight from 90:09:d0:4d:b0:73, the NAS's
+Default port, so the reply never touched the gateway or the block. Control:
+The Frame (107.123:7000) got two SYNs and never answered.
+* Disproof that was checked: a SYN-ACK from the gateway MAC would have meant
+  a firewall rule allowed it. It came from the NAS's own Default MAC.
+* A dual-homed host is a full bridge across isolation for anything that
+  starts on its non-isolated side. The tool cannot see this (two client
+  entries, two MACs, no reliable link), so the Isolation hover stays as is.
+* Inferred, not tested: one-way traffic (UDP with no reply) from Default
+  INTO an isolated network is delivered, since only the reply direction is
+  blocked. "Blocked from your other networks" holds per connection, not per
+  packet.
+* Null result recorded: v2 `traffic-flows` showed NO blocked flows for
+  either direction of this test. Our own policies are logged there; the
+  predefined `Isolated Networks` block apparently is not (no control was
+  run, so treat as unconfirmed).
+
+**Also 2026-10-08: orphaned DNS Lockdown** [Measured]. After the HA-Test
+network was deleted, its DNS Lockdown's 3 rules remained, all disabled, with
+an empty `source.network_ids`. The banner said "1 lockdown needs attention"
+on the Devices tab with no hint that it was on the DNS tab. Fixed in 0.15.7
+(`2da1ac5`): the banner names the tab, and `network_missing` flags a DNS
+Lockdown whose networks no longer exist. Who disabled the rules (UniFi on
+network delete is the guess) is unconfirmed.
+
+---
+
+## DEFERRED 2026-10-09: "cast target" device profiles (research, nothing built)
+
+**Goal (Chris):** tag a locked-down device as Roku / LG TV / Apple TV / Google
+Cast and have House Arrest write a profile that keeps it locked down (Internet
+only + neighbour block, no access to other VLANs) while still letting trusted
+networks cast to it, without per-phone firewall rules. **Deferred to a future
+version** after the Apple-device test below stayed unresolved; may return
+depending on how the House Arrest video does. Every controller change made
+during the research was reverted and the revert verified (TCP 7000/8060 to the
+Roku time out again from Default). Scripts and logs: `research/casting-2026-10/`
+(gitignored, contains home LAN addresses).
+
+Test device: RokuPlayer (Roku 2, model 4210X, OS 15.3.4, wired on USW Ultra,
+192.168.107.145 on IDIoT, isolated), locked down as Internet only with the
+neighbour block ("Partly blocked": its own switch can't enforce ACLs). Sender:
+Chris's PC, wired on Default (192.168.200.230), using `pyatv` as the AirPlay
+client.
+
+### What AirPlay to a locked-down device needs [Measured unless marked]
+
+| Step | Requirement | Result |
+|---|---|---|
+| Discovery | mDNS advert must reach the gateway's proxy | **Broken by the neighbour block** (below) |
+| Control | Default -> device, TCP 7000 | Needed; `GET /info` 200 once allowed |
+| Pairing | same port; Roku shows a PIN on the TV | Worked cross-VLAN (PIN 7584 flow) |
+| Stream setup | Default -> device, dynamic ports the device picks (seen: eventPort 57185, timingPort 35967, below 49152) | Needed; so inbound is effectively "all ports" |
+| Timing | **device -> sender, UDP, sender's random port** (seen: 52348) | **Blocked by Internet only's "no LAN" block** (logged in traffic-flows, attributed by policy) |
+
+With three changes the PC streamed a 5 s tone to the Roku and Chris heard it:
+1. ALLOW Default (network) -> Roku IP, all ports. UniFi auto-created a
+   predefined `... (Return)` policy (RESPOND_ONLY, index 30002) ahead of the
+   `Isolated Networks` block (30003).
+2. ALLOW Roku (client MAC) -> Default (network), **UDP 319-320,49152-65535**
+   only. UniFi accepted the comma/range port string as written. Must sit
+   AHEAD of the device's "no LAN" block: done by re-creating the block behind
+   it with `recreate_payload` (copy, verify index, delete original).
+3. Add IPv4 mDNS multicast `01:00:5e:00:00:fb` to the neighbour block's
+   ALLOW ACL (see below).
+
+Privacy cost of the profile: the device can send UDP to high ports on the
+trusted network(s) only. No TCP into Default, no other VLANs, neighbours still
+blocked. Scoped by network, so no per-phone rules.
+
+### BUG FOUND: the neighbour block silently kills mDNS discovery [Measured]
+
+`ACL_ALWAYS_ALLOW` lets the device reach the gateway MACs, broadcast and two
+IPv6 multicast MACs, but not IPv4 multicast. mDNS adverts go to
+`01:00:5e:00:00:fb`, so the BLOCK -> Any ACL drops them at the first
+ACL-capable switch and the gateway's mDNS proxy never hears them. A 25 s
+capture on Default showed Loft, Master Bed Roku Ultra (same VLAN, not locked)
+and Samsung, but no Roku Player; after adding the MAC to the ALLOW ACL, Roku
+Player appeared on the next capture. Unicast (control, pairing, streaming)
+was never affected. **Not changed in code:** allowing the MAC also floods the
+device's adverts to its same-VLAN neighbours, a privacy trade the profile
+would have to own. For now the neighbour block's text already says casting to
+or from the device stops working, which is accurate; the user doc now says it
+includes casting from your other networks.
+
+### Wrong turns, recorded so they are not repeated
+
+* "The neighbour block breaks discovery" was dropped mid-session because
+  Chris's iPhone listed Roku Player, then reinstated. The iPhone was seeing a
+  **relayed** advert: `bignas2` (dual-homed NAS, 192.168.107.186 /
+  192.168.200.12, also hosts the Home Assistant VM) re-broadcasts IDIoT mDNS
+  onto Default by itself, independent of UniFi's proxy (packets on Default
+  carry its source address). It heard the Roku without crossing an ACL
+  switch. Lesson: on this network, "my phone sees it" does not prove the
+  gateway proxy carries it.
+* My own Python mDNS probe is unreliable for absence (18 services one run, 6
+  the next; missed Roku Player while Chris's phone saw it). Use the tshark
+  capture (`cap_advert.ps1`), not the parser, for presence/absence.
+* `pyatv --scan-hosts` finds nothing cross-subnet (responders ignore off-link
+  unicast mDNS queries). Build the config by hand from the device's own
+  `GET /info` on port 7000 (features, statusFlags).
+* `play_url` on this Roku returns RTSP 501 to pyatv's PUT: unsupported
+  method, not a network block. Audio (`stream_file`) is the useful test.
+* An empty traffic-flows result was checked against a site-wide query before
+  trusting it (the log is live; House Arrest blocks are recorded even with
+  `logging: false`).
+
+### UNRESOLVED: real Apple devices never connected
+
+With every rule above in place, Chris's iPhone and iPad (both on Default /
+Sherwood_forest) still timed out, never reaching the PIN prompt, and the
+gateway logged no blocked flows during their attempts. The advert they would
+get carries A 192.168.107.145 port 7000 and **no AAAA** (so not IPv6). The
+iPad, freshly joined and fully updated, listed **no** AirPlay devices at all
+while the wired PC on the same network saw four. Sherwood_forest has no
+multicast filtering (mcastenhance off, no broadcast filter, l2_isolation off,
+proxy_arp off). Unchecked leads: whether Roku Player is in the Home app (iOS
+uses HomeKit keys, which the Roku's "reset paired devices" invalidated), Wi-Fi
+multicast delivery to the iPad, and the Roku's "Require code" mode.
+
+### Not tested (would each need the same exercise)
+
+* Google Cast: inferred TCP 8008/8009 inbound, mostly one-way.
+* Roku ECP / DIAL: TCP 8060 inbound (measured reachable once allowed;
+  `/query/device-info` answered). Discovery is SSDP (UDP 1900 multicast),
+  which UniFi does not forward between VLANs as far as is known, so the
+  Netflix/YouTube cast button likely never lists the device cross-VLAN.
+  YouTube's "Link with TV code" pairs via the cloud instead.
+* "Play on Roku" (device fetches media from the phone) needs device -> sender
+  TCP, which is exactly what Internet only exists to stop.
+* AirPlay video and mirroring (PTP on UDP 319-320 was included but unproven).
+  Roku screen mirroring is Miracast (Wi-Fi Direct), outside the LAN entirely.
+
+### Decisions a future build must take
+
+1. It reverses the 2026-09-29 rule that the Devices tab never writes an ALLOW
+   that reopens what the Networks tab closed. Both profile ALLOWs cross
+   network isolation on purpose; the isolation hover would list them.
+2. Whether the profile adds `01:00:5e:00:00:fb` to the neighbour-block ACL
+   (discovery works, adverts reach neighbours) or leaves discovery to the
+   user.
+3. Discovery is site-level (mDNS proxy list) and SSDP doesn't cross at all;
+   the profile can check and warn, not fix.
+
+### Correction recorded the same day
+
+CLAUDE.md said `create_allow_respond` "cannot be set on a policy you create
+when source and destination share a zone". Not universal: a NETWORK -> IP
+ALLOW in Internal -> Internal, cloned from Chris's own Home Assistant rule,
+was accepted with `create_allow_respond: true` and UniFi generated the
+`(Return)` policy. The original error was seen on a different source shape;
+which shapes are refused is unmeasured.

@@ -162,8 +162,15 @@ No firewall rule can block traffic between devices on the same network,
 because that traffic never passes through the gateway. House Arrest blocks it
 with switch rules instead (the neighbour block). **Quarantine** always
 includes the neighbour block. **Internet only** offers it as a checkbox,
-**Also block other devices on the same network**, because it has a cost:
-casting and printing between this device and its neighbours stop working.
+**Also block this device from the other devices on its network**, because it
+has a cost: casting and printing between this device and its neighbours stop
+working. The neighbour block also stops this device announcing itself for
+casting (AirPlay and Google Cast), so devices on your other networks stop
+finding it too, even with mDNS forwarding turned on.
+
+The neighbour block applies only to the devices you select. The other devices
+on the network can still reach each other. To block every device on a network
+from every other, use Device isolation on the Networks tab.
 
 The neighbour block uses the same switch capability as Device isolation. It
 only works on UniFi switch models that support MAC-based ACLs, and only for

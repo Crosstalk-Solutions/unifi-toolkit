@@ -91,3 +91,6 @@ CLAUDE.md
 # They exist locally for review and carry lab-environment detail.
 docs/stat-sta-trust-audit.md
 docs/house-arrest-ux-audit.md
+
+# Local research scripts and logs (home LAN addresses, AirPlay logs). Never commit.
+research/

@@ -1976,15 +1976,32 @@ def build_isolation_matrix(
         # mDNS Proxy "Custom" scope). The toggle here adds or removes THIS
         # network from that shared list, and the confirm dialog says exactly
         # that, so a per-network switch never quietly edits site state.
+        #
+        # mDNS + isolation (MEASURED 2026-10-08): the gateway proxy still
+        # carries discovery across, but UniFi's isolation rule blocks replies
+        # leaving this network, so connections from elsewhere time out. Your
+        # other networks see devices they cannot use. The text says so rather
+        # than promising casting works.
         mdns = n.get("mdns_enabled")
+        if mdns and iso:
+            mdns_detail = (
+                "Service discovery crosses this boundary, so your other "
+                "networks can see the devices on this network. Network "
+                "isolation is on, so connecting to those devices still fails. "
+                "Casting and AirPlay only work for a device that a firewall "
+                "rule you added lets through, or a device that also has its "
+                "own connection to your other network.")
+        elif mdns:
+            mdns_detail = (
+                "Service discovery crosses this boundary. Often wanted for "
+                "casting, but it also lets your other networks see the "
+                "devices on this network.")
+        else:
+            mdns_detail = "Service discovery does not cross this boundary."
         cells["mdns"] = _cell(
             "warn" if mdns else "good",
             "On" if mdns else "Off",
-            ("Service discovery crosses this boundary. Often wanted for "
-             "casting, but it also lets your other networks see the devices "
-             "on this network."
-             if mdns else
-             "Service discovery does not cross this boundary.")
+            mdns_detail
             + " mDNS is one site-wide list (Settings -> Networks -> Gateway "
               "mDNS Proxy -> Custom). Changing this cell adds or removes this "
               "network from that shared list, the same edit the UniFi UI "
@@ -2073,6 +2090,12 @@ ACL_NAME_PREFIX = "[HouseArrest] "
 ACL_NAME_MAX = 32
 # Broadcast (ARP, DHCP) and the IPv6 all-routers / DHCPv6 multicast groups.
 # Mirrors the ALLOW list UniFi generates for its own Local Blocklist.
+# IPv4 multicast is deliberately absent. MEASURED 2026-10-09: without
+# 01:00:5e:00:00:fb the device's mDNS adverts die at the first ACL-capable
+# switch, so the gateway's mDNS proxy never hears them and casting discovery
+# from other networks stops. Adding it fixes discovery but floods the adverts
+# to the device's same-VLAN neighbours. That trade belongs to the deferred
+# "cast target" profiles (design doc, DEFERRED 2026-10-09), not to this list.
 ACL_ALWAYS_ALLOW = ["ff:ff:ff:ff:ff:ff", "33:33:00:00:00:02", "33:33:00:01:00:02"]
 GATEWAY_TYPES = ("udm", "ugw", "uxg")
 # Network purposes UniFi offers Device Isolation for. Measured 2026-09-29: its
