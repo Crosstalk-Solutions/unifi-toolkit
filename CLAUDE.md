@@ -191,10 +191,17 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
-### v1.13.0 (PUBLIC BETA since 2026-09-22 — on `main`/`:edge`, still untagged)
-Beta announced on Discord 2026-09-22. Tag + GitHub Release come after the bake
-(docs/RELEASING.md). Hold Dependabot PRs #125–129 until then — a mid-beta
-dependency rebuild is how the v1.11.3 outage happened.
+### v1.13.0 (RELEASED 2026-10-09 — tag `v1.13.0` on `05ca56b`, `:latest`)
+Beta announced on Discord 2026-09-22; released 2026-10-09 with House Arrest
+0.15.11 and a GitHub Release. Dependabot PRs (#125–129, #131, #132) were held
+through the beta and can now go in one at a time via `:edge`; #127 (starlette
+major) is the risky one — a dependency rebuild is how the v1.11.3 outage
+happened.
+- **House Arrest 0.15.7–0.15.11 (2026-10-08/09)** — banner names the tab and
+  flags DNS Lockdowns whose network was deleted; scenario picture chosen by
+  result (no longer vanishes on isolated networks); mDNS/isolation wording;
+  neighbour-block wording; DNS review JSON; unscoped releases refused.
+  Deferred research: "cast target" profiles (design doc, DEFERRED 2026-10-09).
 - **House Arrest 0.15.6 (`7190e56`, 2026-10-02)** — Devices tab redesign:
   four presets (Internet only, LAN only, No internet, Quarantine), inbound
   checkbox removed, compare grid + collapsible diagram; Internet only DNS
