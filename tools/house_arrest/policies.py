@@ -1470,6 +1470,63 @@ def find_ours(policies: List[Dict]) -> List[Dict]:
     return [p for p in policies or [] if is_house_arrest(p)]
 
 
+RELEASE_KINDS = ("device", "network")
+
+
+def release_scope_error(
+    kind: Optional[str], label: Optional[str], policy_ids: Optional[List[str]] = None
+) -> Optional[str]:
+    """
+    Why a release request is too broad to run, or None if it is scoped.
+
+    Until 2026-10-09 a request with no label released EVERY House Arrest
+    rule of that kind, and kind=device also took every DNS Lockdown rule (DNS
+    policies are not network policies). The UI always sends a label, so no
+    button reached it, but anything scripting the API could wipe every
+    lockdown with one call. Explicit policy ids are always scoped. The one
+    label-less call allowed is kind=network: it only clears leftover rules
+    from the old network-isolation implementation (the "Remove leftover
+    rules" button).
+    """
+    if policy_ids:
+        return None
+    if kind is not None and kind not in RELEASE_KINDS:
+        return "kind must be 'device' or 'network'."
+    if kind == "network":
+        return None
+    if not (label or "").strip():
+        return ("Name the lockdown to release (label). Releasing every "
+                "lockdown at once is refused.")
+    return None
+
+
+def release_targets(
+    policies: List[Dict], kind: Optional[str], label: Optional[str]
+) -> List[Dict]:
+    """
+    Our policies a label/kind release would delete. Device releases never
+    include DNS Lockdown rules: those have their own endpoint and label.
+    """
+    targets = find_ours(policies)
+    if kind == "network":
+        targets = [p for p in targets if is_network_policy(p)]
+    elif kind == "device":
+        targets = [p for p in targets
+                   if not is_network_policy(p) and not is_dns_policy(p)]
+    if label:
+        wanted = label.strip().lower()
+
+        def _label(p):
+            if is_network_policy(p):
+                return network_label_from_policy(p)
+            if is_dns_policy(p):
+                return dns_label_from_policy(p)
+            return _label_from_policy(p)
+
+        targets = [p for p in targets if _label(p).strip().lower() == wanted]
+    return targets
+
+
 def summarize_blocked(
     flows: List[Dict],
     our_policy_ids: set,

@@ -392,10 +392,13 @@ CHANGELOG.md and `docs/house-arrest-design.md`.
 - **`pkill -f <pattern>` over SSH kills its own session** when the pattern
   appears in the remote command line (it matched twice). Anchor it:
   `pkill -f "^python3 /tmp/ha_probe3"`.
-- **`api/release` with `kind=device` and no `label` deletes every device
-  rule AND every DNS Lockdown rule** (DNS policies are not network
-  policies). The UI always sends a label, so it is unreached; tighten before
-  anything else calls the endpoint.
+- **FIXED 2026-10-09 (House Arrest 0.15.11): unscoped releases.** `api/release`
+  with no label used to delete every device rule AND every DNS Lockdown rule,
+  and `api/dns-release` with no label deleted every DNS Lockdown at once.
+  Both now refuse an unnamed release (`P.release_scope_error()`), and a
+  device release never includes DNS rules (`P.release_targets()`). The one
+  label-less call still allowed is `kind=network` (the "Remove leftover
+  rules" button for the old network-isolation policies).
 
 - **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
   "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.

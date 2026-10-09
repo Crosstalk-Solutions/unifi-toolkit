@@ -1179,6 +1179,13 @@ async def dns_lockdown(req: DnsLockdownRequest):
 @router.post("/dns-release", response_model=DnsLockdownResponse)
 async def dns_release(label: Optional[str] = None):
     """Remove DNS Lockdown policies. Only ever touches ones we created."""
+    # No label used to mean "every DNS Lockdown", deleted immediately with no
+    # dry run. The UI always sends one; refuse the unscoped call.
+    if not (label or "").strip():
+        return DnsLockdownResponse(
+            dry_run=False,
+            error="Name the DNS Lockdown to release (label). Releasing every "
+                  "DNS Lockdown at once is refused.")
     client, err = await _client_or_error()
     if err:
         return DnsLockdownResponse(dry_run=False, error=err)
@@ -1712,6 +1719,10 @@ async def release(req: ReleaseRequest):
     Refuses to delete anything that does not carry our marker, including any
     predefined policy, and reports the refusal rather than skipping quietly.
     """
+    scope_err = P.release_scope_error(req.kind, req.label, req.policy_ids)
+    if scope_err:
+        return ReleaseResponse(dry_run=req.dry_run, error=scope_err)
+
     client, err = await _client_or_error()
     if err:
         return ReleaseResponse(dry_run=req.dry_run, error=err)
@@ -1738,21 +1749,7 @@ async def release(req: ReleaseRequest):
             else:
                 targets.append(pol)
     else:
-        targets = P.find_ours(all_policies)
-        if req.kind == "network":
-            targets = [p for p in targets if P.is_network_policy(p)]
-        elif req.kind == "device":
-            targets = [p for p in targets if not P.is_network_policy(p)]
-        if req.label:
-            wanted = req.label.strip().lower()
-
-            def _label(p):
-                return (
-                    P.network_label_from_policy(p) if P.is_network_policy(p)
-                    else P._label_from_policy(p)
-                )
-
-            targets = [p for p in targets if _label(p).strip().lower() == wanted]
+        targets = P.release_targets(all_policies, req.kind, req.label)
 
     # Neighbour-block ACLs belong to device lockdowns. Matched by the devices'
     # MACs and, for a label release, by name too (catches an ACL whose

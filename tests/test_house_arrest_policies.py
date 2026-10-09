@@ -908,3 +908,54 @@ class TestDnsInterception:
             {"state": "manual"}, {"ad_blocking_enabled": True},
             self.FILTERS, ["n1"], self.NAMES)
         assert len(out) == 3
+
+
+class TestReleaseScope:
+    """api/release and api/dns-release must never wipe everything by default."""
+
+    def _set(self):
+        return [
+            {"_id": "d1", "predefined": False, "name": "House Arrest: Cam — no LAN",
+             "description": P.describe("Internet only for Cam")},
+            {"_id": "d2", "predefined": False, "name": "House Arrest: TV — no LAN",
+             "description": P.describe("Internet only for TV")},
+            {"_id": "n1", "predefined": False, "name": "old isolate",
+             "description": P.describe_network("Isolate for IoT")},
+            {"_id": "s1", "predefined": False, "name": "House Arrest DNS: IoT",
+             "description": P.describe_dns("allow resolvers for IoT")},
+            {"_id": "u1", "predefined": False, "name": "hand-made",
+             "description": "hand-made rule"},
+        ]
+
+    def test_device_release_without_label_is_refused(self):
+        assert P.release_scope_error("device", None) is not None
+        assert P.release_scope_error("device", "   ") is not None
+
+    def test_no_kind_no_label_is_refused(self):
+        assert P.release_scope_error(None, None) is not None
+
+    def test_unknown_kind_is_refused(self):
+        assert P.release_scope_error("everything", "Cam") is not None
+
+    def test_scoped_requests_are_allowed(self):
+        assert P.release_scope_error("device", "Cam") is None
+        assert P.release_scope_error(None, None, ["d1"]) is None
+        # The "Remove leftover rules" button: legacy network policies only.
+        assert P.release_scope_error("network", None) is None
+
+    def test_device_release_never_includes_dns_rules(self):
+        ids = {p["_id"] for p in P.release_targets(self._set(), "device", "IoT")}
+        assert ids == set()
+
+    def test_device_label_release_takes_only_that_device(self):
+        ids = {p["_id"] for p in P.release_targets(self._set(), "device", "cam")}
+        assert ids == {"d1"}
+
+    def test_network_release_takes_only_legacy_network_rules(self):
+        ids = {p["_id"] for p in P.release_targets(self._set(), "network", None)}
+        assert ids == {"n1"}
+
+    def test_unmarked_rules_are_never_targets(self):
+        for kind in (None, "device", "network"):
+            ids = {p["_id"] for p in P.release_targets(self._set(), kind, "hand-made")}
+            assert "u1" not in ids
