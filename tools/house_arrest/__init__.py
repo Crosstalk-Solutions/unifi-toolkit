@@ -1,5 +1,5 @@
 """
 House Arrest - device lockdown via UniFi zone-based firewall policies
 """
-__version__ = "0.15.11"
+__version__ = "0.15.12"
 __toolkit_min_version__ = "1.11.0"

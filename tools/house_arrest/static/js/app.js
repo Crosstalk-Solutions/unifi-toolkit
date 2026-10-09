@@ -809,6 +809,42 @@ function houseArrest() {
             'cut_off': 'nothing in or out',
         },
 
+        // Why the picture and list differ from the preset on its own. Without
+        // this the picture changed when a device was picked and nothing said
+        // why (reported 2026-10-09: BirdBuddy on isolated IDIoT). Built from
+        // the rows the network actually rewrote, so it never names a setting
+        // that isn't involved.
+        networkChangeNote() {
+            const changed = this.pathRows().filter(r => r.text).map(r => r.key);
+            if (!changed.length) return '';
+            const cs = this.selectedClients();
+            const many = cs.length > 1;
+            const it = many ? 'these devices' : 'this device';
+            const settings = [], effects = [];
+            if (changed.includes('networks') || changed.includes('inbound')) {
+                settings.push('network isolation is on');
+                if (changed.includes('networks')) effects.push(it + ' can\'t reach your other networks');
+                if (changed.includes('inbound')) effects.push('your other networks can\'t connect to ' + it);
+            }
+            if (changed.includes('internet')) {
+                settings.push('internet access is off');
+                effects.push(it + ' can\'t reach the internet');
+            }
+            if (changed.includes('peers')) {
+                settings.push('Device isolation is on');
+                effects.push('other devices on the same network are blocked from ' + it +
+                             ', on supported switches only');
+            }
+            const nets = [...new Set(cs.map(c => c.network).filter(Boolean))];
+            const who = many ? 'These devices are' : (cs[0].name || cs[0].mac) + ' is';
+            const where = nets.length ? ' on ' + nets.join(' and ') + ', where ' : ' on a network where ';
+            const join = list => list.length > 1
+                ? list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1]
+                : list[0];
+            return who + where + join(settings) + '. That already means ' + join(effects) +
+                ', whatever this preset allows, so the list and picture show both together.';
+        },
+
         // Null when no picture draws this result; the template then shows a
         // hint rather than a picture that contradicts the list.
         scenarioKey() {

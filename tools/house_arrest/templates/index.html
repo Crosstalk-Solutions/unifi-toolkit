@@ -881,6 +881,10 @@
                 <span class="paths-toggle" aria-hidden="true"></span>
             </summary>
 
+            <!-- Says why the result differs from the preset on its own, so a
+                 picture that changes when a device is picked is explained. -->
+            <p class="hint" x-show="networkChangeNote()" x-text="networkChangeNote()"></p>
+
             <!-- Two columns: the verdict list reads as a compact left rail, and
                  the picture of the same thing sits beside it. The list used to
                  stretch the full width, which pushed each verdict an inch away

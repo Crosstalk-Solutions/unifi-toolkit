@@ -1110,6 +1110,12 @@ one in PIL, so the art cannot drift. A result with no entry still shows the
 "no picture for this one" hint. **If a preset's effects change, check every
 `SCENARIOS` entry it can produce, not just its own image.**
 
+**UPDATED 2026-10-09 (1.13.1):** every picture's left label now reads
+"Devices on other networks" (five said "Other devices", which read as
+including same-network neighbours; replaced in PIL from the Quarantine
+picture). `networkChangeNote()` explains above the list whenever the
+device's network rewrote a row, naming the network and the setting.
+
 Images were generated with Gemini (Nano Banana) and are flat-vector art on a
 white ground in both themes, framed in their own white card. They are cropped,
 resized to 900px wide and palette-quantised (~40 KB each).

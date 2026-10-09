@@ -2,6 +2,12 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.13.1] - 2026-10-09
+
+### Fixed
+- **House Arrest's "What this blocks" now says why the result changed.** Picking a device on a network with its own settings (network isolation, internet access off, or Device isolation) changes the picture and the list, and nothing on screen said why. A line above them now names the network and the setting, for example "BirdBuddy is on IDIoT, where network isolation is on. That already means your other networks can't connect to this device, whatever this preset allows."
+- **The diagrams use one label for the same thing.** Five of the eight pictures said "Other devices" for devices on your other networks, which read as if it included the device's neighbours on the same network. They now all say "Devices on other networks".
+
 ## [1.13.0] - 2026-10-09
 
 ### Added
