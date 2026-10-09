@@ -19,7 +19,7 @@ aiohttp>=3.10.11
 # request-first signature, which works on 0.29+ and on 1.x, so no upper
 # bound is needed.
 starlette>=0.47.2
-bcrypt>=4.0.0
+bcrypt>=5.0.0
 python-multipart>=0.0.32
 itsdangerous>=2.2.0
 
