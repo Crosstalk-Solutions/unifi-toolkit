@@ -128,6 +128,8 @@ You'll be prompted to choose between:
 1. **Local** - For LAN-only access (no authentication, no HTTPS)
 2. **Production** - For internet-facing access (authentication + HTTPS)
 
+The setup wizard runs on Linux and macOS (for example, with Docker Desktop or OrbStack) and needs no Python packages. The wizard hashes the admin password with the Python `bcrypt` package when it is installed, and otherwise with `htpasswd`, which ships with macOS. On Ubuntu, install `htpasswd` with `sudo apt install apache2-utils`. Local deployments don't set a password, so they need neither.
+
 > **Run setup before `docker compose up`.** The container mounts `./.env` as a file. If it doesn't exist yet, Docker creates an empty `.env` *directory* in its place, and the app starts with no configuration.
 
 ---

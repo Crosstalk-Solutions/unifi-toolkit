@@ -383,6 +383,10 @@ class WlanInfo(BaseModel):
     isolated: bool = False
     client_count: int = 0
     network_id: Optional[str] = None
+    # Which network(s) the SSID puts its devices on. Two SSIDs can share a
+    # name (#141), so the name alone does not tell rows apart; with
+    # per-password networks one SSID lists several.
+    network_name: Optional[str] = None
 
 
 class WlanIsolationRequest(BaseModel):

@@ -425,6 +425,8 @@ class UniFiClient:
                             'sw_port': client.get('sw_port'),
                             # Network/SSID for wireless
                             'essid': client.get('essid'),
+                            # Which SSID, by id: two SSIDs can share a name
+                            'wlanconf_id': client.get('wlanconf_id'),
                             'network': client.get('network'),
                             'network_id': client.get('network_id')
                         }

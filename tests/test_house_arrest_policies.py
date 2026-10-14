@@ -1018,3 +1018,79 @@ def test_valid_resolvers_pass():
 def test_dhcp_dns_payload_refuses_a_bad_entry():
     with pytest.raises(ValueError, match="not an IP address"):
         P.dhcp_dns_payload(["192.168.1.2 192.168.1.3"])
+
+
+class TestGatewayAsDhcpDns:
+    """
+    A network whose DHCP DNS names its own gateway ("UniFi as DNS") is not a
+    same-subnet resolver: DNS to it goes to the gateway, where firewall rules
+    apply. Shapes from the #141 reporter's console (2026-10-14).
+    """
+
+    IOT = {"_id": "iot", "name": "IoT", "purpose": "corporate", "vlan": 3,
+           "ip_subnet": "10.20.3.1/27", "dhcpd_dns_enabled": True,
+           "dhcpd_dns_1": "10.20.3.1", "firewall_zone_id": CLIENT_ZONE}
+    LAN = {"_id": "lan", "name": "LAN", "purpose": "corporate", "vlan": None,
+           "ip_subnet": "10.20.68.1/24", "dhcpd_dns_enabled": True,
+           "dhcpd_dns_1": "10.20.68.1", "dhcpd_dns_2": "",
+           "firewall_zone_id": CLIENT_ZONE}
+    WAN = {"_id": "wan", "name": "Internet 1", "purpose": "wan"}
+    NETS = [IOT, LAN, WAN]
+
+    def test_gateway_ips_are_each_lans_host_address(self):
+        assert P.gateway_ips(self.NETS) == {"10.20.3.1", "10.20.68.1"}
+
+    def test_matrix_reports_gateway_not_a_hole(self):
+        rows = P.build_isolation_matrix(self.NETS, [])["rows"]
+        dns = {r["name"]: r["cells"]["dns"] for r in rows}
+        assert dns["IoT"]["state"] == "good"
+        assert dns["IoT"]["label"] == "Gateway (10.20.3.1)"
+        assert "no firewall rule can filter" not in dns["IoT"]["detail"]
+
+    def test_matrix_still_flags_a_real_same_subnet_resolver(self):
+        net = dict(self.IOT, dhcpd_dns_1="10.20.3.10", dhcpd_dns_2="10.20.3.1")
+        cell = P.build_isolation_matrix([net], [])["rows"][0]["cells"]["dns"]
+        assert cell["state"] == "warn"
+        assert cell["detail"].startswith("10.20.3.10 is on")
+
+    def test_matrix_ignores_stale_servers_when_dhcp_dns_is_auto(self):
+        net = dict(self.IOT, dhcpd_dns_enabled=False, dhcpd_dns_1="10.20.3.10")
+        cell = P.build_isolation_matrix([net], [])["rows"][0]["cells"]["dns"]
+        assert (cell["state"], cell["label"]) == ("good", "Gateway")
+
+    def test_neighbour_block_does_not_treat_gateway_as_missing_resolver(self):
+        assert P.same_network_resolvers(self.IOT, {}) == ([], [])
+
+    def test_handing_out_the_gateway_is_not_a_dhcp_conflict(self):
+        assert P.dhcp_dns_conflicts([self.IOT], ["1.1.1.1"], self.NETS) == []
+
+    def test_another_networks_gateway_is_not_a_conflict_either(self):
+        net = dict(self.IOT, dhcpd_dns_1="10.20.68.1")
+        assert P.dhcp_dns_conflicts([net], ["1.1.1.1"], self.NETS) == []
+
+    def test_device_dns_needs_no_allow_for_a_gateway_address(self):
+        net = dict(self.IOT, dhcpd_dns_1="10.20.68.1")
+        allow, skipped = P.device_dns_resolvers([net], self.NETS, [], CLIENT_ZONE)
+        assert (allow, skipped) == ([], [])
+
+    def test_gateway_only_dns_lockdown_builds_blocks_only(self):
+        pols = P.build_dns_lockdown(
+            ["iot"], "IoT", [], [], CLIENT_ZONE, EXTERNAL_ZONE,
+            [10000, 10001], gateway_resolvers=["10.20.3.1"])
+        assert [p["action"] for p in pols] == ["BLOCK", "BLOCK"]
+
+
+class TestWlanNetworks:
+    def test_plain_ssid_is_its_own_network(self):
+        assert P.wlan_networks({"networkconf_id": "lan"}) == ["lan"]
+
+    def test_per_password_networks_are_included_once(self):
+        w = {"networkconf_id": "lan", "private_preshared_keys_enabled": True,
+             "private_preshared_keys": [{"networkconf_id": "iot"},
+                                        {"networkconf_id": "lan"}]}
+        assert P.wlan_networks(w) == ["lan", "iot"]
+
+    def test_per_password_list_ignored_when_switched_off(self):
+        w = {"networkconf_id": "lan", "private_preshared_keys_enabled": False,
+             "private_preshared_keys": [{"networkconf_id": "iot"}]}
+        assert P.wlan_networks(w) == ["lan"]

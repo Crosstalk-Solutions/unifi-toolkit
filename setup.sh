@@ -30,66 +30,84 @@ print_success() {
     printf "${GREEN}✓${NC} %s\n" "$1"
 }
 
+# Messages go to stderr so they stay visible when called inside $(...)
 print_error() {
-    printf "${RED}✗${NC} %s\n" "$1"
+    printf "${RED}✗${NC} %s\n" "$1" >&2
 }
 
 print_warning() {
-    printf "${YELLOW}⚠${NC} %s\n" "$1"
+    printf "${YELLOW}⚠${NC} %s\n" "$1" >&2
 }
 
 print_info() {
-    printf "${CYAN}ℹ${NC} %s\n" "$1"
+    printf "${CYAN}ℹ${NC} %s\n" "$1" >&2
 }
 
-# Check if Python 3 is available
+# Python is optional: it is only a helper for key generation / password
+# hashing, and both have non-Python fallbacks (openssl, htpasswd).
 check_python() {
-    if command -v python3 &> /dev/null; then
-        PYTHON_CMD="python3"
-    elif command -v python &> /dev/null; then
-        PYTHON_CMD="python"
-    else
-        print_error "Python 3 is required but not found!"
-        print_info "Please install Python 3.9-3.12 and try again."
-        exit 1
+    # The first interpreter that actually runs Python 3. `command -v` alone is
+    # not enough: Windows ships a python3 stub that only opens the Store.
+    PYTHON_CMD=""
+    for cmd in python3 python; do
+        if command -v "$cmd" &> /dev/null && \
+                "$cmd" -c 'import sys; sys.exit(sys.version_info[0] != 3)' &> /dev/null; then
+            PYTHON_CMD="$cmd"
+            break
+        fi
+    done
+    if [ -z "$PYTHON_CMD" ]; then
+        print_warning "Python 3 not found - using openssl/htpasswd instead"
+        return 0
     fi
 
-    # Verify Python version is compatible
     PYTHON_VERSION=$($PYTHON_CMD -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    MAJOR=$($PYTHON_CMD -c 'import sys; print(sys.version_info.major)')
-    MINOR=$($PYTHON_CMD -c 'import sys; print(sys.version_info.minor)')
-
-    if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 9 ]); then
-        print_error "Python 3.9 or higher is required (found $PYTHON_VERSION)"
-        exit 1
-    fi
-
     print_success "Python $PYTHON_VERSION detected"
 }
 
-# Generate Fernet encryption key
+# Generate Fernet encryption key (urlsafe base64 of 32 random bytes).
+# Standard library only - no 'cryptography' package needed.
 generate_encryption_key() {
-    $PYTHON_CMD -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null || {
+    local key=""
+    if [ -n "$PYTHON_CMD" ]; then
+        key=$($PYTHON_CMD -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())" 2>/dev/null || true)
+    fi
+    if [ -z "$key" ] && command -v openssl &> /dev/null; then
+        key=$(openssl rand -base64 32 | tr '+/' '-_')
+    fi
+    if [ ${#key} -ne 44 ]; then
         print_error "Failed to generate encryption key"
-        print_info "Make sure cryptography is installed: pip install cryptography"
+        print_info "Install Python 3 or openssl and try again."
         exit 1
-    }
+    fi
+    echo "$key"
 }
 
-# Hash password with bcrypt
-# Uses stdin to avoid shell injection vulnerabilities with special characters
+# Hash password with bcrypt.
+# Tries Python bcrypt first, then htpasswd (built into macOS; on Ubuntu:
+# sudo apt install apache2-utils). The password is passed on stdin so it
+# never appears in the process list.
 hash_password() {
     local password="$1"
-    echo "$password" | $PYTHON_CMD -c "
+    local hash=""
+    if [ -n "$PYTHON_CMD" ]; then
+        hash=$(printf '%s\n' "$password" | $PYTHON_CMD -c "
 import sys
 import bcrypt
 password = sys.stdin.readline().rstrip('\n')
 print(bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode())
-" 2>/dev/null || {
+" 2>/dev/null || true)
+    fi
+    if [ -z "$hash" ] && command -v htpasswd &> /dev/null; then
+        hash=$(printf '%s\n' "$password" | htpasswd -niBC 12 user 2>/dev/null | cut -d: -f2- | tr -d '\r\n' || true)
+    fi
+    if [[ ! "$hash" =~ ^\$2[aby]\$ ]]; then
         print_error "Failed to hash password"
-        print_info "Make sure bcrypt is installed: pip install bcrypt"
+        print_info "Install either the Python bcrypt package (pip install bcrypt)"
+        print_info "or htpasswd (Ubuntu: sudo apt install apache2-utils) and try again."
         exit 1
-    }
+    fi
+    echo "$hash"
 }
 
 # Validate password meets requirements
@@ -213,7 +231,7 @@ main() {
     printf "${BOLD}Step 2: Generating Encryption Key${NC}\n"
     echo ""
     print_info "Generating secure encryption key..."
-    ENCRYPTION_KEY=$(generate_encryption_key)
+    ENCRYPTION_KEY=$(generate_encryption_key) || exit 1
     print_success "Encryption key generated"
     echo ""
 
@@ -293,7 +311,7 @@ main() {
 
         echo ""
         print_info "Hashing password..."
-        AUTH_PASSWORD_HASH=$(hash_password "$password")
+        AUTH_PASSWORD_HASH=$(hash_password "$password") || exit 1
         print_success "Password configured"
         echo ""
     fi
@@ -404,8 +422,15 @@ EOF
         print_success "Data directory already exists"
     fi
 
-    # Set proper permissions for Docker (UID 1000 matches toolkit user in container)
-    if command -v docker &> /dev/null; then
+    # Set proper permissions for Docker (UID 1000 matches toolkit user in container).
+    # Not on macOS: Docker Desktop / OrbStack write bind mounts as the Mac user,
+    # so data/ must stay owned by that user - chowning it to 1000 locks it out.
+    if [ "$(uname -s)" == "Darwin" ]; then
+        if [ -n "$SUDO_USER" ]; then
+            chown "$SUDO_USER" data .env 2>/dev/null || true
+        fi
+        print_success "macOS: data directory left owned by your user (Docker Desktop/OrbStack)"
+    elif command -v docker &> /dev/null; then
         chown 1000:1000 data 2>/dev/null || chmod 755 data 2>/dev/null || true
         print_success "Set data directory permissions for Docker (UID 1000)"
     fi
