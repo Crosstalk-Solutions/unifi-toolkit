@@ -596,27 +596,43 @@ async def list_wlans():
         stations = await client.get_clients()
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+    try:
+        net_names = {n.get("_id"): n.get("name") for n in await client.get_networks()}
+    except Exception:
+        net_names = {}
 
     # get_clients() returns a dict keyed by MAC, not a list — iterating it
     # directly yields MAC strings and silently counts nothing.
-    counts: Dict[str, int] = {}
+    # Count by SSID id: two SSIDs can share a name (#141), and counting by
+    # name gave both the same number. MEASURED 2026-10-14: all 43 Wi-Fi
+    # clients on the UCG carried a wlanconf_id matching their SSID. The name
+    # is only a fallback for a client that lacks it.
+    by_id: Dict[str, int] = {}
+    by_name: Dict[str, int] = {}
     for st in (stations or {}).values():
         if not isinstance(st, dict):
             continue
-        essid = st.get("essid")
-        if essid:
-            counts[essid] = counts.get(essid, 0) + 1
+        if st.get("wlanconf_id"):
+            by_id[st["wlanconf_id"]] = by_id.get(st["wlanconf_id"], 0) + 1
+        elif st.get("essid"):
+            by_name[st["essid"]] = by_name.get(st["essid"], 0) + 1
 
     out = []
     for w in wlans:
         name = w.get("name") or "(unnamed)"
+        enabled = bool(w.get("enabled", True))
+        count = by_id.get(w.get("_id"), 0) + by_name.get(name, 0)
         out.append(WlanInfo(
             id=w.get("_id") or "",
             name=name,
-            enabled=bool(w.get("enabled", True)),
+            enabled=enabled,
             isolated=bool(w.get("l2_isolation")),
-            client_count=counts.get(name, 0),
+            # A disabled SSID can't have clients, whatever a same-name twin has.
+            client_count=count if enabled else 0,
             network_id=w.get("networkconf_id"),
+            network_name=", ".join(
+                (net_names.get(i) or "unknown").strip()
+                for i in P.wlan_networks(w)) or None,
         ))
     out.sort(key=lambda x: (not x.enabled, x.name.lower()))
     return out
@@ -1028,11 +1044,18 @@ async def dns_lockdown(req: DnsLockdownRequest):
                    "duplicate rules that both have to be cleaned up."),
         )
 
+    # The gateway's own addresses are reached through the Gateway zone, which
+    # these rules never block, so they need no allow and are not "on the
+    # network itself" (see P.gateway_ips()).
+    gw = P.gateway_ips(networks)
+    gateway_resolvers = [ip for ip in req.resolver_ips if ip in gw]
+    peer_resolvers = [ip for ip in req.resolver_ips if ip not in gw]
+
     # A resolver living on one of the locked-down networks cannot be reached
     # through the gateway, so the rules would never see that traffic.
     unreachable = []
     for n in chosen:
-        for ip in req.resolver_ips:
+        for ip in peer_resolvers:
             if P._ip_in_subnet(ip, n.get("ip_subnet")):
                 unreachable.append(f"{ip} is on {n.get('name')} itself")
 
@@ -1040,7 +1063,7 @@ async def dns_lockdown(req: DnsLockdownRequest):
     # through. Splitting them is what stops a public resolver like 1.1.1.1
     # from being allowed on the LAN side while the internet block kills it.
     lan_resolvers, wan_resolvers, foreign_resolvers = P.classify_resolvers(
-        req.resolver_ips, networks, zones, client_zone_id
+        peer_resolvers, networks, zones, client_zone_id
     )
 
     try:
@@ -1060,6 +1083,7 @@ async def dns_lockdown(req: DnsLockdownRequest):
             indexes=indexes,
             block_dot=req.block_dot,
             foreign_resolvers=foreign_resolvers,
+            gateway_resolvers=gateway_resolvers,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1067,13 +1091,22 @@ async def dns_lockdown(req: DnsLockdownRequest):
     # The likeliest self-inflicted outage: DHCP still advertising a resolver
     # these rules are about to block. Leads the caveats because it is the one
     # that actually breaks the network.
-    caveats = P.dhcp_dns_conflicts(chosen, req.resolver_ips)
+    caveats = P.dhcp_dns_conflicts(chosen, req.resolver_ips, networks)
     caveats += [
         f"{u} is on the same network as the devices it would serve, so "
         f"traffic to {u} never passes the gateway and DNS Lockdown can't "
         f"control it." for u in unreachable
     ]
     caveats += list(P.DNS_CAVEATS)
+    if gateway_resolvers:
+        caveats.append(
+            f"{', '.join(gateway_resolvers)} "
+            + ("is" if len(gateway_resolvers) == 1 else "are")
+            + " the gateway itself. DNS Lockdown never blocks the gateway, so "
+              "devices keep reaching it and no allow rule is needed. The "
+              "gateway then looks names up using its own upstream DNS "
+              "(Settings -> Internet -> your WAN -> DNS Server)."
+        )
     if wan_resolvers:
         caveats.append(
             f"{', '.join(wan_resolvers)} "

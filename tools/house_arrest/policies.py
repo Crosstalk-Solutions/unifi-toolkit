@@ -631,6 +631,7 @@ def build_dns_lockdown(
     indexes: List[int],
     block_dot: bool = False,
     foreign_resolvers: Optional[List[Dict]] = None,
+    gateway_resolvers: Optional[List[str]] = None,
 ) -> List[Dict]:
     """
     Build the DNS Lockdown policy set.
@@ -659,12 +660,15 @@ def build_dns_lockdown(
         foreign_resolvers: approved resolvers on LAN networks in OTHER zones —
             no policy is written for them, they only relax the no-resolver
             guard, because nothing in this set blocks their zone pair anyway
+        gateway_resolvers: approved addresses that are the gateway itself —
+            the same: reached through the Gateway zone, never blocked here
     """
     if not network_ids:
         raise ValueError("At least one network is required")
-    # A resolver in a foreign zone needs no ALLOW (nothing here blocks that
-    # zone pair), so a foreign-only selection legitimately builds blocks-only.
-    if not (lan_resolvers or wan_resolvers or foreign_resolvers):
+    # A resolver in a foreign zone, or the gateway itself, needs no ALLOW
+    # (nothing here blocks that zone pair), so such a selection legitimately
+    # builds blocks-only.
+    if not (lan_resolvers or wan_resolvers or foreign_resolvers or gateway_resolvers):
         raise ValueError("At least one approved resolver is required")
     needed = dns_policy_count(block_dot, bool(lan_resolvers), bool(wan_resolvers))
     if len(indexes) < needed:
@@ -784,7 +788,34 @@ def dhcp_dns_of(network: Dict) -> List[str]:
     return [v for v in (network.get(f) for f in DHCP_DNS_FIELDS) if v]
 
 
-def dhcp_dns_conflicts(networks: List[Dict], resolver_ips: List[str]) -> List[str]:
+def gateway_ips(networks: List[Dict]) -> set:
+    """
+    Every address the gateway itself answers on: the host part of each LAN's
+    `ip_subnet` ("10.0.3.1/27" -> "10.0.3.1").
+
+    A network's DHCP DNS can be set explicitly to its own gateway address
+    (reported in #141, 2026-10-14). That address sits inside the subnet but
+    is NOT a same-subnet resolver: DNS to it goes to the gateway (the Gateway
+    zone), so firewall policies do see it, and DNS Lockdown's blocks never
+    cover it. Treating it as a peer on the VLAN raised a false "no firewall
+    rule can filter this" warning, and made the neighbour block refuse to
+    apply because no client owns that IP.
+    """
+    out = set()
+    for n in networks or []:
+        if n.get("purpose") == "wan":
+            continue
+        sub = n.get("ip_subnet")
+        if sub and "/" in sub:
+            out.add(sub.split("/", 1)[0].strip())
+    return out
+
+
+def dhcp_dns_conflicts(
+    networks: List[Dict],
+    resolver_ips: List[str],
+    all_networks: Optional[List[Dict]] = None,
+) -> List[str]:
     """
     Warn where DHCP hands out a resolver the lockdown is about to block.
 
@@ -800,13 +831,14 @@ def dhcp_dns_conflicts(networks: List[Dict], resolver_ips: List[str]) -> List[st
     Returns one message per affected network, empty when DHCP already agrees.
     """
     approved = {str(ip).strip() for ip in resolver_ips or []}
+    # The gateway is never blocked by these rules -- its own DNS service
+    # answers locally -- so handing out a gateway address is never a conflict,
+    # whether DHCP is on Auto or names the gateway explicitly.
+    approved |= gateway_ips(all_networks or networks)
     out = []
     for n in networks or []:
         handed = dhcp_dns_of(n)
         if not handed:
-            # No override: DHCP points at the gateway, which is not in the
-            # approved list either, but the gateway is never blocked by these
-            # rules -- its own DNS service answers locally.
             continue
         stale = [h for h in handed if h not in approved]
         if not stale:
@@ -1372,8 +1404,11 @@ def device_dns_resolvers(
     """
     allow: List[str] = []
     skipped: List[str] = []
+    # Any gateway address is reached through the Gateway zone, which the
+    # device block never covers, so it needs no allow (see gateway_ips()).
+    gw = gateway_ips(networks)
     for net in device_networks or []:
-        handed = dhcp_dns_of(net)
+        handed = [ip for ip in dhcp_dns_of(net) if ip not in gw]
         lan, _wan, _foreign = classify_resolvers(handed, networks, zones, client_zone_id)
         cross = [ip for ip in lan if not _ip_in_subnet(ip, net.get("ip_subnet"))]
         if not cross:
@@ -1920,6 +1955,24 @@ def _ip_in_subnet(ip: Optional[str], subnet: Optional[str]) -> bool:
         return False
 
 
+def wlan_networks(wlan: Dict) -> List[str]:
+    """
+    Every network an SSID can put devices on.
+
+    With per-password networks ("private pre-shared keys") one SSID puts
+    devices on several networks; the SSID's own `networkconf_id` names only
+    one of them (reported in #141, 2026-10-14).
+    """
+    ids = [wlan.get("networkconf_id")]
+    if wlan.get("private_preshared_keys_enabled"):
+        ids += [k.get("networkconf_id") for k in wlan.get("private_preshared_keys") or []]
+    out = []
+    for i in ids:
+        if i and i not in out:
+            out.append(i)
+    return out
+
+
 def vlan_id(value) -> Optional[int]:
     """
     A network's VLAN as an int, or None.
@@ -2118,9 +2171,16 @@ def build_isolation_matrix(
         # filter it — that is the measured hole (a locked-down device still
         # resolved names through a same-subnet resolver). A resolver on another
         # VLAN crosses the gateway and therefore can be filtered.
-        servers = [n.get(f"dhcpd_dns_{i}") for i in (1, 2, 3, 4)]
-        servers = [x for x in servers if x]
-        local = [x for x in servers if _ip_in_subnet(x, n.get("ip_subnet"))]
+        # The gateway's own addresses are not same-subnet resolvers: DNS to
+        # them goes to the gateway, where firewall policies apply (see
+        # gateway_ips()). Only a server that is a real peer on this subnet is
+        # the hole. dhcp_dns_of() also drops servers left behind after the
+        # override was switched back to Auto (#136).
+        servers = dhcp_dns_of(n)
+        gw = gateway_ips(networks)
+        local = [x for x in servers
+                 if x not in gw and _ip_in_subnet(x, n.get("ip_subnet"))]
+        others = [x for x in servers if x not in gw]
 
         if local:
             cells["dns"] = _cell(
@@ -2134,15 +2194,23 @@ def build_isolation_matrix(
                   "up names, and the DNS server looks them up on the internet. "
                   "Measured on a real locked-down device."
             )
-        elif servers:
+        elif others:
             cells["dns"] = _cell(
                 "neutral", ", ".join(servers),
-                f"DHCP hands out {', '.join(servers)}, which "
-                + ("is" if len(servers) == 1 else "are")
+                f"DHCP hands out {', '.join(others)}, which "
+                + ("is" if len(others) == 1 else "are")
                 + " outside this network. DNS queries to "
-                + ("that server" if len(servers) == 1 else "those servers")
+                + ("that server" if len(others) == 1 else "those servers")
                 + " cross the gateway, so a DNS Lockdown on this network can "
                   "control them."
+            )
+        elif servers:
+            cells["dns"] = _cell(
+                "good", f"Gateway ({', '.join(servers)})",
+                f"DHCP hands out {', '.join(servers)}, which "
+                + ("is the gateway's" if len(servers) == 1 else "are the gateway's")
+                + " own address. Devices here use the gateway as their DNS "
+                  "server, so DNS can be controlled at the gateway."
             )
         else:
             cells["dns"] = _cell(
@@ -2522,11 +2590,14 @@ def same_network_resolvers(
     (offline), which the caller must not silently cut off. Resolvers on other
     networks are routed through the gateway, which the ALLOW already covers.
     """
-    if not network or network.get("dhcpd_dns_enabled") is False:
+    if not network:
         return [], []
     subnet = network.get("ip_subnet")
-    handed = [network.get(f"dhcpd_dns_{i}") for i in (1, 2, 3, 4)]
-    local = [ip for ip in handed if ip and _ip_in_subnet(ip, subnet)]
+    # The gateway's own address is already in the ALLOW (by its LAN MACs), and
+    # no client owns it, so counting it would refuse the apply as "missing".
+    gw = gateway_ips([network])
+    local = [ip for ip in dhcp_dns_of(network)
+             if ip not in gw and _ip_in_subnet(ip, subnet)]
     by_ip = {}
     for c in (clients or {}).values():
         if c.get("ip") and c.get("mac"):

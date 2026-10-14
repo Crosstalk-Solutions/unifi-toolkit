@@ -338,6 +338,9 @@
                                 <tr :class="{ 'is-off': !w.enabled }">
                                     <th class="net-col" scope="row">
                                         <span x-text="w.name"></span>
+                                        <!-- Which network: two SSIDs can share a name -->
+                                        <span class="vlan-tag" x-show="w.network_name"
+                                              x-text="w.network_name && w.network_name.includes(',') ? w.network_name + ' (by password)' : w.network_name"></span>
                                         <span class="vlan-tag" x-show="!w.enabled">disabled</span>
                                     </th>
                                     <td class="cell is-neutral">

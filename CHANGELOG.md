@@ -2,6 +2,13 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.13.4] - Unreleased
+
+### Fixed
+- **House Arrest understands a network that uses the gateway as its DNS server.** When a network's DHCP DNS was set to the gateway's own address, House Arrest treated that address as a DNS server on the network itself. The Networks table warned that no firewall rule could filter it, DNS Lockdown warned that devices would lose DNS, and Internet only with the neighbour block refused to apply while it waited for a DNS server no device owns. The gateway's own addresses are now recognised as the gateway, and the Networks table shows them as "Gateway". The Networks table also stopped showing old DNS servers after the override is switched back to Auto, the same fix #136 made elsewhere. Thanks to @ChatziGeorge (#141).
+- **House Arrest's Wi-Fi list counts devices per SSID, not per name.** Two SSIDs with the same name showed the same device count, and a disabled SSID showed its twin's devices. Each SSID is now counted on its own, a disabled SSID shows 0, and each row names the network the SSID puts devices on, including networks reached through per-password SSIDs. Thanks to @ChatziGeorge (#141).
+- **The setup wizard runs on macOS and needs no Python packages.** The encryption key is generated with the Python standard library or `openssl`, and the admin password is hashed with Python `bcrypt` or `htpasswd`. On macOS the wizard no longer changes the owner of `data/`, which locked Docker Desktop and OrbStack out of it. Error messages are now shown instead of hidden, a failed key or password step stops the wizard instead of writing an empty value, and a Python that doesn't run (such as the Windows Store placeholder) is skipped. The same changes apply to `reset_password.sh`. Thanks to @ChatziGeorge (#141).
+
 ## [1.13.3] - 2026-10-14
 
 ### Fixed
