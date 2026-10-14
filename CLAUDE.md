@@ -447,6 +447,11 @@ CHANGELOG.md and `docs/house-arrest-design.md`.
   label-less call still allowed is `kind=network` (the "Remove leftover
   rules" button for the old network-isolation policies).
 
+- **Live-testing `shared/unifi_client` from a script:** call
+  `await get_database().init_db()` before `get_shared_client()` (it reads the
+  controller config from the DB), and run from the repo root so `.env` and
+  `./data` resolve. Used 2026-10-14 to confirm the #140 fix against the UCG.
+
 - **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
   "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.
   The old form was removed in starlette 1.0 and 500s every template route with
@@ -480,7 +485,7 @@ This is how we discovered the v2 `traffic-flows` filtered payload format (`polic
 - **When an API route is a mystery, watch the console do it.** Chrome DevTools, or
   a fetch/XHR interceptor, on the real UniFi UI. Note the console often sends
   several requests per save and only one carries the change.
-- The legacy `stat/ips/event` endpoint returns 0 on Network 10.x+ — effectively deprecated
+- The legacy `stat/ips/event` endpoint is gone: it returns HTTP 404 on Network 10.6 (measured 2026-10-14, Chris's UCG; earlier note said "returns 0"). Only fall back to it when v2 traffic-flows *fails*, never when v2 answers empty (#140).
 - Express in AP-only mode reports `type: "udm"` (not `uap` or `ux`) with `device_mode_override: "mesh"` and `model: "UX"` — detect via `device_mode_override` field
 - The `rssi` and `signal` fields are separate values; the console displays `signal`
 - **The stored firewall policy `index` is not the one you send.** Indexes sent as
