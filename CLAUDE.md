@@ -191,6 +191,25 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
+### v1.13.4 (on `:edge` 2026-10-15 — `eb33bc0` via PR #142, NOT yet tagged)
+- Rewritten by us from external PR #141 (@ChatziGeorge, co-author credit);
+  #141 stays open until 1.13.4 ships. Waiting on the contributor's `:edge`
+  re-test (comment 6180887711), then tag `v1.13.4` + `gh release create`,
+  close #141.
+- Gateway as DHCP DNS: `P.gateway_ips()` — a network handing out its own
+  gateway IP is not a conflict, not a same-subnet resolver, and is resolved
+  through the Gateway zone (DNS Lockdown splits `gateway_resolvers` /
+  `peer_resolvers`). Unit-tested only: none of Chris's networks does this.
+- Wi-Fi tab: client counts by `wlanconf_id` (essid fallback; 43/43 clients
+  on the UCG carry it), disabled SSIDs show 0, row shows the network name
+  (`P.wlan_networks()` also reads per-password `private_preshared_keys`).
+- `setup.sh` / `reset_password.sh`: macOS (stdlib key, `htpasswd` bcrypt
+  fallback, no `chown 1000` on Darwin, `sed -i.bak`), messages to stderr,
+  `|| exit 1` on `$(...)` calls, `check_python` runs each candidate.
+- DECLINED from #141: LAN-with-login mode (point to a reverse proxy; see
+  memory no-auth-expansion) and auditing users' own ZBF rules (scope).
+- House Arrest 0.15.15.
+
 ### v1.13.3 (RELEASED 2026-10-14 — tag `v1.13.3` on `05d3895`, `:latest`)
 - #136: `dhcp_dns_of()` gates on `dhcpd_dns_enabled`. UniFi keeps the old
   `dhcpd_dns_1..4` after the override is switched off, and per the reporter
@@ -430,6 +449,13 @@ CHANGELOG.md and `docs/house-arrest-design.md`.
   the file. The same goes for Python one-liners that build JS strings: a
   `\'` inside a heredoc can come out as a bare `'` and break app.js, so run
   `node --check` on app.js after any scripted edit.
+- **This PC's `python3` is the Windows Store stub**: `command -v python3`
+  succeeds but running it fails. Use `python`. Shell scripts must test that
+  an interpreter actually runs, not just that it exists (measured 2026-10-15
+  while testing `setup.sh`).
+- **Working copy is CRLF (autocrlf=true), commits are LF.** A scripted
+  patch that matches multi-line text must normalise `\r\n` first, or its
+  assertion fails on a block that looks identical.
 - **Live test rig for House Arrest DNS/lockdown tests** (2026-10-02):
   `testclient` wired on HA-Test (VLAN 24) at `csherwood@192.168.3.73`, key
   `~/.ssh/claude_hapi`; no sudo, no `dig` (use a Python raw-DNS probe with a
