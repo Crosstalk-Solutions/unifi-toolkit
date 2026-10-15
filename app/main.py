@@ -169,7 +169,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="UI Toolkit",
     description="Comprehensive toolkit for UniFi network management and monitoring",
-    version="1.13.4",
+    version="1.13.5",
     lifespan=lifespan
 )
 
@@ -540,17 +540,11 @@ async def get_system_status():
                 cache.set_ips_settings(ips_settings)
 
             # Cache AP info for debug-info endpoint
-            from shared.unifi_client import get_friendly_model_name, EXPRESS_MODEL_CODES
+            from shared.unifi_client import get_friendly_model_name
             ap_list = []
             for dev in system_info.get('devices', []):
-                dev_type = dev.get('type', '')
                 model_code = (dev.get('model') or '').upper()
-                is_ap = dev_type == 'uap'
-                is_express_ap = (
-                    (dev_type == 'ux' or model_code in EXPRESS_MODEL_CODES)
-                    and dev.get('device_mode_override') == 'mesh'
-                )
-                if is_ap or is_express_ap:
+                if dev.get('is_ap'):
                     ap_list.append({
                         "name": dev.get('name') or get_friendly_model_name(model_code),
                         "model_code": dev.get('model') or 'Unknown',

@@ -1,7 +1,7 @@
 """
 Wi-Fi Stalker FastAPI application factory
 """
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, WebSocket, WebSocketDisconnect, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -15,6 +15,11 @@ from tools.wifi_stalker.models import SystemStatus
 from tools.wifi_stalker.scheduler import get_last_refresh
 from shared.database import get_db_session
 from shared.config import get_settings
+from shared.websocket_manager import get_ws_manager
+from app.routers.auth import is_auth_enabled, verify_session
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Get the directory containing this file
 BASE_DIR = Path(__file__).parent
@@ -81,5 +86,38 @@ def create_app() -> FastAPI:
             connected_devices=connected_count,
             refresh_interval_seconds=settings.stalker_refresh_interval
         )
+
+    # WebSocket endpoint for real-time device updates. The frontend has always
+    # connected here; without this route every attempt was rejected with 403
+    # and the page fell back to 60-second polling (#147).
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        """
+        WebSocket endpoint for real-time device updates.
+
+        In production mode, requires valid session authentication via cookie.
+        """
+        if is_auth_enabled():
+            session_token = websocket.cookies.get("session_token")
+            if not session_token or not verify_session(session_token):
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                logger.warning("Wi-Fi Stalker WebSocket rejected: not authenticated")
+                return
+
+        ws_manager = get_ws_manager()
+        await ws_manager.connect(websocket)
+
+        try:
+            while True:
+                # Wait for messages from client (ping/pong). The Stalker
+                # frontend sends a bare 'ping'; accept Pulse's JSON form too.
+                data = await websocket.receive_text()
+                if data in ('ping', '{"type":"ping"}'):
+                    await websocket.send_text('{"type":"pong"}')
+        except WebSocketDisconnect:
+            ws_manager.disconnect(websocket)
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            ws_manager.disconnect(websocket)
 
     return app

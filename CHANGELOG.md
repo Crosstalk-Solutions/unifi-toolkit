@@ -2,6 +2,16 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.13.5] - Unreleased
+
+### Security
+- **Local mode now checks that requests come from the toolkit's own pages (#145).** With login switched off, the check that stops other websites from sending requests to the toolkit was skipped along with the login. A web page opened by anyone on your network could send a request to the toolkit's LAN address and block or unblock a Wi-Fi Stalker device, release a DNS Lockdown, or change Threat Watch filtering. The check now runs in every mode. The toolkit's own pages already passed it, so nothing changes for you. Thanks to @thedigitalfox.
+
+### Fixed
+- **Wi-Fi Stalker updates live again (#147).** The page connected for live updates to an address the app never answered, so every attempt was refused, it retried every 5 seconds, and connects, disconnects and roams only showed up on the 60-second refresh. Wi-Fi Stalker now answers live connections the same way Network Pulse does. Thanks to @Voxvalve for finding the cause, and @viennatech.
+- **Threat Watch recognises the UDR 5G Max (#149).** Its model code (`UDMA6B9`) was missing from the IDS/IPS-capable list, so Threat Watch said the gateway didn't support IPS. Thanks to @twolf218.
+- **Gateways with built-in Wi-Fi count as access points (#150).** On a UDR, UDR7, UDR 5G Max or an Express running as gateway, the built-in radios were left out of the AP count on the dashboard and the AP list in Network Pulse. They're now included, and the device is still shown as your gateway. Thanks to @twolf218.
+
 ## [1.13.4] - 2026-10-15
 
 ### Fixed

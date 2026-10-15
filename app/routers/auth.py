@@ -241,15 +241,18 @@ async def logout(request: Request):
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """
-    Middleware to enforce authentication and CSRF protection when in production mode.
+    Middleware to enforce CSRF protection in every mode, and authentication in
+    production mode.
 
-    Authentication:
+    Authentication (production mode only):
     - Allows unauthenticated access to /login, /static, and /health endpoints.
 
-    CSRF Protection:
+    CSRF Protection (all modes):
     - Requires 'X-Requested-With' header for state-changing API requests (POST, PUT, DELETE, PATCH)
     - This prevents cross-site request forgery since browsers don't send custom headers
       in simple cross-origin requests without CORS preflight
+    - Local mode has no login, so this is the only thing stopping a web page
+      opened on the LAN from driving the API with bodyless POSTs (#145)
     """
 
     # Methods that require CSRF protection
@@ -262,8 +265,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
     CSRF_EXEMPT_PATHS = ["/login"]
 
     async def dispatch(self, request: Request, call_next):
-        # Skip all checks if not in production mode
+        # Local mode: no login, but the CSRF check still applies
         if not is_auth_enabled():
+            csrf_failure = self._csrf_failure(request)
+            if csrf_failure:
+                return csrf_failure
             return await call_next(request)
 
         # Allow these paths without authentication
@@ -275,7 +281,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         ]
 
         path = request.url.path
-        method = request.method
 
         # Check if path is public
         is_public = any(
@@ -302,23 +307,35 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return RedirectResponse(url="/login", status_code=303)
 
         # CSRF Protection for state-changing requests
-        if method in self.CSRF_PROTECTED_METHODS:
-            is_api_request = any(path.startswith(prefix) for prefix in self.API_PREFIXES)
-            is_csrf_exempt = any(path.startswith(exempt) for exempt in self.CSRF_EXEMPT_PATHS)
-
-            if is_api_request and not is_csrf_exempt:
-                # Require X-Requested-With header for API state-changing requests
-                requested_with = request.headers.get("X-Requested-With")
-                if requested_with != "XMLHttpRequest":
-                    from fastapi.responses import JSONResponse
-                    logger.warning(f"CSRF check failed for {method} {path} - missing X-Requested-With header")
-                    return JSONResponse(
-                        status_code=403,
-                        content={"detail": "CSRF validation failed. Include 'X-Requested-With: XMLHttpRequest' header."}
-                    )
+        csrf_failure = self._csrf_failure(request)
+        if csrf_failure:
+            return csrf_failure
 
         # Authenticated and CSRF valid, continue
         return await call_next(request)
+
+    def _csrf_failure(self, request: Request):
+        """Return a 403 response if a state-changing API request lacks the CSRF header, else None."""
+        path = request.url.path
+        method = request.method
+        if method not in self.CSRF_PROTECTED_METHODS:
+            return None
+
+        is_api_request = any(path.startswith(prefix) for prefix in self.API_PREFIXES)
+        is_csrf_exempt = any(path.startswith(exempt) for exempt in self.CSRF_EXEMPT_PATHS)
+        if not is_api_request or is_csrf_exempt:
+            return None
+
+        # Require X-Requested-With header for API state-changing requests
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return None
+
+        from fastapi.responses import JSONResponse
+        logger.warning(f"CSRF check failed for {method} {path} - missing X-Requested-With header")
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "CSRF validation failed. Include 'X-Requested-With: XMLHttpRequest' header."}
+        )
 
 
 def get_current_user(request: Request) -> dict:

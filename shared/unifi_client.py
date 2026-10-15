@@ -21,7 +21,8 @@ IDS_IPS_SUPPORTED_MODELS = {
     "UDR",          # UDR (Dream Router)
     "UDR7",         # UDR7 (Dream Router 7)
     "UDMA67A",      # UDR7 (Dream Router 7 - actual API model code)
-    "UDW",          # UDW (Dream Wall)
+    "UDMA6B9",      # UDR 5G Max (actual API model code, #149)
+    "UDW",         # UDW (Dream Wall)
     "UDMEA4C",      # UDM Beast (actual API model code, #139)
     # UXG series (Next-Gen Gateway)
     "UXG",          # UXG Lite (model code is just "UXG" not "UXGLITE")
@@ -52,6 +53,23 @@ IDS_IPS_SUPPORTED_MODELS = {
 # type 'udm' instead of 'ux', so we detect by model code too.
 EXPRESS_MODEL_CODES = {'UX', 'UXBSDM', 'UX7', 'UDMA69B'}
 
+
+def is_wifi_device(device: Dict) -> bool:
+    """
+    True for any device that serves Wi-Fi clients: standalone APs, Express in
+    AP-only mode, and gateways with built-in radios (UDR, UDR7, UDR 5G Max,
+    Express as gateway, #150). A gateway counts only when it reports radios,
+    so wired-only gateways (UDM Pro, UCG) are not listed as APs.
+    """
+    device_type = device.get('type', '')
+    if device_type == 'uap':
+        return True
+    model_code = (device.get('model') or '').upper()
+    is_express = device_type == 'ux' or model_code in EXPRESS_MODEL_CODES
+    if is_express and device.get('device_mode_override') == 'mesh':
+        return True
+    return device_type in ('udm', 'ux') and bool(device.get('radio_table'))
+
 # UniFi device model code to friendly name mapping
 class TrafficFlowsUnavailable(Exception):
     """The v2 traffic-flows request failed, as opposed to answering with no events."""
@@ -68,6 +86,7 @@ UNIFI_MODEL_NAMES = {
     "UDR": "UDR",
     "UDR7": "Dream Router 7",
     "UDMA67A": "Dream Router 7",
+    "UDMA6B9": "UDR 5G Max",
     "UDW": "UDW",
     # UXG series - Note: "UXG" is the model code for UXG Lite
     "UXG": "UXG Lite",
@@ -475,21 +494,15 @@ class UniFiClient:
                 # Convert to dictionary indexed by MAC, filter for APs
                 aps_dict = {}
                 for device in devices_list:
-                    device_type = device.get('type', '')
-                    model_code = device.get('model', '').upper()
-                    # Include regular APs and Express devices in AP-only mode
-                    is_express_ap = (
-                        (device_type == 'ux' or model_code in EXPRESS_MODEL_CODES)
-                        and device.get('device_mode_override') == 'mesh'
-                    )
-                    if device_type == 'uap' or is_express_ap:
+                    # APs, Express in AP-only mode, and gateways with built-in Wi-Fi
+                    if is_wifi_device(device):
                         mac = device.get('mac', '').lower()
                         if mac:
                             aps_dict[mac] = {
                                 'mac': mac,
                                 'name': device.get('name'),
                                 'model': device.get('model'),
-                                'type': 'uap' if is_express_ap else device_type
+                                'type': device.get('type', '')
                             }
 
                 return aps_dict
@@ -1213,16 +1226,11 @@ class UniFiClient:
 
                     for device in devices:
                         device_type = device.get('type', '')
-                        model_code = device.get('model', '').upper()
+                        is_ap = is_wifi_device(device)
 
-                        # Express in AP-only mode reports type "udm" — count as AP
-                        is_express_ap = (
-                            (device_type == 'ux' or model_code in EXPRESS_MODEL_CODES)
-                            and device.get('device_mode_override') == 'mesh'
-                        )
-
-                        # Count device types
-                        if device_type == 'uap' or is_express_ap:
+                        # Count device types. A gateway with built-in Wi-Fi
+                        # counts as an AP and is still picked as the gateway.
+                        if is_ap:
                             result['ap_count'] += 1
                         elif device_type == 'usw':
                             result['switch_count'] += 1
@@ -1264,7 +1272,8 @@ class UniFiClient:
                             'mac': device.get('mac'),
                             'state': device.get('state', 0),
                             'uptime': device.get('uptime'),
-                            'device_mode_override': device.get('device_mode_override')
+                            'device_mode_override': device.get('device_mode_override'),
+                            'is_ap': is_ap
                         })
 
             # If no gateway found, might be hosted/cloud controller
@@ -1746,14 +1755,9 @@ class UniFiClient:
                 # Filter for APs and extract relevant stats
                 aps = []
                 for device in devices:
-                    device_type = device.get('type', '')
                     model_code = device.get('model', '')
-                    # Include regular APs and Express devices in AP-only mode
-                    is_express_ap = (
-                        (device_type == 'ux' or model_code.upper() in EXPRESS_MODEL_CODES)
-                        and device.get('device_mode_override') == 'mesh'
-                    )
-                    if device_type == 'uap' or is_express_ap:
+                    # APs, Express in AP-only mode, and gateways with built-in Wi-Fi
+                    if is_wifi_device(device):
 
                         # Get radio info for channel
                         radio_table = device.get('radio_table', [])
