@@ -191,15 +191,16 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
-### v1.13.4 (on `:edge` 2026-10-15 — `eb33bc0` via PR #142, NOT yet tagged)
-- Rewritten by us from external PR #141 (@ChatziGeorge, co-author credit);
-  #141 stays open until 1.13.4 ships. Waiting on the contributor's `:edge`
-  re-test (comment 6180887711), then tag `v1.13.4` + `gh release create`,
-  close #141.
+### v1.13.4 (RELEASED 2026-10-15 — tag `v1.13.4` on `b8bb0e3`, `:latest`)
+- Rewritten by us from external PR #141 (@ChatziGeorge, co-author credit),
+  merged as `eb33bc0` via PR #142. The contributor re-tested `:edge` on a
+  fresh install (all 4 fixes OK, incl. 5 gateway-DNS networks); #141 closed
+  with the release.
 - Gateway as DHCP DNS: `P.gateway_ips()` — a network handing out its own
   gateway IP is not a conflict, not a same-subnet resolver, and is resolved
   through the Gateway zone (DNS Lockdown splits `gateway_resolvers` /
-  `peer_resolvers`). Unit-tested only: none of Chris's networks does this.
+  `peer_resolvers`). None of Chris's networks does this; verified on the
+  contributor's console only.
 - Wi-Fi tab: client counts by `wlanconf_id` (essid fallback; 43/43 clients
   on the UCG carry it), disabled SSIDs show 0, row shows the network name
   (`P.wlan_networks()` also reads per-password `private_preshared_keys`).
