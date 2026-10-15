@@ -2,7 +2,7 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
-## [1.13.4] - Unreleased
+## [1.13.4] - 2026-10-15
 
 ### Fixed
 - **House Arrest understands a network that uses the gateway as its DNS server.** When a network's DHCP DNS was set to the gateway's own address, House Arrest treated that address as a DNS server on the network itself. The Networks table warned that no firewall rule could filter it, DNS Lockdown warned that devices would lose DNS, and Internet only with the neighbour block refused to apply while it waited for a DNS server no device owns. The gateway's own addresses are now recognised as the gateway, and the Networks table shows them as "Gateway". The Networks table also stopped showing old DNS servers after the override is switched back to Auto, the same fix #136 made elsewhere. Thanks to @ChatziGeorge (#141).
