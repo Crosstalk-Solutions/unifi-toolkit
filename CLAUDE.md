@@ -191,6 +191,14 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
+### v1.13.6 (edge, unreleased — 2026-10-16)
+- House Arrest 0.15.16: mDNS toggle failed on every write on sites set to
+  "All networks" that also have a VPN network. `mdns_effective_ids()` expanded
+  "all" to every non-WAN network, which included a `site-vpn` id; the
+  controller rejects the whole list (`api.err.InvalidMulticastDnsNetwork`).
+  Now `P.MDNS_PURPOSES` (corporate, guest); mDNS cell not editable on other
+  purposes; router refuses adding one. Found on NOMAD2's `:edge`.
+
 ### v1.13.4 (RELEASED 2026-10-15 — tag `v1.13.4` on `b8bb0e3`, `:latest`)
 - Rewritten by us from external PR #141 (@ChatziGeorge, co-author credit),
   merged as `eb33bc0` via PR #142. The contributor re-tested `:edge` on a

@@ -2,6 +2,11 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
+## [1.13.6] - Unreleased
+
+### Fixed
+- **House Arrest's mDNS switch works on sites with a VPN network.** When the Gateway mDNS Proxy was set to "All networks", turning mDNS off for one network rebuilt the list from every network except the internet connections, which included Site Magic and other VPN networks. The controller won't put a VPN network on the mDNS list, so it refused the whole change and the switch failed every time with "The controller did not apply the mDNS scope change." The list now only includes local networks. The mDNS cell is no longer offered as a switch on VPN and transit networks, for the same reason.
+
 ## [1.13.5] - Unreleased
 
 ### Security

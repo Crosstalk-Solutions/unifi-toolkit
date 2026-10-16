@@ -1222,10 +1222,19 @@ Mechanics: `UniFiClient.get_global_network_config()` /
 always sends `{"mdns_enabled_for": "some", "mdns_enabled_for_network_ids":
 [...]}` (partial payload, measured sufficient 2026-09-16) and verifies by
 polling the stored list — never the 200. `mdns_effective_ids()` expands the
-current config: "some" → stored list [Measured]; "all" → every non-WAN
-network [Inferred from the UI's All-networks option, not measured — degrades
-gracefully because removing one network under "all" writes "some" with the
-rest]; anything else → empty.
+current config: "some" → stored list [Measured]; "all" → every LAN network
+(`MDNS_PURPOSES`: corporate, guest) — removing one network under "all" writes
+"some" with the rest; anything else → empty.
+
+**[Measured 2026-10-16, NOMAD2 against the home UCG]** "all" was first
+expanded to every non-WAN network. That swept in the Site Magic tunnel
+(`purpose: site-vpn`), and the controller refused the whole PUT: 400
+`api.err.InvalidMulticastDnsNetwork` naming that one id. So under "All
+networks" on any site with a VPN, no mDNS toggle could ever apply. Under
+"all" the controller's stored `mdns_enabled_for_network_ids` held exactly
+the two `corporate` networks. `guest` is inferred, not measured. The mDNS
+cell is now "—" and not editable on non-LAN purposes, and the router refuses
+adding one.
 
 **[Measured 2026-09-17]** Full round trip through the new code path on the
 home console: removed the OpenClaw lab VLAN from a 4-network scope, stored

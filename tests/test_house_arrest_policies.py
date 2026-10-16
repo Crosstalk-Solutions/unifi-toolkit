@@ -808,9 +808,12 @@ class TestMdnsScope:
     """The site-wide mDNS scope list, as the matrix toggle edits it."""
 
     NETWORKS = [
-        {"_id": "n1", "name": "Default"},
-        {"_id": "n2", "name": "IoT"},
+        {"_id": "n1", "name": "Default", "purpose": "corporate"},
+        {"_id": "n2", "name": "IoT", "purpose": "corporate", "vlan": 5},
+        {"_id": "g", "name": "Guest", "purpose": "guest", "vlan": 9},
         {"_id": "wan", "name": "WAN", "purpose": "wan"},
+        {"_id": "vpn", "name": "Home Office", "purpose": "site-vpn"},
+        {"_id": "t", "name": "ISP handoff", "purpose": "vlan-only", "vlan": 305},
     ]
 
     def test_some_returns_the_stored_list(self):
@@ -820,7 +823,20 @@ class TestMdnsScope:
 
     def test_all_expands_to_every_lan_network(self):
         cfg = {"mdns_enabled_for": "all"}
-        assert P.mdns_effective_ids(cfg, self.NETWORKS) == ["n1", "n2"]
+        assert P.mdns_effective_ids(cfg, self.NETWORKS) == ["n1", "n2", "g"]
+
+    def test_all_never_includes_vpn_or_transit(self):
+        # Measured 2026-10-16: one site-vpn id made the controller refuse the
+        # whole write, so no toggle under "All networks" could ever apply.
+        ids = P.mdns_effective_ids({"mdns_enabled_for": "all"}, self.NETWORKS)
+        assert "vpn" not in ids and "t" not in ids and "wan" not in ids
+
+    def test_matrix_mdns_not_offered_on_vpn_or_transit(self):
+        m = P.build_isolation_matrix(self.NETWORKS, [])
+        cells = {r["name"]: r["cells"]["mdns"] for r in m["rows"]}
+        for name in ("Home Office", "ISP handoff"):
+            assert cells[name]["label"] == "—" and not cells[name]["editable"]
+        assert cells["IoT"]["editable"]
 
     def test_none_and_missing_read_as_empty(self):
         assert P.mdns_effective_ids({"mdns_enabled_for": "none"}, self.NETWORKS) == []

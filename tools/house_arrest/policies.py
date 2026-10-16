@@ -1908,16 +1908,21 @@ def mdns_effective_ids(config: Optional[Dict], networks: List[Dict]) -> List[str
     The network ids the site-wide mDNS scope currently covers.
 
     `mdns_enabled_for` was measured as "some" with an explicit id list; "all"
-    is inferred from the UI's "All networks" option and expanded to every
-    non-WAN network so removing one network from it degrades gracefully to
-    "some" minus that network. Anything else (or a missing config) reads as
-    an empty scope — the caller then only ever ADDS, which is safe.
+    is expanded to every LAN network (`MDNS_PURPOSES`) so removing one
+    network from it degrades gracefully to "some" minus that network.
+    Anything else (or a missing config) reads as an empty scope — the caller
+    then only ever ADDS, which is safe.
+
+    MEASURED 2026-10-16: "all" used to expand to every non-WAN network, which
+    swept in a Site Magic tunnel (`purpose: site-vpn`). The controller refuses
+    the whole write for one such id (400 `api.err.InvalidMulticastDnsNetwork`),
+    so on any site with a VPN network no mDNS toggle could ever apply.
     """
     mode = (config or {}).get("mdns_enabled_for")
     if mode == "all":
         return [
             str(n["_id"]) for n in networks or []
-            if n.get("_id") and n.get("purpose") != "wan"
+            if n.get("_id") and n.get("purpose") in MDNS_PURPOSES
         ]
     if mode == "some":
         return [str(i) for i in (config or {}).get("mdns_enabled_for_network_ids") or []]
@@ -2152,16 +2157,24 @@ def build_isolation_matrix(
                 "devices on this network.")
         else:
             mdns_detail = "Service discovery does not cross this boundary."
-        cells["mdns"] = _cell(
-            "warn" if mdns else "good",
-            "On" if mdns else "Off",
-            mdns_detail
-            + " mDNS is one site-wide list (Settings -> Networks -> Gateway "
-              "mDNS Proxy -> Custom). Changing this cell adds or removes this "
-              "network from that shared list, the same edit the UniFi UI "
-              "makes.",
-            editable=True,
-        )
+        if n.get("purpose") not in MDNS_PURPOSES:
+            # The controller refuses a VPN id in the mDNS scope list
+            # (measured 2026-10-16), so this would be a switch it rejects.
+            cells["mdns"] = _cell(
+                "neutral", "—",
+                "mDNS forwarding only applies to local networks, not to VPN "
+                "or transit networks like this one.")
+        else:
+            cells["mdns"] = _cell(
+                "warn" if mdns else "good",
+                "On" if mdns else "Off",
+                mdns_detail
+                + " mDNS is one site-wide list (Settings -> Networks -> Gateway "
+                  "mDNS Proxy -> Custom). Changing this cell adds or removes "
+                  "this network from that shared list, the same edit the "
+                  "UniFi UI makes.",
+                editable=True,
+            )
 
         # DNS handed out by DHCP.
         #
@@ -2271,6 +2284,11 @@ GATEWAY_TYPES = ("udm", "ugw", "uxg")
 # picker listed exactly the `corporate` networks; `guest` is the other LAN
 # purpose UniFi uses and is included on the same footing.
 DEVICE_ISOLATION_PURPOSES = ("corporate", "guest")
+# Network purposes the Gateway mDNS Proxy scope can hold. Measured 2026-10-16:
+# a `site-vpn` id is refused (`api.err.InvalidMulticastDnsNetwork`), and under
+# "All networks" the controller's stored list was exactly the `corporate`
+# networks. `guest` is inferred on the same footing as Device Isolation.
+MDNS_PURPOSES = ("corporate", "guest")
 
 
 def acl_capable(device: Optional[Dict]) -> bool:

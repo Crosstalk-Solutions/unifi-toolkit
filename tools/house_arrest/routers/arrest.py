@@ -758,6 +758,13 @@ async def set_network_setting(req: NetworkSettingRequest):
             networks = await client.get_networks()
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
+        target = next((n for n in networks if n.get("_id") == req.network_id), None)
+        if req.value and (target or {}).get("purpose") not in P.MDNS_PURPOSES:
+            raise HTTPException(
+                status_code=400,
+                detail=("mDNS forwarding only applies to local networks, so "
+                        "this network can't be added. Nothing was changed."),
+            )
         current = P.mdns_effective_ids(config, networks)
         wanted = [i for i in current if i != req.network_id]
         if req.value:
