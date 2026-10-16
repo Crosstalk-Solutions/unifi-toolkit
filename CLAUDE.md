@@ -198,6 +198,13 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   controller rejects the whole list (`api.err.InvalidMulticastDnsNetwork`).
   Now `P.MDNS_PURPOSES` (corporate, guest); mDNS cell not editable on other
   purposes; router refuses adding one. Found on NOMAD2's `:edge`.
+- AP names: `UAP6MP` is the U6 Pro (was "U6 Mesh Pro" since v1.3.0); added
+  `U6MP` (Mesh Pro) and `U6M` (Mesh). Source of truth for model codes:
+  `https://static.ui.com/fingerprint/ui/public.json` (`sysid` + `shortnames`)
+  — match the device's `sysid` there rather than guessing from the code.
+- 1.13.5 fixes live-tested on NOMAD2 (local mode, 2026-10-16): #145 CSRF
+  403/404/200 as expected; #147 `/stalker/ws` handshake + ping/pong OK (no
+  device event during the listen). #149/#150 need a UDR 5G Max — untested.
 
 ### v1.13.4 (RELEASED 2026-10-15 — tag `v1.13.4` on `b8bb0e3`, `:latest`)
 - Rewritten by us from external PR #141 (@ChatziGeorge, co-author credit),

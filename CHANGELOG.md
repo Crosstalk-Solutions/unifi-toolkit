@@ -6,6 +6,7 @@ All notable changes to UI Toolkit will be documented in this file.
 
 ### Fixed
 - **House Arrest's mDNS switch works on sites with a VPN network.** When the Gateway mDNS Proxy was set to "All networks", turning mDNS off for one network rebuilt the list from every network except the internet connections, which included Site Magic and other VPN networks. The controller won't put a VPN network on the mDNS list, so it refused the whole change and the switch failed every time with "The controller did not apply the mDNS scope change." The list now only includes local networks. The mDNS cell is no longer offered as a switch on VPN and transit networks, for the same reason.
+- **The U6 Pro is no longer called a U6 Mesh Pro.** Its model code (`UAP6MP`) was mapped to the wrong name, so Network Pulse and Debug Info showed a U6 Pro as a "U6 Mesh Pro". The real U6 Mesh Pro (`U6MP`) and U6 Mesh (`U6M`) codes were missing and are now named too.
 
 ## [1.13.5] - Unreleased
 

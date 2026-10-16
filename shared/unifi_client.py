@@ -128,7 +128,11 @@ UNIFI_MODEL_NAMES = {
     "U6MESH": "U6 Mesh",
     "U6ENT": "U6 Enterprise",
     "U6ENTIWP": "U6 Enterprise In-Wall",
-    "UAP6MP": "U6 Mesh Pro",
+    # UAP6MP is the U6 Pro, not the Mesh Pro (sysid a650 in Ubiquiti's
+    # public.json; a live U6 Pro reports it). The Mesh Pro is U6MP (a6a1).
+    "UAP6MP": "U6 Pro",
+    "U6MP": "U6 Mesh Pro",
+    "U6M": "U6 Mesh",
     "UAPAC": "UAP AC",
     "UAPACLITE": "UAP AC Lite",
     "UAPACLR": "UAP AC LR",
