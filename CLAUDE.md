@@ -195,8 +195,10 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
 - DNS Lockdown upstream allow: an approved resolver ON a locked network
   gets `ALLOW src IP -> External :53` (+:853 with DoT) before the blocks.
   Locking Default with the Pi-holes on Default broke the studio's DNS.
-  Shape measured on the studio UCG; enabled-traffic effect NOT yet measured
-  (design doc "FIXED 2026-10-18").
+  Measured enabled on the studio UCG 2026-10-19: both Pi-holes resolved
+  fresh names while 1.1.1.1 was blocked (design doc "FIXED 2026-10-18").
+- DNS Lockdown offered on `corporate`/`guest` networks only
+  (`P.DNS_LOCKDOWN_PURPOSES`); a `site-vpn` network is refused server-side.
 - Saved DNS servers: House Arrest's FIRST DB table
   (`house_arrest_dns_servers`, migration `c7e1a4f9d2b6`). Cards + checkbox
   picker replace the resolver text box. The kind is cosmetic; card facts

@@ -2018,10 +2018,19 @@ same zone) are NOT covered; not seen in practice, left out on purpose.
 - Dry run of the failing case (both Pi-holes, Default) produced: LAN allow,
   upstream allow, LAN block, internet block, in that order.
 
-**Not yet measured:** that a Pi-hole on a locked network actually resolves
-with the rule ENABLED. Disproof: apply a Default lockdown with the studio
-Pi-holes and see `dig @192.168.4.79 example.com` fail from a Default client
-(with the Pi-hole's cache flushed, since a cached answer proves nothing).
+**MEASURED 2026-10-19 (enabled, studio UCG, `:edge` 1b6115f on NOMAD2):**
+applied a real Default lockdown (both Pi-holes approved, no DHCP change,
+no DoT) through NOMAD2's toolkit API. Stored Internal->External indexes:
+upstream ALLOW 10001 ahead of the internet BLOCK 10002. From NOMAD2 (on
+Default), each probe used a never-asked name (`ha<random>.1.2.3.4.nip.io`)
+so the Pi-hole had to go upstream; this replaces a cache flush.
+- Baseline before applying: .79, .50 and 1.1.1.1 all answered `1.2.3.4`.
+- Locked, at t+10s, 30s and 60s: .79 and .50 answered `1.2.3.4` (exit 0)
+  every time; the control `@1.1.1.1` timed out (exit 9) every time, so the
+  lockdown was enforcing.
+- State showed the Default lockdown with `upstream_resolvers` [.79, .50].
+- Released (4 rules deleted); 20s later 1.1.1.1 answered again.
+Not tested: the `:853` variant (block DoT on).
 
 ## BUILT 2026-10-18: saved DNS servers (cards) and the checkbox picker
 
