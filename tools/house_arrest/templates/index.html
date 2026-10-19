@@ -394,6 +394,79 @@
 
     </section>
 
+    <!-- The user's DNS servers, added once and picked in every lockdown.
+         Only name, kind and admin link are saved; every line on a card is
+         read live from the controller, so a card can't go stale. -->
+    <section class="card" x-show="tab === 'dns'">
+        <div class="card-head">
+            <h2>Your DNS servers</h2>
+            <button class="btn btn-secondary btn-sm head-action" type="button" @click="openServer(null)">+ Add DNS server</button>
+        </div>
+        <p class="card-note" x-text="dnsServers.length
+            ? 'The DNS servers your networks are allowed to use. Add them once here, then pick them when you set up a DNS Lockdown.'
+            : (dnsSuggestions.length
+                ? 'Your networks already hand out these DNS servers through DHCP. Add the ones you trust, then pick them when you set up a DNS Lockdown.'
+                : 'Add the DNS servers your networks are allowed to use, such as a Pi-hole or AdGuard Home. Then pick them when you set up a DNS Lockdown.')"></p>
+        <p class="hint" x-show="dnsServersError" x-text="'Couldn\'t read the controller, so the details on each card are missing: ' + dnsServersError"></p>
+        <div class="servers">
+            <template x-for="s in dnsSuggestions" :key="'sug-' + s.ip">
+                <article class="server is-suggested">
+                    <div class="server-top">
+                        <div class="server-logo"><img :src="logoSrc('generic')" alt="" width="30" height="30"></div>
+                        <div>
+                            <div class="suggest-tag">Found in DHCP</div>
+                            <div class="server-type">Not added yet</div>
+                        </div>
+                    </div>
+                    <div class="server-ip" x-text="s.ip"></div>
+                    <ul class="server-facts">
+                        <li><span x-text="'Handed out by DHCP on ' + s.dhcp_networks.join(', ')"></span></li>
+                    </ul>
+                    <div class="server-foot">
+                        <button class="btn btn-primary btn-sm" type="button" @click="openServer(null, s.ip)">Add this DNS server</button>
+                    </div>
+                </article>
+            </template>
+            <template x-for="s in dnsServers" :key="'srv-' + s.id">
+                <article class="server">
+                    <div class="server-top">
+                        <div class="server-logo"><img :src="logoSrc(s.kind)" alt="" width="30" height="30"></div>
+                        <div class="server-id">
+                            <div class="server-name" x-text="s.name"></div>
+                            <div class="server-type" x-text="kindLabel(s.kind)"></div>
+                        </div>
+                    </div>
+                    <div class="server-ip" x-text="s.ip"></div>
+                    <ul class="server-facts" x-show="s.on_internet !== null">
+                        <li x-text="serverWhere(s)"></li>
+                        <li x-text="s.dhcp_networks && s.dhcp_networks.length
+                                    ? 'Handed out by DHCP on ' + s.dhcp_networks.join(', ')
+                                    : 'Not handed out by DHCP'"></li>
+                        <li x-text="s.lockdowns && s.lockdowns.length
+                                    ? 'Approved in the DNS Lockdown on ' + s.lockdowns.join(', ')
+                                    : 'Not in a DNS Lockdown yet'"></li>
+                        <li x-show="s.upstream_lockdowns && s.upstream_lockdowns.length">Allowed to look up names on the internet</li>
+                    </ul>
+                    <div class="server-foot">
+                        <template x-if="s.admin_url">
+                            <a class="admin-link" :href="safeUrl(s.admin_url)" target="_blank" rel="noopener"
+                               x-text="'Open ' + kindLabel(s.kind) + ' admin ↗'"></a>
+                        </template>
+                        <template x-if="!s.admin_url">
+                            <span class="muted small">No admin page</span>
+                        </template>
+                        <button class="link-btn" type="button" @click="openServer(s)" :aria-label="'Edit ' + s.name">Edit</button>
+                    </div>
+                </article>
+            </template>
+            <button class="add-tile" type="button" @click="openServer(null)">
+                <span class="add-plus">+</span>
+                <strong>Add DNS server</strong>
+                <span class="small">Pi-hole, AdGuard Home, or any other</span>
+            </button>
+        </div>
+    </section>
+
     <section class="card" x-show="tab === 'dns'" role="tabpanel">
         <div class="card-head">
             <h2>DNS Lockdown</h2>
@@ -457,16 +530,26 @@
         <div class="dns-workbench">
         <div class="dns-form">
             <div class="dns-field">
-                <label for="dns-resolvers">Approved DNS servers</label>
-                <input id="dns-resolvers" type="text" x-model="dnsResolvers"
-                       @input="dnsPreview = null">
+                <label>Approved DNS servers</label>
+                <div class="net-picker">
+                    <template x-for="s in dnsServers" :key="'pick-' + s.id">
+                        <label class="net-option">
+                            <input type="checkbox" :value="s.ip" x-model="dnsPicked"
+                                   @change="dnsPreview = null; dhcpPreview = null">
+                            <img class="pick-logo" :src="logoSrc(s.kind)" alt="" width="18" height="18">
+                            <span x-text="s.name"></span>
+                            <span class="pick-ip mono" x-text="s.ip"></span>
+                        </label>
+                    </template>
+                    <span class="hint" x-show="!dnsServers.length" style="margin:0">No DNS servers yet.</span>
+                    <button class="pick-add" type="button" @click="openServer(null)">+ Add DNS server</button>
+                </div>
                 <div class="hint">
-                    One or more IP addresses, comma separated. Every device on the
-                    networks you choose below can use only these DNS servers.
+                    Every device on the networks you choose below can use only these DNS servers.
                 </div>
             </div>
             <div class="dns-field">
-                <label>Networks that must use your approved DNS servers</label>
+                <label>Networks to lock down</label>
                 <div class="net-picker">
                     <template x-for="n in networks" :key="n.id">
                         <label class="net-option" :class="{ 'is-taken': dnsLockedIds().includes(n.id) }">
@@ -485,6 +568,15 @@
                     </template>
                 </div>
             </div>
+
+            <!-- Step 1's fix, said before review: a ticked DNS server on a
+                 ticked network gets its own way out to internet DNS. -->
+            <template x-if="upstreamNotice()">
+                <div class="notice info">
+                    <strong x-text="upstreamNotice().who + ' ' + (upstreamNotice().one ? 'is' : 'are') + ' on ' + upstreamNotice().nets + ', a network you are locking.'"></strong>
+                    <span x-text="(upstreamNotice().one ? 'It still needs' : 'They still need') + ' to look names up on the internet, so House Arrest adds a rule that lets ' + (upstreamNotice().one ? 'it' : 'them') + ' out. Without that rule, every device would lose DNS.'"></span>
+                </div>
+            </template>
 
 
         <!-- The other half of a DNS lockdown, and the likeliest way to take a
@@ -1266,6 +1358,59 @@
         <a href="https://github.com/Crosstalk-Solutions/unifi-toolkit/blob/main/docs/HOUSE-ARREST.md"
            target="_blank" rel="noopener">Docs</a>
     </p>
+
+    <!-- Add / edit one DNS server. The kind only picks the logo and the
+         default admin link; no rule depends on it. -->
+    <dialog class="server-dialog" x-ref="serverDialog" @close="serverForm = null" aria-labelledby="server-dialog-title">
+        <template x-if="serverForm">
+            <form class="server-form" @submit.prevent="saveServer()" novalidate>
+                <h3 id="server-dialog-title" x-text="serverForm.id ? 'Edit ' + serverForm.originalName : 'Add DNS server'"></h3>
+                <div>
+                    <label for="srv-ip">IP address</label>
+                    <input id="srv-ip" type="text" class="mono" autocomplete="off" inputmode="decimal"
+                           x-model="serverForm.ip" @input="syncAdminUrl()">
+                </div>
+                <div>
+                    <label for="srv-name">Name</label>
+                    <input id="srv-name" type="text" autocomplete="off" x-model="serverForm.name">
+                    <div class="hint">Shown on the card and in the DNS Lockdown list.</div>
+                </div>
+                <div>
+                    <label id="srv-kind-label">What is it?</label>
+                    <div class="kind-grid" role="radiogroup" aria-labelledby="srv-kind-label">
+                        <template x-for="k in ['pihole', 'adguard', 'generic']" :key="k">
+                            <label class="kind-opt">
+                                <input type="radio" name="srv-kind" :value="k" x-model="serverForm.kind"
+                                       @change="serverForm.adminTouched = false; syncAdminUrl()">
+                                <span>
+                                    <img :src="logoSrc(k)" alt="" width="28" height="28">
+                                    <span x-text="k === 'generic' ? 'Other' : kindLabel(k)"></span>
+                                </span>
+                            </label>
+                        </template>
+                    </div>
+                </div>
+                <div x-show="serverForm.kind !== 'generic'">
+                    <label for="srv-admin">Admin page</label>
+                    <input id="srv-admin" type="text" class="mono" autocomplete="off"
+                           x-model="serverForm.admin_url" @input="serverForm.adminTouched = true">
+                    <div class="hint">Filled in for you. Change it if your admin page uses a different port or path.</div>
+                </div>
+                <p class="server-error" x-show="serverForm.error" x-text="serverForm.error"></p>
+                <div class="server-form-foot">
+                    <button type="button" class="btn btn-danger btn-sm" x-show="serverForm.id"
+                            :disabled="serverForm.usedBy.length > 0 || serverForm.saving"
+                            @click="removeServer()">Remove</button>
+                    <span class="spacer"></span>
+                    <button type="button" class="btn btn-secondary btn-sm" @click="closeServer()">Cancel</button>
+                    <button type="submit" class="btn btn-primary btn-sm" :disabled="serverForm.saving"
+                            x-text="serverForm.saving ? 'Saving…' : 'Save'"></button>
+                    <p class="hint remove-note" x-show="serverForm.usedBy.length"
+                       x-text="'Used by the DNS Lockdown on ' + serverForm.usedBy.join(', ') + '. Release that lockdown before removing it or changing its address.'"></p>
+                </div>
+            </form>
+        </template>
+    </dialog>
 </div>
 
 <script src="/static/js/report-issue.js?v={{ version }}"></script>

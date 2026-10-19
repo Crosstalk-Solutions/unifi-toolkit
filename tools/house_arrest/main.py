@@ -11,6 +11,7 @@ from tools.house_arrest import __version__
 from tools.house_arrest import policies as P
 from tools.house_arrest.routers import arrest
 from tools.house_arrest.models import SystemStatus
+from tools.house_arrest.database import DnsServer  # noqa: F401 - registers the table for create_all
 from shared.unifi_session import get_shared_client
 
 logger = logging.getLogger(__name__)

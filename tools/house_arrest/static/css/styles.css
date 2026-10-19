@@ -1542,3 +1542,136 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
 .modal-figure { margin: 0.9rem 0 0; }
 
 
+
+/* ---------- Your DNS servers ----------
+   One card per saved server. The logo is the only colour that varies by
+   kind; borders and text stay in the house palette. Suggested cards (found
+   in DHCP, not added yet) are dashed so they never read as configured. */
+.servers {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 0.9rem;
+}
+.server {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1rem 1rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    background: var(--surface);
+    min-width: 0;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.server:hover {
+    border-color: color-mix(in srgb, var(--primary-color) 45%, var(--border-color));
+    box-shadow: var(--shadow-lg);
+}
+.server.is-suggested { border-style: dashed; background: var(--surface-sunken); }
+.server.is-suggested:hover { box-shadow: none; }
+.server-top { display: flex; gap: 0.75rem; align-items: center; min-width: 0; }
+.server-logo {
+    width: 44px; height: 44px; flex: none;
+    border-radius: 10px;
+    background: var(--surface-sunken);
+    display: grid; place-items: center;
+}
+.server-logo img { width: 30px; height: 30px; object-fit: contain; }
+.server-id { min-width: 0; }
+.server-name { font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
+.server-type { font-size: 0.78rem; color: var(--text-secondary); }
+.suggest-tag {
+    font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--primary-color);
+}
+.server-ip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 1.15rem;
+    letter-spacing: -0.01em;
+}
+.server-facts {
+    margin: 0; padding: 0 0 0 1rem;
+    display: grid; gap: 0.2rem;
+    font-size: 0.82rem; color: var(--text-secondary);
+}
+.server-foot {
+    display: flex; gap: 0.5rem; align-items: center;
+    margin-top: auto; padding-top: 0.7rem;
+    border-top: 1px solid var(--border-color);
+}
+.admin-link {
+    font-size: 0.85rem; font-weight: 600;
+    color: var(--primary-color); text-decoration: none;
+}
+.admin-link:hover { text-decoration: underline; }
+.link-btn {
+    margin-left: auto;
+    background: transparent; border: 1px solid transparent; border-radius: 8px;
+    color: var(--text-secondary);
+    padding: 0.3rem 0.6rem;
+    font: inherit; font-size: 0.82rem; cursor: pointer;
+}
+.link-btn:hover { border-color: var(--border-color); color: var(--text-primary); }
+.link-btn:focus-visible, .admin-link:focus-visible, .add-tile:focus-visible, .pick-add:focus-visible {
+    outline: 2px solid var(--primary-color); outline-offset: 2px;
+}
+.add-tile {
+    border: 1.5px dashed var(--border-color);
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-secondary);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.3rem; min-height: 160px; padding: 1rem;
+    font: inherit; cursor: pointer;
+}
+.add-tile:hover { border-color: var(--primary-color); color: var(--primary-color); }
+.add-plus { font-size: 1.6rem; line-height: 1; }
+
+/* The lockdown picker's server rows and its inline add button. */
+.pick-logo { width: 18px; height: 18px; flex: none; object-fit: contain; }
+.pick-ip { margin-left: auto; color: var(--text-secondary); font-size: 0.8rem; }
+.pick-add {
+    justify-self: start;
+    background: transparent; border: 0; padding: 0.15rem 0;
+    color: var(--primary-color);
+    font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+}
+.notice.info {
+    background: color-mix(in srgb, var(--primary-color) 7%, var(--surface));
+    border-color: color-mix(in srgb, var(--primary-color) 35%, var(--border-color));
+    margin: 0 0 1rem;
+}
+.notice.info strong { display: block; }
+
+/* Add / edit dialog. */
+.server-dialog {
+    border: 0; border-radius: 14px; padding: 0;
+    width: min(460px, calc(100vw - 32px));
+    background: var(--surface); color: var(--text-primary);
+    box-shadow: var(--shadow-lg);
+}
+.server-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
+.server-form { padding: 1.25rem 1.4rem 1.2rem; display: grid; gap: 1rem; }
+.server-form h3 { margin: 0; font-size: 1.05rem; }
+.server-form .hint { margin-top: 0.3rem; }
+.kind-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+.kind-opt { position: relative; margin: 0; font-weight: 400; }
+.kind-opt input { position: absolute; opacity: 0; inset: 0; }
+.kind-opt > span {
+    display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+    padding: 0.7rem 0.4rem 0.55rem;
+    border: 1px solid var(--border-color); border-radius: 10px;
+    font-size: 0.8rem; font-weight: 600; text-align: center; cursor: pointer;
+}
+.kind-opt img { width: 28px; height: 28px; object-fit: contain; }
+.kind-opt input:checked + span {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 6%, var(--surface));
+}
+.kind-opt input:focus-visible + span { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.server-error { color: var(--danger-color); font-size: 0.85rem; margin: 0; }
+.server-form-foot { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.server-form-foot .spacer { flex: 1; }
+.remove-note { flex-basis: 100%; margin: 0; }

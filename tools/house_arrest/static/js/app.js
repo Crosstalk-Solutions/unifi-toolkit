@@ -13,7 +13,14 @@ function houseArrest() {
         // Tab is remembered so a refresh does not bounce you back to the
         // first section mid-task.
         tab: 'networks',
-        dnsResolvers: '',
+        // Saved DNS servers (the cards) and which of them are ticked in the
+        // lockdown picker. The picker sends IPs; the cards are only a name
+        // for them, so the lockdown itself never depends on this list.
+        dnsServers: [],
+        dnsSuggestions: [],
+        dnsServersError: null,
+        dnsPicked: [],
+        serverForm: null,
         dnsNetworks: [],
         dnsBlockDot: false,
         dnsPreview: null,
@@ -84,6 +91,7 @@ function houseArrest() {
 
             await this.refresh();
             this.loadNetworks();
+            this.loadDnsServers();
             this.loadWlans();
             this.loadInspection();
             setInterval(() => this.refresh(true), 60000);
@@ -150,9 +158,154 @@ function houseArrest() {
             return this.dnsNetworks.length > 0 && this.dnsResolverList().length > 0;
         },
 
+        // Ticked servers, in card order (DHCP hands them out in this order).
         dnsResolverList() {
-            return (this.dnsResolvers || '')
-                .split(/[\s,]+/).filter(Boolean);
+            return this.dnsServers
+                .filter(s => this.dnsPicked.includes(s.ip))
+                .map(s => s.ip);
+        },
+
+        // ---- saved DNS servers ----
+
+        async loadDnsServers() {
+            try {
+                const res = await fetch('api/dns-servers');
+                if (!res.ok) return;
+                const data = await res.json();
+                this.dnsServers = data.servers || [];
+                this.dnsSuggestions = data.suggestions || [];
+                this.dnsServersError = data.error || null;
+                // Drop ticks for servers that were removed.
+                const ips = this.dnsServers.map(s => s.ip);
+                this.dnsPicked = this.dnsPicked.filter(ip => ips.includes(ip));
+            } catch (e) {
+                /* the picker stays as it was; the page still works */
+            }
+        },
+
+        KIND_LABELS: { pihole: 'Pi-hole', adguard: 'AdGuard Home', generic: 'DNS server' },
+
+        kindLabel(kind) {
+            return this.KIND_LABELS[kind] || this.KIND_LABELS.generic;
+        },
+
+        logoSrc(kind) {
+            const k = this.KIND_LABELS[kind] ? kind : 'generic';
+            return '/arrest/static/images/logo-' + k + '.svg?v=' + this.assetVersion;
+        },
+
+        // The server refuses anything but http(s); this is the second lock,
+        // since the value ends up in an href.
+        safeUrl(url) {
+            return /^https?:\/\//i.test(url || '') ? url : '#';
+        },
+
+        serverWhere(s) {
+            if (s.is_gateway) return 'This is your gateway';
+            if (s.on_internet) return 'On the internet';
+            return 'On ' + s.network_name + (s.vlan !== null ? ' (VLAN ' + s.vlan + ')' : ' (untagged)');
+        },
+
+        // Ticked servers that sit on a ticked network. They get their own
+        // allow out to internet DNS (see the DNS Lockdown router); saying so
+        // before review is what stops it looking like magic, or a mistake.
+        upstreamNotice() {
+            const hits = this.dnsServers.filter(s =>
+                this.dnsPicked.includes(s.ip) && s.network_id && this.dnsNetworks.includes(s.network_id));
+            if (!hits.length) return null;
+            const join = a => a.length <= 2 ? a.join(' and ')
+                : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+            const nets = [...new Set(hits.map(s => s.network_name))];
+            return { who: join(hits.map(s => s.name)), nets: join(nets), one: hits.length === 1 };
+        },
+
+        defaultAdminUrl(kind, ip) {
+            if (kind === 'pihole') return 'http://' + ip + '/admin';
+            if (kind === 'adguard') return 'http://' + ip + '/';
+            return '';
+        },
+
+        openServer(s, presetIp) {
+            this.serverForm = s ? {
+                id: s.id, ip: s.ip, name: s.name, kind: s.kind, admin_url: s.admin_url,
+                originalName: s.name,
+                adminTouched: !!s.admin_url && s.admin_url !== this.defaultAdminUrl(s.kind, s.ip),
+                usedBy: s.lockdowns || [], error: null, saving: false,
+            } : {
+                id: null, ip: presetIp || '', name: '', kind: 'pihole', admin_url: '',
+                originalName: '', adminTouched: false, usedBy: [], error: null, saving: false,
+            };
+            this.syncAdminUrl();
+            this.$refs.serverDialog.showModal();
+            this.$nextTick(() => {
+                const el = document.getElementById(presetIp || s ? 'srv-name' : 'srv-ip');
+                if (el) el.focus();
+            });
+        },
+
+        closeServer() {
+            this.$refs.serverDialog.close();
+        },
+
+        // Keep the admin link in step with the IP and kind until the user
+        // types their own.
+        syncAdminUrl() {
+            const f = this.serverForm;
+            if (!f || f.adminTouched) return;
+            f.admin_url = this.defaultAdminUrl(f.kind, (f.ip || '').trim() || '192.168.x.x');
+        },
+
+        async saveServer() {
+            const f = this.serverForm;
+            f.error = null;
+            f.saving = true;
+            try {
+                const res = await fetch(f.id ? 'api/dns-servers/' + f.id : 'api/dns-servers', {
+                    method: f.id ? 'PUT' : 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    body: JSON.stringify({
+                        ip: (f.ip || '').trim(), name: f.name, kind: f.kind,
+                        admin_url: f.kind === 'generic' ? '' : f.admin_url,
+                    }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    f.error = data.detail || 'Could not save that DNS server.';
+                    return;
+                }
+                // A server added from the lockdown picker is wanted there.
+                if (!f.id && !this.dnsPicked.includes(data.ip)) this.dnsPicked.push(data.ip);
+                if (f.id && f.ip !== data.ip) {
+                    this.dnsPicked = this.dnsPicked.map(ip => ip === f.ip ? data.ip : ip);
+                }
+                this.dnsPreview = null;
+                this.closeServer();
+                await this.loadDnsServers();
+            } finally {
+                if (this.serverForm) this.serverForm.saving = false;
+            }
+        },
+
+        async removeServer() {
+            const f = this.serverForm;
+            f.error = null;
+            f.saving = true;
+            try {
+                const res = await fetch('api/dns-servers/' + f.id, {
+                    method: 'DELETE',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    f.error = data.detail || 'Could not remove that DNS server.';
+                    return;
+                }
+                this.dnsPreview = null;
+                this.closeServer();
+                await this.loadDnsServers();
+            } finally {
+                if (this.serverForm) this.serverForm.saving = false;
+            }
         },
 
         async dnsDryRun() {
@@ -318,6 +471,7 @@ function houseArrest() {
             await this.refresh();
             await this.loadInspection();
             await this.loadNetworks();
+            await this.loadDnsServers();
         },
 
         async refresh(quiet = false) {

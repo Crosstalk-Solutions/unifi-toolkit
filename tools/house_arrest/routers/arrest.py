@@ -11,14 +11,22 @@ Safety rules enforced here, not in the UI:
 import logging
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.database import get_db_session
 from shared.unifi_session import get_shared_client
 from tools.house_arrest import policies as P
+from tools.house_arrest.database import DnsServer
 from tools.house_arrest.models import (
     ArrestSummary,
     BlockedFlow,
     ClientInfo,
+    DnsServerIn,
+    DnsServerInfo,
+    DnsServersResponse,
+    DnsServerSuggestion,
     DnsLockdownEntry,
     DnsLockdownRequest,
     DnsLockdownResponse,
@@ -1114,14 +1122,19 @@ async def dns_lockdown(req: DnsLockdownRequest):
     # these rules are about to block. Leads the caveats because it is the one
     # that actually breaks the network.
     caveats = P.dhcp_dns_conflicts(chosen, req.resolver_ips, networks)
-    caveats += [
-        f"{ip} is on {net}, one of the networks you're locking. DNS Lockdown "
-        f"adds a rule that lets {ip} keep looking names up on the internet. "
-        f"Devices on {net} reach {ip} without passing the gateway, so they "
-        f"could also use any other DNS server on {net}. DNS servers on the "
-        f"internet stay blocked for them."
-        for ip, net in on_locked
-    ]
+    by_net: Dict[str, List[str]] = {}
+    for ip, net in on_locked:
+        by_net.setdefault(net, []).append(ip)
+    for net, ips in by_net.items():
+        who = " and ".join(ips) if len(ips) <= 2 else ", ".join(ips[:-1]) + " and " + ips[-1]
+        one = len(ips) == 1
+        caveats.append(
+            f"{who} {'is' if one else 'are'} on {net}, one of the networks you're "
+            f"locking. DNS Lockdown adds a rule that lets {'it' if one else 'them'} "
+            f"keep looking names up on the internet. Devices on {net} reach "
+            f"{'it' if one else 'them'} without passing the gateway, so they could "
+            f"also use any other DNS server on {net}. DNS servers on the internet "
+            f"stay blocked for them.")
     caveats += list(P.DNS_CAVEATS)
     if gateway_resolvers:
         caveats.append(
@@ -1269,6 +1282,122 @@ async def dns_release(label: Optional[str] = None):
         if pid and await client.delete_firewall_policy(pid):
             removed.append(pol)
     return DnsLockdownResponse(dry_run=False, created=removed)
+
+
+# ---- Saved DNS servers ----
+#
+# The cards at the top of the DNS tab. Only name, kind and admin link are
+# stored; everything a card says about the network is read live, so a card
+# can't contradict the controller. Removing a card never touches a rule.
+
+def _clean_server(body: DnsServerIn) -> Dict:
+    ip = (body.ip or "").strip()
+    try:
+        P.check_resolver_ips([ip])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    kind = body.kind if body.kind in P.DNS_SERVER_KINDS else "generic"
+    try:
+        admin = P.check_admin_url(body.admin_url) if kind != "generic" else ""
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    names = {"pihole": "Pi-hole", "adguard": "AdGuard Home", "generic": "DNS server"}
+    return {
+        "ip": ip,
+        "name": (body.name or "").strip() or f"{names[kind]} {ip}",
+        "kind": kind,
+        "admin_url": admin or P.default_admin_url(kind, ip),
+    }
+
+
+async def _controller_dns_view():
+    """(networks, policies, error) for the card facts; error is None on success."""
+    client, err = await _client_or_error()
+    if err:
+        return [], [], err
+    try:
+        return await client.get_networks(), await client.get_firewall_policies(), None
+    except Exception as e:
+        return [], [], str(e)
+
+
+@router.get("/dns-servers", response_model=DnsServersResponse)
+async def list_dns_servers(db: AsyncSession = Depends(get_db_session)):
+    rows = (await db.execute(select(DnsServer).order_by(DnsServer.id))).scalars().all()
+    networks, policies, err = await _controller_dns_view()
+    servers = []
+    for r in rows:
+        info = DnsServerInfo(id=r.id, ip=r.ip, name=r.name, kind=r.kind,
+                             admin_url=r.admin_url or "")
+        if err is None:
+            for k, v in P.dns_server_facts(r.ip, networks, policies).items():
+                setattr(info, k, v)
+        servers.append(info)
+    suggestions = [] if err else [
+        DnsServerSuggestion(**s)
+        for s in P.dhcp_suggestions(networks, [r.ip for r in rows])
+    ]
+    return DnsServersResponse(servers=servers, suggestions=suggestions, error=err)
+
+
+@router.post("/dns-servers", response_model=DnsServerInfo)
+async def add_dns_server(body: DnsServerIn, db: AsyncSession = Depends(get_db_session)):
+    data = _clean_server(body)
+    dup = (await db.execute(select(DnsServer).where(DnsServer.ip == data["ip"]))).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409,
+                            detail=f"{data['ip']} is already on your list as {dup.name}.")
+    row = DnsServer(**data)
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return DnsServerInfo(id=row.id, ip=row.ip, name=row.name, kind=row.kind,
+                         admin_url=row.admin_url or "")
+
+
+@router.put("/dns-servers/{server_id}", response_model=DnsServerInfo)
+async def edit_dns_server(server_id: int, body: DnsServerIn,
+                          db: AsyncSession = Depends(get_db_session)):
+    row = await db.get(DnsServer, server_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="That DNS server is no longer on your list.")
+    data = _clean_server(body)
+    if data["ip"] != row.ip:
+        dup = (await db.execute(select(DnsServer).where(DnsServer.ip == data["ip"]))).scalar_one_or_none()
+        if dup:
+            raise HTTPException(status_code=409,
+                                detail=f"{data['ip']} is already on your list as {dup.name}.")
+        # Changing the address of a server a lockdown approves would leave the
+        # card and the rules disagreeing about which address is approved.
+        _, policies, err = await _controller_dns_view()
+        used = [] if err else P.dns_server_facts(row.ip, [], policies)["lockdowns"]
+        if used:
+            raise HTTPException(status_code=409, detail=(
+                f"{row.ip} is approved in the DNS Lockdown on {', '.join(used)}. "
+                "Release that lockdown before changing the address."))
+    for k, v in data.items():
+        setattr(row, k, v)
+    await db.commit()
+    return DnsServerInfo(id=row.id, ip=row.ip, name=row.name, kind=row.kind,
+                         admin_url=row.admin_url or "")
+
+
+@router.delete("/dns-servers/{server_id}")
+async def remove_dns_server(server_id: int, db: AsyncSession = Depends(get_db_session)):
+    row = await db.get(DnsServer, server_id)
+    if row is None:
+        return {"deleted": False}
+    # Refused only when a lockdown is KNOWN to use it. Removing a card
+    # changes no rule, so an unreadable controller doesn't block it.
+    _, policies, err = await _controller_dns_view()
+    used = [] if err else P.dns_server_facts(row.ip, [], policies)["lockdowns"]
+    if used:
+        raise HTTPException(status_code=409, detail=(
+            f"Used by the DNS Lockdown on {', '.join(used)}. "
+            "Release that lockdown first."))
+    await db.delete(row)
+    await db.commit()
+    return {"deleted": True}
 
 
 @router.get("/networks", response_model=List[NetworkInfo])

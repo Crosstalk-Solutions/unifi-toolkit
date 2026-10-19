@@ -4,7 +4,11 @@ All notable changes to UI Toolkit will be documented in this file.
 
 ## [1.13.6] - Unreleased
 
+### Added
+- **House Arrest keeps a list of your DNS servers.** The DNS Lockdown tab now opens with a card for each DNS server your networks are allowed to use. Add each one once, with a name and its type (Pi-hole, AdGuard Home or Other). Pi-hole and AdGuard Home cards link to the server's admin page, at an address you can edit. Each card shows which network the server is on, which networks hand it out through DHCP, and which DNS Lockdowns approve it. On a first visit, the tab offers the DNS servers your networks already hand out. Setting up a DNS Lockdown now means ticking DNS servers instead of typing addresses.
+
 ### Fixed
+- **DNS Lockdown no longer cuts off a Pi-hole on the network it serves.** Locking down the network your Pi-hole or AdGuard Home server lives on also blocked that server's own lookups on the internet, so every device on the network lost DNS. DNS Lockdown now adds a rule that lets that DNS server keep looking names up, and the tab says so before you review. The lockdown list also showed only some of the approved DNS servers when a lockdown had both local and internet ones. It now shows all of them.
 - **House Arrest's mDNS switch works on sites with a VPN network.** When the Gateway mDNS Proxy was set to "All networks", turning mDNS off for one network rebuilt the list from every network except the internet connections, which included Site Magic and other VPN networks. The controller won't put a VPN network on the mDNS list, so it refused the whole change and the switch failed every time with "The controller did not apply the mDNS scope change." The list now only includes local networks. The mDNS cell is no longer offered as a switch on VPN and transit networks, for the same reason.
 - **The U6 Pro is no longer called a U6 Mesh Pro.** Its model code (`UAP6MP`) was mapped to the wrong name, so Network Pulse and Debug Info showed a U6 Pro as a "U6 Mesh Pro". The real U6 Mesh Pro (`U6MP`) and U6 Mesh (`U6M`) codes were missing and are now named too.
 

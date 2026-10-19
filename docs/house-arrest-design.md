@@ -1982,3 +1982,73 @@ ALLOW in Internal -> Internal, cloned from Chris's own Home Assistant rule,
 was accepted with `create_allow_respond: true` and UniFi generated the
 `(Return)` policy. The original error was seen on a different source shape;
 which shapes are refused is unmeasured.
+
+## FIXED 2026-10-18: a resolver on a locked network lost its own upstream
+
+**Reported (Chris, studio UCG):** a DNS Lockdown on Default, with both
+Pi-holes (192.168.4.79, .50) living on Default, broke DNS for everything.
+Undone by hand at the time.
+
+**Cause (Read from the rules, not measured as traffic):** every DNS Lockdown
+block sources the chosen NETWORKS. A Pi-hole on one of them sends its own
+upstream queries from that network, so "block other DNS (internet)" matched
+them. The old code noticed the resolver was on a locked network, but the
+caveat only said "DNS Lockdown can't control it" (true only of its clients'
+traffic to it), and applied anyway. That caveat was also too broad: locking
+the resolver's own network still blocks internet DNS for its clients; only
+other same-VLAN resolvers stay reachable.
+
+**Fix:** `resolvers_on_networks()` finds approved resolvers inside a chosen
+network's subnet (gateway addresses excluded first), and `build_dns_lockdown`
+adds `ALLOW src IP [resolvers] (client zone) -> External :53` (plus `:853`
+when DoT is blocked: every stored port on the console is a single number, so
+853 is its own rule). Created after the other allows and before the blocks,
+in the same (client zone, External) pair as the internet block, so
+`dns_order_is_safe()` already verifies it. LAN-side upstreams (a Pi-hole on a
+locked network forwarding to a non-approved resolver on another VLAN in the
+same zone) are NOT covered; not seen in practice, left out on purpose.
+
+**Measured 2026-10-18 (studio UCG, via NOMAD2's container):**
+- Source-by-IP is a real stored shape: the controller's own predefined
+  "Isolated Networks" policies use `matching_target: "IP"`,
+  `matching_target_type: "SPECIFIC"`, `ips: [...]`, `match_mac: false`.
+- A House Arrest-marked ALLOW with that source, External :53 destination,
+  created DISABLED, was accepted and read back field-for-field; deleted, none
+  left.
+- Dry run of the failing case (both Pi-holes, Default) produced: LAN allow,
+  upstream allow, LAN block, internet block, in that order.
+
+**Not yet measured:** that a Pi-hole on a locked network actually resolves
+with the rule ENABLED. Disproof: apply a Default lockdown with the studio
+Pi-holes and see `dig @192.168.4.79 example.com` fail from a Default client
+(with the Pi-hole's cache flushed, since a cached answer proves nothing).
+
+## BUILT 2026-10-18: saved DNS servers (cards) and the checkbox picker
+
+The DNS tab's free-text resolver box is replaced by a list of saved DNS
+servers (`house_arrest_dns_servers`: ip, name, kind, admin_url; House
+Arrest's first database table). Decisions:
+
+- **The kind is cosmetic** (`pihole` / `adguard` / `generic`): logo and
+  default admin link only. No rule depends on it. Default links:
+  Pi-hole `http://IP/admin`, AdGuard Home `http://IP/` [VERIFY both against
+  current releases]; editable per card. Admin URLs must be http(s), checked
+  on the server and again before binding to an href.
+- **Card facts are never stored.** Network, DHCP, and which lockdowns approve
+  the server are recomputed from the controller on every GET
+  (`dns_server_facts()`); unreadable controller = null facts, not "no".
+- **The lockdown itself never depends on the list.** The picker sends IPs, and
+  DNS Lockdown entries are still read from the firewall rules, so a stale card
+  can't make the tool claim protection it isn't delivering.
+- First visit suggests DHCP-advertised servers (`dhcp_suggestions()`,
+  gateway addresses excluded). Remove and IP change are refused while a
+  lockdown approves the server; renaming is fine. An unreadable controller
+  does not block removal (a card changes no rule).
+- One way to pick (checkboxes + inline "Add DNS server"), not a text box
+  fallback.
+- Logos: Pi-hole "Vortex" mark (pi-hole/graphics, MIT); AdGuard Home favicon
+  (AdguardTeam/AdGuardHome `client_v2/public/assets/favicon.svg`).
+- Verified on a throwaway container on NOMAD2 with a COPY of its data: the
+  migration upgraded `b5c9e2d7f1a3 -> c7e1a4f9d2b6` cleanly; suggestions,
+  cards, the upstream notice and the in-use Remove guard all showed studio
+  data correctly.

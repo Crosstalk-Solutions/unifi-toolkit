@@ -79,7 +79,41 @@ DNS servers, and blocks every other DNS server.
 That is usually why you want it, but check the "What each network hands out
 now" table before applying.
 
-Options and safeguards:
+### Your DNS servers
+
+The top of the tab holds the DNS servers your networks are allowed to use.
+Add each one once, with its IP address, a name, and what it is: Pi-hole,
+AdGuard Home, or Other. Pi-hole and AdGuard Home cards link to the server's
+admin page. House Arrest fills in the usual address (`http://IP/admin` for
+Pi-hole, `http://IP/` for AdGuard Home), and you can change it if your admin
+page uses a different port or path. The type only sets the logo and the
+admin link. It never changes which rules DNS Lockdown writes.
+
+On a first visit, House Arrest lists the DNS servers your networks already
+hand out through DHCP, so you can add them in one click.
+
+Each card shows which network the DNS server is on, which networks hand it
+out through DHCP, and which DNS Lockdowns approve it. These details are read
+from your console every time the page loads. A DNS server that a DNS Lockdown
+approves can't be removed, and its address can't be changed, until that
+lockdown is released.
+
+When you set up a DNS Lockdown, tick the DNS servers to approve, then the
+networks to lock down.
+
+### When your DNS server is on a network you lock down
+
+A Pi-hole or AdGuard Home server still has to look names up on the internet.
+If it sits on one of the networks you lock down, DNS Lockdown would block
+those lookups along with everything else on that network, and every device
+would lose DNS. House Arrest adds a rule that lets that DNS server keep
+looking names up on the internet, and the tab says so before you review.
+
+Devices on that network reach the DNS server directly, without passing
+through the gateway. That means they could also use another DNS server on
+the same network. DNS servers on the internet stay blocked for them.
+
+### Options and safeguards
 
 - **Also point DHCP at your approved DNS servers.** Recommended. DHCP tells
   devices which DNS server to use, and DNS Lockdown decides which DNS servers

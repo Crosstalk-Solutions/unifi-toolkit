@@ -17,6 +17,7 @@ Two rules this module exists to enforce:
 """
 import ipaddress
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 # Marker lives in `description`, not `name` — users rename things.
 # Every policy this tool creates is named "House Arrest: <label> — <what>".
@@ -874,6 +875,95 @@ def gateway_ips(networks: List[Dict]) -> set:
         if sub and "/" in sub:
             out.add(sub.split("/", 1)[0].strip())
     return out
+
+
+# ---- Saved DNS servers (the cards at the top of the DNS tab) ----
+#
+# The kind is cosmetic: it picks the logo and a default admin link. No rule
+# House Arrest writes depends on it. The upstream allow covers 53 (and 853)
+# whether the server forwards, recurses or uses DoT.
+
+DNS_SERVER_KINDS = ("pihole", "adguard", "generic")
+
+
+def default_admin_url(kind: str, ip: str) -> str:
+    """Where each product's admin page usually lives. Editable per card."""
+    if kind == "pihole":
+        return f"http://{ip}/admin"
+    if kind == "adguard":
+        return f"http://{ip}/"
+    return ""
+
+
+def check_admin_url(url: Optional[str]) -> str:
+    """
+    An empty string, or an http(s) URL with a host. Anything else (a
+    `javascript:` link above all) is refused, since it becomes an href.
+    """
+    url = (url or "").strip()
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("The admin page must start with http:// or https://")
+    return url
+
+
+def dns_server_facts(ip: str, networks: List[Dict], policies: List[Dict]) -> Dict:
+    """
+    What the controller says about one saved DNS server, read live every
+    time so a card can never go stale: the network it sits on, which
+    networks' DHCP hand it out, and which DNS Lockdowns approve it.
+    """
+    lan = [n for n in networks or [] if n.get("purpose") != "wan"]
+    home = next((n for n in lan if _ip_in_subnet(ip, n.get("ip_subnet"))), None)
+    is_gateway = ip in gateway_ips(networks)
+    lockdowns, upstream = [], []
+    for p in policies or []:
+        if not is_dns_policy(p) or p.get("action") != "ALLOW":
+            continue
+        label = dns_label_from_policy(p) or "network"
+        if ip in ((p.get("destination") or {}).get("ips") or []) and label not in lockdowns:
+            lockdowns.append(label)
+        src = p.get("source") or {}
+        if (src.get("matching_target") == "IP" and ip in (src.get("ips") or [])
+                and label not in upstream):
+            upstream.append(label)
+    return {
+        "network_id": home.get("_id") if home else None,
+        "network_name": (home.get("name") or "network") if home else None,
+        "vlan": vlan_id(home.get("vlan")) if home else None,
+        "is_gateway": is_gateway,
+        "on_internet": home is None,
+        "dhcp_networks": [n.get("name") or "network" for n in lan
+                          if ip in dhcp_dns_of(n)],
+        "lockdowns": lockdowns,
+        "upstream_lockdowns": upstream,
+    }
+
+
+def dhcp_suggestions(networks: List[Dict], saved_ips: List[str]) -> List[Dict]:
+    """
+    DNS servers DHCP already hands out that the user hasn't added yet, so a
+    first visit starts from what the network really uses instead of a blank
+    form. The gateway's own address is left out: it is not a server to add.
+    """
+    saved = set(saved_ips or [])
+    gw = gateway_ips(networks)
+    found: Dict[str, List[str]] = {}
+    for n in networks or []:
+        if n.get("purpose") == "wan":
+            continue
+        for ip in dhcp_dns_of(n):
+            ip = str(ip).strip()
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                continue
+            if ip in saved or ip in gw:
+                continue
+            found.setdefault(ip, []).append(n.get("name") or "network")
+    return [{"ip": ip, "dhcp_networks": nets} for ip, nets in found.items()]
 
 
 def dhcp_dns_conflicts(

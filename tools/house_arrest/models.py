@@ -372,6 +372,48 @@ class DhcpDnsResponse(BaseModel):
     error: Optional[str] = None
 
 
+class DnsServerIn(BaseModel):
+    """Add or edit one saved DNS server."""
+    ip: str
+    name: str = ""
+    kind: str = "generic"
+    admin_url: str = ""
+
+
+class DnsServerInfo(BaseModel):
+    """
+    A saved DNS server plus what the controller says about it right now.
+    The facts are read live on every request, never stored, and are None
+    when the controller can't be read (unknown, not "no").
+    """
+    id: int
+    ip: str
+    name: str
+    kind: str = "generic"
+    admin_url: str = ""
+    network_id: Optional[str] = None
+    network_name: Optional[str] = None
+    vlan: Optional[int] = None
+    is_gateway: Optional[bool] = None
+    on_internet: Optional[bool] = None
+    dhcp_networks: Optional[List[str]] = None
+    lockdowns: Optional[List[str]] = None
+    upstream_lockdowns: Optional[List[str]] = None
+
+
+class DnsServerSuggestion(BaseModel):
+    """A DNS server DHCP already hands out that the user hasn't added."""
+    ip: str
+    dhcp_networks: List[str] = Field(default_factory=list)
+
+
+class DnsServersResponse(BaseModel):
+    servers: List[DnsServerInfo] = Field(default_factory=list)
+    suggestions: List[DnsServerSuggestion] = Field(default_factory=list)
+    # Set when the controller couldn't be read; the saved list still comes back.
+    error: Optional[str] = None
+
+
 class WlanInfo(BaseModel):
     """
     One SSID and whether its clients can reach each other.

@@ -191,6 +191,17 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
+### v1.13.6 additions (2026-10-18, House Arrest 0.16.0, local commits)
+- DNS Lockdown upstream allow: an approved resolver ON a locked network
+  gets `ALLOW src IP -> External :53` (+:853 with DoT) before the blocks.
+  Locking Default with the Pi-holes on Default broke the studio's DNS.
+  Shape measured on the studio UCG; enabled-traffic effect NOT yet measured
+  (design doc "FIXED 2026-10-18").
+- Saved DNS servers: House Arrest's FIRST DB table
+  (`house_arrest_dns_servers`, migration `c7e1a4f9d2b6`). Cards + checkbox
+  picker replace the resolver text box. The kind is cosmetic; card facts
+  are read live; the lockdown never depends on the list.
+
 ### v1.13.6 (edge, unreleased — 2026-10-16)
 - House Arrest 0.15.16: mDNS toggle failed on every write on sites set to
   "All networks" that also have a VPN network. `mdns_effective_ids()` expanded
