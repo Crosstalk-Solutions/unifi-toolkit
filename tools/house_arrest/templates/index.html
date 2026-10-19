@@ -431,6 +431,12 @@
                                 <template x-if="l.blocks_dot">
                                     <span class="vlan-chip">DoT blocked</span>
                                 </template>
+                                <template x-if="l.upstream_resolvers && l.upstream_resolvers.length">
+                                    <span class="vlan-chip"
+                                          :title="l.upstream_resolvers.join(', ') + ' sit on a network this lockdown covers, so House Arrest lets them reach DNS servers on the internet. Without that, every device would lose DNS.'">
+                                        DNS servers can look up names
+                                    </span>
+                                </template>
                             </span>
                         </span>
                         <span class="state" :class="(l.disabled_count || l.network_missing) ? '' : 'ok'">
@@ -586,7 +592,7 @@
                     </template>
                 </ul>
                 <p class="small muted" style="margin:0">
-                    The allow rule has to run before the block rules, or these
+                    The allow rules have to run before the block rules, or these
                     networks lose DNS completely. After applying, House Arrest
                     checks the real order and undoes everything if the order came
                     out wrong.

@@ -418,8 +418,17 @@ async def get_state():
             if nid not in entry.network_ids:
                 entry.network_ids.append(nid)
         dest = pol.get("destination") or {}
+        src = pol.get("source") or {}
+        # Accumulate: a lockdown with LAN and internet resolvers has one allow
+        # per zone pair, and assigning showed only whichever came last.
         if pol.get("action") == "ALLOW" and dest.get("ips"):
-            entry.resolvers = list(dest.get("ips"))
+            for ip in dest.get("ips"):
+                if ip not in entry.resolvers:
+                    entry.resolvers.append(ip)
+        if pol.get("action") == "ALLOW" and src.get("matching_target") == "IP":
+            for ip in src.get("ips") or []:
+                if ip not in entry.upstream_resolvers:
+                    entry.upstream_resolvers.append(ip)
         if dest.get("port") == P.DOT_PORT:
             entry.blocks_dot = True
 
@@ -1058,13 +1067,17 @@ async def dns_lockdown(req: DnsLockdownRequest):
     gateway_resolvers = [ip for ip in req.resolver_ips if ip in gw]
     peer_resolvers = [ip for ip in req.resolver_ips if ip not in gw]
 
-    # A resolver living on one of the locked-down networks cannot be reached
-    # through the gateway, so the rules would never see that traffic.
-    unreachable = []
-    for n in chosen:
-        for ip in peer_resolvers:
-            if P._ip_in_subnet(ip, n.get("ip_subnet")):
-                unreachable.append(f"{ip} is on {n.get('name')} itself")
+    # A resolver living on one of the locked-down networks sends its own
+    # upstream queries FROM that network, so the internet block would cut
+    # them and take every device's DNS with it (the studio, 2026-10-18).
+    # It gets an upstream allow; its clients reach it without passing the
+    # gateway, which only the caveat below can address.
+    upstream_resolvers = P.resolvers_on_networks(peer_resolvers, chosen)
+    on_locked = [
+        (ip, n.get("name") or "network")
+        for ip in upstream_resolvers for n in chosen
+        if P._ip_in_subnet(ip, n.get("ip_subnet"))
+    ]
 
     # A resolver has to be allowed in the zone pair it is actually reached
     # through. Splitting them is what stops a public resolver like 1.1.1.1
@@ -1077,7 +1090,8 @@ async def dns_lockdown(req: DnsLockdownRequest):
         indexes = P.next_free_index(
             existing,
             P.dns_policy_count(
-                req.block_dot, bool(lan_resolvers), bool(wan_resolvers)
+                req.block_dot, bool(lan_resolvers), bool(wan_resolvers),
+                bool(upstream_resolvers),
             ),
         )
         payloads = P.build_dns_lockdown(
@@ -1091,6 +1105,7 @@ async def dns_lockdown(req: DnsLockdownRequest):
             block_dot=req.block_dot,
             foreign_resolvers=foreign_resolvers,
             gateway_resolvers=gateway_resolvers,
+            upstream_resolvers=upstream_resolvers,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1100,9 +1115,12 @@ async def dns_lockdown(req: DnsLockdownRequest):
     # that actually breaks the network.
     caveats = P.dhcp_dns_conflicts(chosen, req.resolver_ips, networks)
     caveats += [
-        f"{u} is on the same network as the devices it would serve, so "
-        f"traffic to {u} never passes the gateway and DNS Lockdown can't "
-        f"control it." for u in unreachable
+        f"{ip} is on {net}, one of the networks you're locking. DNS Lockdown "
+        f"adds a rule that lets {ip} keep looking names up on the internet. "
+        f"Devices on {net} reach {ip} without passing the gateway, so they "
+        f"could also use any other DNS server on {net}. DNS servers on the "
+        f"internet stay blocked for them."
+        for ip, net in on_locked
     ]
     caveats += list(P.DNS_CAVEATS)
     if gateway_resolvers:

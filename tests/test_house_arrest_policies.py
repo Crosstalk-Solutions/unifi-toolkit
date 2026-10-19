@@ -631,6 +631,76 @@ class TestDnsLockdown:
         assert any("DNS server on the same network" in c for c in P.DNS_CAVEATS)
 
 
+class TestDnsUpstreamAllow:
+    """
+    A Pi-hole on a network being locked down sends its own upstream queries
+    FROM that network, so the internet block cut them and every device lost
+    DNS (the studio, 2026-10-18: Default locked, both Pi-holes on Default).
+    """
+
+    NETWORKS = [
+        {"_id": "def", "name": "Default", "ip_subnet": "192.168.4.1/24"},
+        {"_id": "iot", "name": "IoT", "ip_subnet": "192.168.5.1/24"},
+    ]
+    PIHOLES = ["192.168.4.79", "192.168.4.50"]
+
+    def _build(self, block_dot=False, upstream=None):
+        upstream = self.PIHOLES if upstream is None else upstream
+        return P.build_dns_lockdown(
+            ["def"], "Default", self.PIHOLES, [], CLIENT_ZONE, EXTERNAL_ZONE,
+            P.next_free_index([], P.dns_policy_count(block_dot, True, False, bool(upstream))),
+            block_dot=block_dot, upstream_resolvers=upstream,
+        )
+
+    def test_only_resolvers_on_a_chosen_network_need_it(self):
+        assert P.resolvers_on_networks(self.PIHOLES, self.NETWORKS[:1]) == self.PIHOLES
+        assert P.resolvers_on_networks(self.PIHOLES, self.NETWORKS[1:]) == []
+        assert P.resolvers_on_networks(["1.1.1.1"], self.NETWORKS) == []
+
+    def test_upstream_allow_sources_the_resolver_ips_to_internet_dns(self):
+        ups = [p for p in self._build() if p["source"]["matching_target"] == "IP"]
+        assert len(ups) == 1
+        u = ups[0]
+        assert u["action"] == "ALLOW"
+        assert u["source"]["ips"] == self.PIHOLES
+        assert u["source"]["zone_id"] == CLIENT_ZONE
+        assert u["destination"]["zone_id"] == EXTERNAL_ZONE
+        assert u["destination"]["matching_target"] == "ANY"
+        assert u["destination"]["port"] == "53"
+
+    def test_upstream_allow_is_created_before_every_block(self):
+        pols = self._build(block_dot=True)
+        first_block = next(i for i, p in enumerate(pols) if p["action"] == "BLOCK")
+        assert all(p["action"] == "ALLOW" for p in pols[:first_block])
+        assert P.dns_order_is_safe(pols) is True
+
+    def test_order_check_catches_an_upstream_allow_behind_the_block(self):
+        pols = self._build()
+        up = next(p for p in pols if p["source"]["matching_target"] == "IP")
+        up["index"] = 99999
+        assert P.dns_order_is_safe(pols) is False
+
+    def test_dot_adds_a_853_upstream_allow(self):
+        ports = sorted(p["destination"]["port"] for p in self._build(block_dot=True)
+                       if p["source"]["matching_target"] == "IP")
+        assert ports == ["53", "853"]
+        assert len(self._build(block_dot=True)) == P.dns_policy_count(True, True, False, True) == 7
+
+    def test_no_upstream_allow_when_no_resolver_is_on_a_chosen_network(self):
+        pols = self._build(upstream=[])
+        assert not any(p["source"]["matching_target"] == "IP" for p in pols)
+        assert len(pols) == 3
+
+    def test_upstream_allow_is_released_with_its_lockdown(self):
+        up = next(p for p in self._build() if p["source"]["matching_target"] == "IP")
+        assert P.is_dns_policy(up)
+        assert P.dns_label_from_policy(up) == "Default"
+
+    def test_upstream_allow_is_not_mistaken_for_a_device_dns_allow(self):
+        up = next(p for p in self._build() if p["source"]["matching_target"] == "IP")
+        assert P.dns_allows_for_device([up], ["aa:bb:cc:dd:ee:ff"], ["def"]) == []
+
+
 class TestZoneResolution:
     """
     Zones are found by `zone_key`, not display name — a renamed "Internal"

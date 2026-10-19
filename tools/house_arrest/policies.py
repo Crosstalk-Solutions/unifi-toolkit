@@ -524,6 +524,43 @@ def network_source(network_ids: List[str], zone_id: str) -> Dict:
     }
 
 
+def ip_source(ips: List[str], zone_id: str) -> Dict:
+    """
+    Source block matching specific IPs.
+
+    Shape read off the controller's own predefined "Isolated Networks"
+    policies on the studio UCG (2026-10-18), which source by IP.
+    """
+    if not ips:
+        raise ValueError("At least one IP is required")
+    if not zone_id:
+        raise ValueError("zone_id is required")
+    return {
+        "matching_target": "IP",
+        "matching_target_type": "SPECIFIC",
+        "ips": list(ips),
+        "match_mac": False,
+        "match_opposite_ips": False,
+        "match_opposite_ports": False,
+        "port_matching_type": "ANY",
+        "zone_id": zone_id,
+    }
+
+
+def resolvers_on_networks(resolver_ips: List[str], networks: List[Dict]) -> List[str]:
+    """
+    The approved resolvers that sit inside one of these networks' subnets.
+
+    A DNS Lockdown's blocks match everything FROM the locked networks, so a
+    Pi-hole living on one of them has its own upstream queries blocked and
+    every device loses DNS (Chris's studio, 2026-10-18: Default locked with
+    both Pi-holes on Default). These are the resolvers that need an upstream
+    allow. Pass gateway addresses already filtered out.
+    """
+    return [ip for ip in resolver_ips or []
+            if any(_ip_in_subnet(ip, n.get("ip_subnet")) for n in networks or [])]
+
+
 def describe_dns(note: str) -> str:
     return f"{MARKER}{DNS_MARKER} {note}".strip()
 
@@ -539,15 +576,20 @@ def dns_policy_count(
     block_dot: bool = False,
     has_lan_resolvers: bool = True,
     has_wan_resolvers: bool = False,
+    has_upstream: bool = False,
 ) -> int:
     """
     How many policies a DNS lockdown needs.
 
     Two blocks always (LAN and internet), plus DoT's two, plus ONE ALLOW PER
     ZONE PAIR that actually has an approved resolver in it. See
-    classify_resolvers() for why the allow cannot be a single policy.
+    classify_resolvers() for why the allow cannot be a single policy. A
+    resolver on a locked network adds its upstream allow on 53 (and 853 when
+    DoT is blocked); every stored port is a single number, so 853 is its own.
     """
     allows = (1 if has_lan_resolvers else 0) + (1 if has_wan_resolvers else 0)
+    if has_upstream:
+        allows += 2 if block_dot else 1
     return allows + 2 + (2 if block_dot else 0)
 
 
@@ -632,16 +674,20 @@ def build_dns_lockdown(
     block_dot: bool = False,
     foreign_resolvers: Optional[List[Dict]] = None,
     gateway_resolvers: Optional[List[str]] = None,
+    upstream_resolvers: Optional[List[str]] = None,
 ) -> List[Dict]:
     """
     Build the DNS Lockdown policy set.
 
-    Returned in the order they must be CREATED, allow first:
+    Returned in the order they must be CREATED, allows first:
 
       1. ALLOW  chosen networks -> approved resolvers on 53
-      2. BLOCK  chosen networks -> anything on 53, inside the LAN
-      3. BLOCK  chosen networks -> anything on 53, out to the internet
-      4/5. the same two blocks on 853 (DoT) when block_dot is set
+      2. ALLOW  approved resolvers ON a chosen network -> internet on 53
+         (and 853 when block_dot), so a Pi-hole on a locked network can
+         still forward its own queries
+      3. BLOCK  chosen networks -> anything on 53, inside the LAN
+      4. BLOCK  chosen networks -> anything on 53, out to the internet
+      5/6. the same two blocks on 853 (DoT) when block_dot is set
 
     DoT is worth blocking because a device that cannot reach port 853 falls
     back to plain 53, which rules 2 and 3 then capture. DoH (443) cannot be
@@ -662,6 +708,10 @@ def build_dns_lockdown(
             guard, because nothing in this set blocks their zone pair anyway
         gateway_resolvers: approved addresses that are the gateway itself —
             the same: reached through the Gateway zone, never blocked here
+        upstream_resolvers: approved resolvers that live on one of the
+            chosen networks (resolvers_on_networks()). Their own traffic
+            comes FROM a locked network, so without an allow the internet
+            block cuts their upstream and every device loses DNS.
     """
     if not network_ids:
         raise ValueError("At least one network is required")
@@ -670,7 +720,8 @@ def build_dns_lockdown(
     # builds blocks-only.
     if not (lan_resolvers or wan_resolvers or foreign_resolvers or gateway_resolvers):
         raise ValueError("At least one approved resolver is required")
-    needed = dns_policy_count(block_dot, bool(lan_resolvers), bool(wan_resolvers))
+    needed = dns_policy_count(block_dot, bool(lan_resolvers), bool(wan_resolvers),
+                              bool(upstream_resolvers))
     if len(indexes) < needed:
         raise ValueError(f"DNS lockdown needs {needed} indexes, got {len(indexes)}")
 
@@ -698,6 +749,20 @@ def build_dns_lockdown(
             description=describe_dns(
                 f"Allow {', '.join(wan_resolvers)} for {network_label}"),
         ))
+    # Same (client zone -> External) pair as the internet block, so the
+    # existing per-pair order check verifies these land ahead of it.
+    if upstream_resolvers:
+        ups = ", ".join(upstream_resolvers)
+        for port in ([DNS_PORT, DOT_PORT] if block_dot else [DNS_PORT]):
+            out.append(_base_policy(
+                name=(f"House Arrest DNS: {network_label} - let DNS servers "
+                      f"look up names{' (DoT)' if port == DOT_PORT else ''}"),
+                action="ALLOW", index=next(nxt),
+                source=ip_source(upstream_resolvers, client_zone_id),
+                destination=_dns_dest(external_zone_id, port),
+                description=describe_dns(
+                    f"Let {ups} look up names on the internet for {network_label}"),
+            ))
 
     out.append(_base_policy(
         name=f"House Arrest DNS: {network_label} - block other DNS (LAN)",

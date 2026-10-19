@@ -189,6 +189,9 @@ class DnsLockdownEntry(BaseModel):
     resolvers: List[str] = Field(default_factory=list)
     policy_ids: List[str] = Field(default_factory=list)
     blocks_dot: bool = False
+    # Approved resolvers that sit on a locked network and so have their own
+    # allow out to internet DNS (a Pi-hole on the network it serves).
+    upstream_resolvers: List[str] = Field(default_factory=list)
     # Which networks this covers, so the picker can mark them before the user
     # selects one and hits the duplicate guard as an error.
     network_ids: List[str] = Field(default_factory=list)
