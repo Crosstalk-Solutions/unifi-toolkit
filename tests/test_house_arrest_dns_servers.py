@@ -170,3 +170,13 @@ def test_unreadable_controller_still_lists_and_allows_remove(client):
     assert listed["servers"][0]["network_name"] is None
     assert listed["servers"][0]["on_internet"] is None
     assert client.delete(f"/api/dns-servers/{sid}").json() == {"deleted": True}
+
+
+class TestDnsLockable:
+    @pytest.mark.parametrize("purpose,ok", [
+        ("corporate", True), ("guest", True), ("site-vpn", False),
+        ("remote-user-vpn", False), ("vpn-client", False), ("vlan-only", False),
+        ("wan", False), (None, False),
+    ])
+    def test_only_lan_and_guest(self, purpose, ok):
+        assert P.dns_lockable({"purpose": purpose}) is ok

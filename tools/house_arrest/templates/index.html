@@ -551,7 +551,7 @@
             <div class="dns-field">
                 <label>Networks to lock down</label>
                 <div class="net-picker">
-                    <template x-for="n in networks" :key="n.id">
+                    <template x-for="n in dnsLockableNetworks()" :key="n.id">
                         <label class="net-option" :class="{ 'is-taken': dnsLockedIds().includes(n.id) }">
                             <input type="checkbox" :value="n.id" x-model="dnsNetworks"
                                    :disabled="dnsLockedIds().includes(n.id)"
@@ -730,7 +730,7 @@
                     <tr><th>Network</th><th>VLAN</th><th>DHCP name servers</th></tr>
                 </thead>
                 <tbody>
-                    <template x-for="n in networks" :key="'dns-' + n.id">
+                    <template x-for="n in dnsLockableNetworks()" :key="'dns-' + n.id">
                         <tr :class="{ 'is-chosen': dnsNetworks.includes(n.id) }">
                             <td x-text="n.name"></td>
                             <td class="mono" x-text="n.vlan !== null ? n.vlan : '—'"></td>

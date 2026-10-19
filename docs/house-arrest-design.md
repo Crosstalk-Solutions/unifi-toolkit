@@ -2031,8 +2031,9 @@ Arrest's first database table). Decisions:
 
 - **The kind is cosmetic** (`pihole` / `adguard` / `generic`): logo and
   default admin link only. No rule depends on it. Default links:
-  Pi-hole `http://IP/admin`, AdGuard Home `http://IP/` [VERIFY both against
-  current releases]; editable per card. Admin URLs must be http(s), checked
+  Pi-hole `http://IP/admin`, AdGuard Home `http://IP/` (AdGuard Home's
+  getting-started KB: web UI on port 80 by default, set during setup, no
+  sub-path; Pi-hole `/admin` per Chris, 2026-10-19); editable per card. Admin URLs must be http(s), checked
   on the server and again before binding to an href.
 - **Card facts are never stored.** Network, DHCP, and which lockdowns approve
   the server are recomputed from the controller on every GET

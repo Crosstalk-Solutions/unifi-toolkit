@@ -2444,6 +2444,16 @@ DEVICE_ISOLATION_PURPOSES = ("corporate", "guest")
 # "All networks" the controller's stored list was exactly the `corporate`
 # networks. `guest` is inferred on the same footing as Device Isolation.
 MDNS_PURPOSES = ("corporate", "guest")
+# Network purposes DNS Lockdown is offered on. A VPN network (`site-vpn`,
+# `remote-user-vpn`, `vpn-client`) hands out no DHCP and its clients are not
+# reached by the LAN zone rules the lockdown writes; `vlan-only` has no gateway
+# interface at all. Same allow-list as mDNS and Device Isolation.
+DNS_LOCKDOWN_PURPOSES = ("corporate", "guest")
+
+
+def dns_lockable(network: Optional[Dict]) -> bool:
+    """Can DNS Lockdown be applied to this network?"""
+    return (network or {}).get("purpose") in DNS_LOCKDOWN_PURPOSES
 
 
 def acl_capable(device: Optional[Dict]) -> bool:

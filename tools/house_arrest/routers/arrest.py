@@ -1028,6 +1028,13 @@ async def dns_lockdown(req: DnsLockdownRequest):
     chosen = [n for n in networks if n.get("_id") in req.network_ids]
     if not chosen:
         raise HTTPException(status_code=400, detail="Unknown network")
+    not_lockable = [n.get("name") or "network" for n in chosen if not P.dns_lockable(n)]
+    if not_lockable:
+        raise HTTPException(
+            status_code=400,
+            detail=f"DNS Lockdown isn't available on {', '.join(not_lockable)}. "
+                   f"It works on LAN and guest networks, not VPN networks.",
+        )
     label = ", ".join(n.get("name") or "network" for n in chosen)
 
     # Scope the rules to the zone the chosen networks are ACTUALLY in, read
@@ -1432,6 +1439,7 @@ async def list_networks():
             mdns_enabled=n.get("mdns_enabled"),
             dhcp_dns=P.dhcp_dns_of(n),
             purpose=n.get("purpose"),
+            dns_lockable=P.dns_lockable(n),
         ))
     out.sort(key=lambda x: x.vlan or 0)
     return out

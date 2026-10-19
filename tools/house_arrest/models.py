@@ -19,6 +19,8 @@ class NetworkInfo(BaseModel):
     isolation_enabled: Optional[bool] = None
     mdns_enabled: Optional[bool] = None
     purpose: Optional[str] = None
+    # Whether DNS Lockdown is offered here (LAN and guest networks only).
+    dns_lockable: bool = False
     # What DHCP hands out on this network. Carried here so the DNS tab can
     # show it beside the resolver picker — deciding which networks to force
     # onto a resolver means knowing what they currently advertise, and that

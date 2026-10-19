@@ -699,6 +699,12 @@ function houseArrest() {
 
         // Networks already covered by a DNS lockdown. The server refuses these
         // outright; the picker greys them out so it never gets that far.
+        // Networks DNS Lockdown can be applied to. VPN networks are left out:
+        // the server refuses them, so the picker never offers them.
+        dnsLockableNetworks() {
+            return this.networks.filter(n => n.dns_lockable);
+        },
+
         dnsLockedIds() {
             return (this.state.dns_lockdowns || [])
                 .flatMap(l => l.network_ids || []);
