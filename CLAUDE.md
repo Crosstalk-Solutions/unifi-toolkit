@@ -206,6 +206,24 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   403/404/200 as expected; #147 `/stalker/ws` handshake + ping/pong OK (no
   device event during the listen). #149/#150 need a UDR 5G Max — untested.
 
+### v1.13.5 (edge, unreleased — `5600c47`, 2026-10-15)
+- #145: `AuthMiddleware._csrf_failure()` runs in local mode too; only the
+  session check is skipped when auth is off. All 26 frontend state-changing
+  calls already sent `X-Requested-With` (script-checked) — any NEW fetch
+  must send it or it 403s in every mode now.
+- #147: Wi-Fi Stalker gained the `/ws` route its frontend always used (was
+  403 forever). It answers the bare `ping` Stalker sends. `ws_manager` is
+  shared, so every tool's page receives every tool's broadcasts — handlers
+  must ignore unknown `type`s.
+- #149: `UDMA6B9` = UDR 5G Max (IPS-capable, per reporter).
+- #150: `is_wifi_device()` in `shared/unifi_client.py` is the ONE AP check
+  (APs, Express in mesh mode, `udm`/`ux` gateways with a non-empty
+  `radio_table`). Use it rather than re-deriving. "Wired-only gateways report
+  an empty `radio_table`" is Inferred, not measured — the toolkit's UCG API
+  key returned 401 that day.
+- #144 declined (Pi-hole-specific guidance; keep the tool generic). #148
+  resolved by reporter (needed an approved DNS server entered).
+
 ### v1.13.4 (RELEASED 2026-10-15 — tag `v1.13.4` on `b8bb0e3`, `:latest`)
 - Rewritten by us from external PR #141 (@ChatziGeorge, co-author credit),
   merged as `eb33bc0` via PR #142. The contributor re-tested `:edge` on a
