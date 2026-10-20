@@ -2032,6 +2032,21 @@ so the Pi-hole had to go upstream; this replaces a cache flush.
 - Released (4 rules deleted); 20s later 1.1.1.1 answered again.
 Not tested: the `:853` variant (block DoT on).
 
+**MEASURED 2026-10-20 (block DoT ON, studio UCG, `:edge` 1b845d6 on NOMAD2):**
+Chris applied a Default lockdown from the GUI with both Pi-holes approved
+and DoT blocked: 7 rules, `blocks_dot: true`, `upstream_resolvers`
+[.79, .50], no disabled rules, no precedence warnings. From CORSAIRONE
+(192.168.4.71, on Default), fresh `ha<random>.1.2.3.4.nip.io` names, three
+rounds 10 s apart: .79 and .50 answered `1.2.3.4` 3/3; `@1.1.1.1` timed out
+3/3; TCP 853 to 1.1.1.1 and 8.8.8.8 timed out; TCP 443 to 1.1.1.1 open.
+So the upstream allow works with DoT blocking on. Not shown: a Pi-hole
+whose OWN upstream is DoT (these Pi-holes' upstream protocol was not
+checked; the fresh names resolving proves only that whatever they use
+gets out).
+Side finding: CORSAIRONE itself was not governed by the lockdown. Its
+adapter had static 1.1.1.1/1.0.0.1 with Windows DoH, which rides 443. This
+is the documented DoH caveat, seen on a real machine.
+
 ## BUILT 2026-10-18: saved DNS servers (cards) and the checkbox picker
 
 The DNS tab's free-text resolver box is replaced by a list of saved DNS
