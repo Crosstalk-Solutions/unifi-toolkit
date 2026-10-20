@@ -203,6 +203,12 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   (`house_arrest_dns_servers`, migration `c7e1a4f9d2b6`). Cards + checkbox
   picker replace the resolver text box. The kind is cosmetic; card facts
   are read live; the lockdown never depends on the list.
+- House Arrest 0.16.1 (2026-10-20): DHCP DNS order = TICK order
+  (`dnsResolverList()` reads `dnsPicked`, which x-model appends to), not
+  card order. `resolver_ips[0]` -> `dhcpd_dns_1` = primary. Ticked cards
+  show `dnsRank()`; the DHCP preview labels slots via `dhcpOrderText()`.
+  No persisted order (no column, no migration) on purpose: order only
+  matters at the DHCP write, and lockdown rules treat resolvers equally.
 
 ### v1.13.6 (edge, unreleased — 2026-10-16)
 - House Arrest 0.15.16: mDNS toggle failed on every write on sites set to

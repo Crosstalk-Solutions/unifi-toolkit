@@ -539,6 +539,7 @@
                             <img class="pick-logo" :src="logoSrc(s.kind)" alt="" width="18" height="18">
                             <span x-text="s.name"></span>
                             <span class="pick-ip mono" x-text="s.ip"></span>
+                            <span class="vlan-chip pick-rank" x-show="dnsRank(s.ip)" x-text="dnsRank(s.ip)"></span>
                         </label>
                     </template>
                     <span class="hint" x-show="!dnsServers.length" style="margin:0">No DNS servers yet.</span>
@@ -546,6 +547,8 @@
                 </div>
                 <div class="hint">
                     Every device on the networks you choose below can use only these DNS servers.
+                    If you also point DHCP at them, they're handed out in the order you tick them,
+                    so tick your primary first. To change the order, untick a server and tick it again.
                 </div>
             </div>
             <div class="dns-field">
@@ -648,15 +651,15 @@
                             <strong x-text="c.label"></strong>:
                             <template x-if="c.current.join(',') === c.proposed.join(',')">
                                 <span>
-                                    <span x-text="c.proposed.join(', ')"></span>
+                                    <span x-text="dhcpOrderText(c.proposed)"></span>
                                     <span class="muted small"> · already correct, nothing to do</span>
                                 </span>
                             </template>
                             <template x-if="c.current.join(',') !== c.proposed.join(',')">
                                 <span>
-                                    <span x-text="c.current.length ? c.current.join(', ') : 'gateway'"></span>
+                                    <span x-text="c.current.length ? dhcpOrderText(c.current) : 'gateway'"></span>
                                     &rarr;
-                                    <strong x-text="c.proposed.join(', ')"></strong>
+                                    <strong x-text="dhcpOrderText(c.proposed)"></strong>
                                     <span class="muted small" x-show="c.applied"> · applied</span>
                                     <span x-show="c.error" x-text="c.error"></span>
                                 </span>

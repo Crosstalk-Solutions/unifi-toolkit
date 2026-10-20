@@ -1631,6 +1631,7 @@ table.matrix tr td:last-child .tip { left: auto; right: 0; }
 /* The lockdown picker's server rows and its inline add button. */
 .pick-logo { width: 18px; height: 18px; flex: none; object-fit: contain; }
 .pick-ip { margin-left: auto; color: var(--text-secondary); font-size: 0.8rem; }
+.pick-rank { flex: none; min-width: 2.2rem; text-align: center; }
 .pick-add {
     justify-self: start;
     background: transparent; border: 0; padding: 0.15rem 0;

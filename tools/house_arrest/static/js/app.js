@@ -158,11 +158,26 @@ function houseArrest() {
             return this.dnsNetworks.length > 0 && this.dnsResolverList().length > 0;
         },
 
-        // Ticked servers, in card order (DHCP hands them out in this order).
+        // Ticked servers, in the order they were ticked. DHCP hands them out
+        // in this order, so the first one ticked is the primary. x-model
+        // appends on tick, and an edited server keeps its place.
         dnsResolverList() {
-            return this.dnsServers
-                .filter(s => this.dnsPicked.includes(s.ip))
-                .map(s => s.ip);
+            const ips = this.dnsServers.map(s => s.ip);
+            return this.dnsPicked.filter(ip => ips.includes(ip));
+        },
+
+        // "1st", "2nd"... for a ticked server, '' for an unticked one.
+        dnsRank(ip) {
+            const n = this.dnsResolverList().indexOf(ip) + 1;
+            if (!n) return '';
+            return n + ({ 1: 'st', 2: 'nd', 3: 'rd' }[n] || 'th');
+        },
+
+        // A DHCP name server list with each slot named, so the preview says
+        // which one devices are told to try first.
+        dhcpOrderText(ips) {
+            const names = ['primary', 'secondary', '3rd', '4th'];
+            return ips.map((ip, i) => ip + ' (' + (names[i] || (i + 1) + 'th') + ')').join(', ');
         },
 
         // ---- saved DNS servers ----
