@@ -530,6 +530,11 @@ CHANGELOG.md and `docs/house-arrest-design.md`.
   `await get_database().init_db()` before `get_shared_client()` (it reads the
   controller config from the DB), and run from the repo root so `.env` and
   `./data` resolve. Used 2026-10-14 to confirm the #140 fix against the UCG.
+  Against a running Docker install, pipe the script into the container
+  instead: `docker exec -i -w /app unifi-toolkit python - < probe.py` (uses
+  the install's own DB + controller; used on NOMAD2 2026-10-16). Keep such
+  probes read-only, and dry-run policy functions (`P.*`) on live data rather
+  than writing to the controller.
 
 - **`TemplateResponse` uses the request-first signature.** `TemplateResponse(request,
   "name.html", {...})`, never `TemplateResponse("name.html", {"request": request, ...})`.
