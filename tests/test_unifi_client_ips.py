@@ -40,3 +40,43 @@ async def test_failed_v2_request_falls_back_to_legacy():
     ):
         assert await c.get_ips_events() == []
     c._session.post.assert_called_once()
+
+
+class _Resp:
+    def __init__(self, status):
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def text(self):
+        return ""
+
+
+async def test_refused_credentials_raise_instead_of_empty():
+    # A revoked API key must not read as "no events" (#146): the scheduler
+    # needs the exception to drop the session and record why.
+    from shared.unifi_client import ConsoleAuthRefused
+    c = _client()
+    c._session = Mock()
+    c._session.post.return_value = _Resp(401)
+    with patch.object(
+        c, "get_traffic_flows",
+        AsyncMock(side_effect=TrafficFlowsUnavailable("HTTP 401")),
+    ):
+        with pytest.raises(ConsoleAuthRefused):
+            await c.get_ips_events()
+
+
+async def test_removed_legacy_endpoint_still_reads_as_empty():
+    c = _client()
+    c._session = Mock()
+    c._session.post.return_value = _Resp(404)
+    with patch.object(
+        c, "get_traffic_flows",
+        AsyncMock(side_effect=TrafficFlowsUnavailable("HTTP 500")),
+    ):
+        assert await c.get_ips_events() == []

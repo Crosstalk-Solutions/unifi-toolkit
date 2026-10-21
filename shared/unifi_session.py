@@ -24,6 +24,24 @@ logger = logging.getLogger(__name__)
 # Singleton client instance
 _shared_client: Optional[UniFiClient] = None
 
+# Why the most recent connect attempt failed; None after a success. Pages read
+# this instead of connecting themselves, so a broken key shows up within one
+# scheduler cycle without a page load ever waiting on the console.
+_last_connect_error: Optional[str] = None
+
+
+def connection_problem() -> Optional[str]:
+    """
+    The reason the toolkit can't reach the console right now, or None.
+
+    None also covers "not tried yet" and "no config": only a failed attempt
+    with no live session counts as a problem.
+    """
+    if _shared_client is not None and _shared_client._session is not None \
+            and not _shared_client._session.closed:
+        return None
+    return _last_connect_error
+
 
 async def get_shared_client() -> Optional[UniFiClient]:
     """
@@ -36,7 +54,7 @@ async def get_shared_client() -> Optional[UniFiClient]:
     Returns:
         Connected UniFiClient, or None if no config or connection fails.
     """
-    global _shared_client
+    global _shared_client, _last_connect_error
 
     # If we have a client with a live session, return it
     if _shared_client is not None and _shared_client._session is not None and not _shared_client._session.closed:
@@ -76,6 +94,8 @@ async def get_shared_client() -> Optional[UniFiClient]:
                 api_key = decrypt_api_key(unifi_config.api_key_encrypted)
         except Exception as e:
             logger.error(f"Failed to decrypt UniFi credentials: {e}")
+            _last_connect_error = ("The saved UniFi credentials couldn't be decrypted. "
+                                   "Check that ENCRYPTION_KEY hasn't changed.")
             return None
 
         # Create and connect client
@@ -91,10 +111,12 @@ async def get_shared_client() -> Optional[UniFiClient]:
         connected = await client.connect()
         if not connected:
             logger.error("Failed to connect shared UniFi session")
+            _last_connect_error = client.last_error or "The console couldn't be reached."
             await client.disconnect()
             return None
 
         _shared_client = client
+        _last_connect_error = None
         logger.info("Shared UniFi session established")
         break  # Exit the async for loop
 
@@ -108,8 +130,10 @@ async def invalidate_shared_client():
     Called when UniFi config is saved via the web UI so the next scheduler
     run creates a fresh client with the updated credentials.
     """
-    global _shared_client
+    global _shared_client, _last_connect_error
 
+    # New credentials deserve a fresh attempt before any old error is shown
+    _last_connect_error = None
     if _shared_client is not None:
         logger.info("Invalidating shared UniFi session (config changed)")
         try:

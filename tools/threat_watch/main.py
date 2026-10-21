@@ -18,6 +18,7 @@ from shared.database import get_db_session
 from shared.models.unifi_config import UniFiConfig
 from shared.unifi_client import UniFiClient
 from shared.crypto import decrypt_password, decrypt_api_key
+from shared.unifi_session import connection_problem
 from sqlalchemy import select
 import logging
 
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
         gateway_info = None
         ips_settings = None
         gateway_error = None
+        connect_error = None
 
         try:
             # First try to use cached gateway info
@@ -157,7 +159,8 @@ def create_app() -> FastAPI:
                                     if not ips_settings.get("ips_enabled"):
                                         gateway_error = "ids_disabled"
                         else:
-                            gateway_error = "Failed to connect to UniFi controller"
+                            gateway_error = "not_connected"
+                            connect_error = client.last_error
                     except Exception as e:
                         logger.error(f"Error fetching gateway info: {e}")
                         gateway_error = str(e)
@@ -168,6 +171,14 @@ def create_app() -> FastAPI:
             logger.error(f"Error loading gateway info: {e}")
             gateway_error = "Configuration error"
 
+        # Cached gateway facts outlive a broken connection (a replaced API key
+        # keeps showing the last good state), so also check how the shared
+        # session's last attempt went. The page never connects for this.
+        problem = connection_problem()
+        if problem:
+            gateway_error = "not_connected"
+            connect_error = problem
+
         return templates.TemplateResponse(
             request,
             "index.html",
@@ -176,7 +187,8 @@ def create_app() -> FastAPI:
                 "supports_ids_ips": supports_ids_ips,
                 "gateway_info": gateway_info,
                 "ips_settings": ips_settings,
-                "gateway_error": gateway_error
+                "gateway_error": gateway_error,
+                "connect_error": connect_error,
             }
         )
 

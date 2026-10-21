@@ -47,8 +47,25 @@
             </div>
         </header>
 
+        <!-- Connection Warning: checked first, because every other notice
+             below would be describing a console the toolkit can't reach -->
+        {% if gateway_error == "not_connected" %}
+        <div class="gateway-warning">
+            <div class="warning-icon">⚠️</div>
+            <div class="warning-content">
+                <h3>Can't reach your UniFi console</h3>
+                {% if connect_error %}<p><strong>{{ connect_error }}</strong></p>{% endif %}
+                <p>Threat Watch can't collect new events until the toolkit connects to your console again. Events collected earlier are still listed below.</p>
+                <p>Check the console address and API key in the dashboard settings (⚙️). Threat Watch checks again every minute.</p>
+                <div class="warning-actions">
+                    <a href="/" class="btn btn-primary">← Back to Dashboard</a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Gateway/IDS Warning -->
-        {% if not supports_ids_ips %}
+        {% if not supports_ids_ips and gateway_error != "not_connected" %}
         <div class="gateway-warning">
             <div class="warning-icon">⚠️</div>
             <div class="warning-content">
@@ -93,7 +110,7 @@
         {% endif %}
 
         <!-- IDS/IPS Status Badge (when enabled) -->
-        {% if supports_ids_ips and ips_settings and ips_settings.ips_enabled %}
+        {% if supports_ids_ips and ips_settings and ips_settings.ips_enabled and gateway_error != "not_connected" %}
         <div class="ips-status-badge">
             <span style="font-size: 1.2rem;">🛡️</span>
             <span>

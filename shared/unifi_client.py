@@ -75,6 +75,14 @@ class TrafficFlowsUnavailable(Exception):
     """The v2 traffic-flows request failed, as opposed to answering with no events."""
 
 
+class ConsoleAuthRefused(Exception):
+    """The console refused our credentials mid-session (HTTP 401/403).
+
+    Raised instead of returning an empty list so the caller drops the shared
+    session and the next reconnect records why (see unifi_session).
+    """
+
+
 UNIFI_MODEL_NAMES = {
     # Gateways / Dream Machines
     "UDM": "UDM",
@@ -232,6 +240,8 @@ class UniFiClient:
         self._session: Optional[aiohttp.ClientSession] = None
         self.is_unifi_os = True  # Only UniFi OS is supported
         self._v2_uses_new_payload: Optional[bool] = None  # None=unknown, True/False=cached
+        # Plain-language reason the last connect() failed, for showing to users
+        self.last_error: Optional[str] = None
 
     async def connect(self) -> bool:
         """
@@ -279,16 +289,19 @@ class UniFiClient:
                 return True
             elif unifi_os_result == "auth_failed":
                 logger.error("UniFi OS authentication failed - invalid credentials")
+                self.last_error = "The console refused the username or password."
                 await self.disconnect()
                 return False
 
             # UniFi OS endpoint not found (404)
             logger.error("Failed to connect - this does not appear to be a UniFi OS controller")
+            self.last_error = f"{self.host} doesn't look like a UniFi OS console."
             await self.disconnect()
             return False
 
         except Exception as e:
             logger.error(f"Failed to connect to UniFi controller: {e}")
+            self.last_error = f"Couldn't reach the console at {self.host} ({e})."
             logger.debug(f"Connection error details - Type: {type(e).__name__}, Args: {e.args}")
             await self.disconnect()
             return False
@@ -300,12 +313,19 @@ class UniFiClient:
             async with self._session.get(test_url) as resp:
                 if resp.status != 200:
                     logger.error(f"UniFi OS API key connection failed: {resp.status}")
+                    if resp.status in (401, 403):
+                        self.last_error = (
+                            f"The console refused the API key (HTTP {resp.status}). "
+                            "It may have been deleted or replaced in UniFi.")
+                    else:
+                        self.last_error = f"The console answered with HTTP {resp.status}."
                     await self.disconnect()
                     return False
             logger.info(f"Successfully connected to UniFi OS (API key) at {self.host}")
             return True
         except Exception as e:
             logger.error(f"UniFi OS API key connection error: {e}")
+            self.last_error = f"Couldn't reach the console at {self.host} ({e})."
             await self.disconnect()
             return False
 
@@ -1132,6 +1152,10 @@ class UniFiClient:
             logger.debug(f"IPS events payload: {payload}")
 
             async with self._session.post(url, json=payload) as resp:
+                if resp.status in (401, 403):
+                    # A revoked key answers every call this way. An empty list
+                    # here would look like a quiet day, forever (#146).
+                    raise ConsoleAuthRefused(f"HTTP {resp.status}")
                 if resp.status != 200:
                     resp_text = await resp.text()
                     logger.error(f"Failed to get IPS events: HTTP {resp.status}")
@@ -1155,6 +1179,8 @@ class UniFiClient:
 
                 return events
 
+        except ConsoleAuthRefused:
+            raise
         except Exception as e:
             logger.error(f"Failed to get IPS events from UniFi controller: {e}")
             return []
