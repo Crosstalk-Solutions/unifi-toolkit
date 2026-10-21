@@ -513,6 +513,8 @@ CHANGELOG.md and `docs/house-arrest-design.md`.
   were a refused API key (401 on every cycle, `connected: false`); fixed
   by a new key. NOMAD2's nulls the same day are unexplained (it was
   connected), so check `/api/system-status` before calling it a bug.
+- **`git push` from the Bash tool fails** with `getaddrinfo() thread failed
+  to start` (seen 2026-10-20). Push from PowerShell, which works.
 - **Chris's PC container was on 1.13.1 until 2026-10-20** (image never
   re-pulled). Check `app_version` in debug-info before treating it as a
   test of the current release.
