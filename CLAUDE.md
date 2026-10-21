@@ -215,6 +215,14 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   release: ACL BLOCKs first, a failed BLOCK delete stops the rollback and
   keeps the firewall half so the lockdown stays visible and releasable;
   leftovers are named in the error. Unit-tested with a fake client only.
+- Threat Watch 0.5.3 (2026-10-20, `fb7e8bc`): "Can't reach your UniFi
+  console" banner with the reason. `UniFiClient.last_error` +
+  `unifi_session.connection_problem()` (scheduler-recorded; the page never
+  connects). `get_ips_events()` raises `ConsoleAuthRefused` on 401/403:
+  its legacy fallback used to turn a revoked key into `[]`, so the session
+  was never dropped and the page looked like a quiet day. Measured on a
+  throwaway instance (copied DB, bogus key, port 8011); mid-session
+  revoke is unit-tested only.
 
 ### v1.13.6 (edge, unreleased — 2026-10-16)
 - House Arrest 0.15.16: mDNS toggle failed on every write on sites set to
@@ -501,7 +509,13 @@ CHANGELOG.md and `docs/house-arrest-design.md`.
   (`connected`, `gateway_model`) for that. Likely a debug-info bug; unfixed.
   UPDATE 2026-10-12: both instances now return populated gateway fields
   (model, firmware, ips_mode), so the nulls were intermittent, not constant.
-  Cause still unknown.
+  Cause still unknown. UPDATE 2026-10-20: on Chris's PC instance the nulls
+  were a refused API key (401 on every cycle, `connected: false`); fixed
+  by a new key. NOMAD2's nulls the same day are unexplained (it was
+  connected), so check `/api/system-status` before calling it a bug.
+- **Chris's PC container was on 1.13.1 until 2026-10-20** (image never
+  re-pulled). Check `app_version` in debug-info before treating it as a
+  test of the current release.
 - **Bash heredocs choke on apostrophes in inline Python/JS** in this
   environment (`unexpected EOF while looking for matching '`). For any script
   with quotes in it, write it to the scratchpad with the Write tool and run
