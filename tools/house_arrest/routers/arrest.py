@@ -1593,6 +1593,34 @@ async def inspect():
     )
 
 
+async def _roll_back_lockdown(client, created: List[Dict],
+                              acl_created: List[Dict]) -> List[str]:
+    """
+    Undo a partly applied device lockdown. Returns the names of anything it
+    could not remove; empty means a clean rollback.
+
+    Same rules as release() (#155): neighbour-block BLOCKs are deleted before
+    their ALLOWs, and a failed BLOCK delete stops the rollback there. The
+    firewall half is then left in place on purpose, so the lockdown still
+    shows on the Devices tab and Release can clear the stray switch rules
+    by MAC, instead of leaving an invisible rule that cuts the device off.
+    """
+    deleted = set()
+    for rule in P.acl_delete_order(acl_created):
+        rid = rule.get("_id")
+        if rid and await client.delete_acl_rule(rid):
+            deleted.add(rid)
+        elif rule.get("action") == "BLOCK":
+            break
+    else:
+        for pol in created:
+            pid = pol.get("_id")
+            if pid and await client.delete_firewall_policy(pid):
+                deleted.add(pid)
+    return [x.get("name") or "unnamed rule" for x in acl_created + created
+            if x.get("_id") not in deleted]
+
+
 @router.post("/lockdown", response_model=LockdownResponse)
 async def lockdown(req: LockdownRequest):
     """
@@ -1841,15 +1869,13 @@ async def lockdown(req: LockdownRequest):
         return LockdownResponse(
             dry_run=True, payloads=payloads + acl_payloads, caveats=caveats)
 
-    async def roll_back():
-        for done in created:
-            pid = done.get("_id")
-            if pid:
-                await client.delete_firewall_policy(pid)
-        for done in acl_created:
-            rid = done.get("_id")
-            if rid:
-                await client.delete_acl_rule(rid)
+    async def roll_back(error: str) -> LockdownResponse:
+        left = await _roll_back_lockdown(client, created, acl_created)
+        if left:
+            error += (" House Arrest couldn't remove everything it wrote, so "
+                      "these rules are still on your console: "
+                      + ", ".join(left) + ". Release this device to clear them.")
+        return LockdownResponse(dry_run=False, created=[], error=error)
 
     created = []
     acl_created: List[Dict] = []
@@ -1858,11 +1884,8 @@ async def lockdown(req: LockdownRequest):
         if result is None:
             # Roll back what we already wrote so a half-applied lockdown
             # never survives a failure.
-            await roll_back()
-            return LockdownResponse(
-                dry_run=False, created=[],
-                error=f"Failed to create policy {payload.get('name')!r}; rolled back",
-            )
+            return await roll_back(
+                f"Failed to create policy {payload.get('name')!r}; rolled back.")
         created.append(result)
 
     # The DNS allow was created first so it should sit ahead of the block. The
@@ -1878,26 +1901,21 @@ async def lockdown(req: LockdownRequest):
         blocks = [p for p in mine if P._blocks_lan_for(p)]
         allows = [p for p in mine if P.is_device_dns_allow(p)]
         if any(P.shadowed_dns_allows(b, allows, device_net_ids) for b in blocks) or not allows:
-            await roll_back()
-            return LockdownResponse(
-                dry_run=False, created=[],
-                error=("The gateway placed this device's DNS rule after its block, "
-                       "which would cut its DNS, so House Arrest undid the "
-                       "lockdown. Try applying it again."),
-            )
+            return await roll_back(
+                "The gateway placed this device's DNS rule after its block, "
+                "which would cut its DNS, so House Arrest undid the "
+                "lockdown. Try applying it again.")
 
-    # ALLOW is always written before its BLOCK (payload order), so a failure
-    # can never leave a lone BLOCK behind — which would cut the device off
-    # from the gateway entirely.
+    # ALLOW is always written before its BLOCK (payload order), so a failed
+    # create can never leave a lone BLOCK behind — which would cut the device
+    # off from the gateway entirely. Rollback deletes in the reverse sense
+    # (BLOCKs first) for the same reason.
     for payload in acl_payloads:
         result = await client.create_acl_rule(payload)
         if result is None:
-            await roll_back()
-            return LockdownResponse(
-                dry_run=False, created=[],
-                error=("House Arrest couldn't set up the neighbour block, so it "
-                       "undid the whole lockdown."),
-            )
+            return await roll_back(
+                "House Arrest couldn't set up the neighbour block, so it "
+                "undid the whole lockdown.")
         acl_created.append(result)
     created.extend(acl_created)
 
@@ -1970,7 +1988,7 @@ async def release(req: ReleaseRequest):
                 acl_targets.append(r)
         # A partial release must never leave a lone BLOCK: take the ALLOW
         # only after its BLOCK, by deleting BLOCKs first below.
-        acl_targets.sort(key=lambda r: 0 if r.get("action") == "BLOCK" else 1)
+        acl_targets = P.acl_delete_order(acl_targets)
 
     if req.dry_run:
         return ReleaseResponse(

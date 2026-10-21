@@ -2741,6 +2741,15 @@ def is_house_arrest_acl(rule: Dict) -> bool:
     )
 
 
+def acl_delete_order(rules: List[Dict]) -> List[Dict]:
+    """
+    Neighbour-block rules in safe delete order: every BLOCK before any ALLOW.
+    Deleting an ALLOW first leaves its BLOCK alone, which cuts the device off
+    from the gateway (DHCP included). Used by both release and rollback (#155).
+    """
+    return sorted(rules, key=lambda r: 0 if r.get("action") == "BLOCK" else 1)
+
+
 def acl_source_macs(rule: Dict) -> List[str]:
     src = rule.get("traffic_source") or {}
     return [m.lower() for m in src.get("specific_mac_addresses") or []]

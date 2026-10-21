@@ -210,6 +210,11 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   show `dnsRank()`; the DHCP preview labels slots via `dhcpOrderText()`.
   No persisted order (no column, no migration) on purpose: order only
   matters at the DHCP write, and lockdown rules treat resolvers equally.
+- House Arrest 0.16.2 (2026-10-20, #155 from @technicalanxiety): lockdown
+  rollback is `_roll_back_lockdown()` and uses `P.acl_delete_order()` like
+  release: ACL BLOCKs first, a failed BLOCK delete stops the rollback and
+  keeps the firewall half so the lockdown stays visible and releasable;
+  leftovers are named in the error. Unit-tested with a fake client only.
 
 ### v1.13.6 (edge, unreleased — 2026-10-16)
 - House Arrest 0.15.16: mDNS toggle failed on every write on sites set to
