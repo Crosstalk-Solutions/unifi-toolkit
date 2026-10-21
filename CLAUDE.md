@@ -191,7 +191,7 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
-### v1.13.6 additions (2026-10-18/20, House Arrest 0.16.1, on `:edge`, untagged)
+### v1.13.6 additions (2026-10-18/20, House Arrest 0.16.2, RELEASED in v1.13.6)
 - DNS Lockdown upstream allow: an approved resolver ON a locked network
   gets `ALLOW src IP -> External :53` (+:853 with DoT) before the blocks.
   Locking Default with the Pi-holes on Default broke the studio's DNS.
@@ -224,7 +224,7 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   throwaway instance (copied DB, bogus key, port 8011); mid-session
   revoke is unit-tested only.
 
-### v1.13.6 (edge, unreleased — 2026-10-16)
+### v1.13.6 (RELEASED 2026-10-20 — tag `v1.13.6` on `3a06001`, `:latest`, GitHub Release created)
 - House Arrest 0.15.16: mDNS toggle failed on every write on sites set to
   "All networks" that also have a VPN network. `mdns_effective_ids()` expanded
   "all" to every non-WAN network, which included a `site-vpn` id; the
@@ -239,7 +239,7 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   403/404/200 as expected; #147 `/stalker/ws` handshake + ping/pong OK (no
   device event during the listen). #149/#150 need a UDR 5G Max — untested.
 
-### v1.13.5 (edge, unreleased — `5600c47`, 2026-10-15)
+### v1.13.5 (`5600c47`, never tagged — shipped in v1.13.6 on 2026-10-20)
 - #145: `AuthMiddleware._csrf_failure()` runs in local mode too; only the
   session check is skipped when auth is off. All 26 frontend state-changing
   calls already sent `X-Requested-With` (script-checked) — any NEW fetch
