@@ -2030,7 +2030,8 @@ so the Pi-hole had to go upstream; this replaces a cache flush.
   lockdown was enforcing.
 - State showed the Default lockdown with `upstream_resolvers` [.79, .50].
 - Released (4 rules deleted); 20s later 1.1.1.1 answered again.
-Not tested: the `:853` variant (block DoT on).
+The `:853` variant (block DoT on) was not part of this run; it was tested
+the next day (below).
 
 **MEASURED 2026-10-20 (block DoT ON, studio UCG, `:edge` 1b845d6 on NOMAD2):**
 Chris applied a Default lockdown from the GUI with both Pi-holes approved
