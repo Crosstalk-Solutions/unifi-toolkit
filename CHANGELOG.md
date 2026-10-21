@@ -2,7 +2,7 @@
 
 All notable changes to UI Toolkit will be documented in this file.
 
-## [1.13.6] - Unreleased
+## [1.13.6] - 2026-10-20
 
 ### Added
 - **House Arrest keeps a list of your DNS servers.** The DNS Lockdown tab now opens with a card for each DNS server your networks are allowed to use. Add each one once, with a name and its type (Pi-hole, AdGuard Home or Other). Pi-hole and AdGuard Home cards link to the server's admin page, at an address you can edit. Each card shows which network the server is on, which networks hand it out through DHCP, and which DNS Lockdowns approve it. On a first visit, the tab offers the DNS servers your networks already hand out. Setting up a DNS Lockdown now means ticking DNS servers instead of typing addresses.
@@ -17,7 +17,7 @@ All notable changes to UI Toolkit will be documented in this file.
 - **The reverse proxy settings are explained properly (#154).** `.env.example` described `DOMAIN` as production only, but every mode uses it to accept requests. Neither it nor the README said that `DOMAIN` and `ALLOWED_HOSTS` need the exact hostname you type in the browser, so a base domain or a proxy's IP address led to "Host header not allowed" errors. Both now say so. Thanks to @gingerbread-dude.
 - **The U6 Pro is no longer called a U6 Mesh Pro.** Its model code (`UAP6MP`) was mapped to the wrong name, so Network Pulse and Debug Info showed a U6 Pro as a "U6 Mesh Pro". The real U6 Mesh Pro (`U6MP`) and U6 Mesh (`U6M`) codes were missing and are now named too.
 
-## [1.13.5] - Unreleased
+## [1.13.5] - 2026-10-20 (released together with 1.13.6)
 
 ### Security
 - **Local mode now checks that requests come from the toolkit's own pages (#145).** With login switched off, the check that stops other websites from sending requests to the toolkit was skipped along with the login. A web page opened by anyone on your network could send a request to the toolkit's LAN address and block or unblock a Wi-Fi Stalker device, release a DNS Lockdown, or change Threat Watch filtering. The check now runs in every mode. The toolkit's own pages already passed it, so nothing changes for you. Thanks to @thedigitalfox.
