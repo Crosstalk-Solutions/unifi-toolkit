@@ -191,12 +191,13 @@ All v2 events are normalized before the scheduler sees them — the scheduler on
   silently. Removed the on-screen text claiming the controller ignores the change.
   Column stays read-only because the control is site-level, not per-network.
 
-### v1.13.6 additions (2026-10-18, House Arrest 0.16.0, local commits)
+### v1.13.6 additions (2026-10-18/20, House Arrest 0.16.1, on `:edge`, untagged)
 - DNS Lockdown upstream allow: an approved resolver ON a locked network
   gets `ALLOW src IP -> External :53` (+:853 with DoT) before the blocks.
   Locking Default with the Pi-holes on Default broke the studio's DNS.
   Measured enabled on the studio UCG 2026-10-19: both Pi-holes resolved
-  fresh names while 1.1.1.1 was blocked (design doc "FIXED 2026-10-18").
+  fresh names while 1.1.1.1 was blocked; re-run 2026-10-20 with DoT
+  blocking on (7 rules) also passed (design doc "FIXED 2026-10-18").
 - DNS Lockdown offered on `corporate`/`guest` networks only
   (`P.DNS_LOCKDOWN_PURPOSES`); a `site-vpn` network is refused server-side.
 - Saved DNS servers: House Arrest's FIRST DB table
