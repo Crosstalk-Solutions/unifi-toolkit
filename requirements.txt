@@ -1,5 +1,5 @@
 fastapi>=0.116.1
-uvicorn[standard]>=0.32.0
+uvicorn[standard]>=0.54.0
 sqlalchemy>=2.0.36
 greenlet>=3.0.0
 aiosqlite>=0.22.1
